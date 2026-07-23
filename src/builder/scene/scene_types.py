@@ -1,8 +1,10 @@
-"""Scene value types: mesh ids, transforms, nodes."""
+"""Scene value types: mesh ids and nodes."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from pyray import Transform, Vector3, quaternion_identity
 
 
 @dataclass(frozen=True)
@@ -13,30 +15,17 @@ class MeshId:
 
 
 @dataclass(frozen=True)
-class Vec3:
-    """Simple 3-vector for scene data (not a GPU type)."""
-
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
-
-
-@dataclass(frozen=True)
-class Transform:
-    """TRS transform used by scene nodes."""
-
-    position: Vec3 = Vec3()
-    rotation: Vec3 = Vec3()  # euler radians (x, y, z)
-    scale: Vec3 = Vec3(1.0, 1.0, 1.0)
-
-
-@dataclass(frozen=True)
 class Node:
     """A placed instance of a mesh in the scene."""
 
     id: str
     mesh_id: MeshId
     transform: Transform
+
+
+def transform_at(translation: Vector3) -> Transform:
+    """ return transform with identity rotation and unit scale """
+    return Transform(translation, quaternion_identity(), Vector3(1.0, 1.0, 1.0))
 
 
 BUILTIN_CUBE: MeshId = MeshId("cube")

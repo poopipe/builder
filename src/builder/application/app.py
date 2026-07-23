@@ -25,12 +25,8 @@ from pyray import (
 )
 
 from builder.application.application_state import ApplicationState
-from builder.commands.builtin import (
-    MENU_COMMANDS,
-    PANEL_COMMANDS,
-    builtin_commands,
-)
 from builder.commands.commands_types import CommandItem
+from builder.commands.menus import MENU_COMMANDS, PANEL_COMMANDS, all_commands
 from builder.commands.registry import bind_entry, register_commands
 from builder.ui.font import load_app_font, unload_app_font
 from builder.ui.theme import COLOUR_BG, FONT_SIZE, SIDE_PANEL_WIDTH
@@ -64,7 +60,7 @@ class Application:
         self.scene: Viewport = scene
         self.ui: UiState = UiState(status=self.application.importer.status_message())
         self.font: Font = font
-        self.commands = register_commands(builtin_commands())
+        self.commands = register_commands(all_commands())
 
     def command_button_items(
         self, entries: tuple[CommandItem, ...]

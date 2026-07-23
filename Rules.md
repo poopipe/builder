@@ -10,6 +10,7 @@ Style:
 - the _method convention is stupid - it's not actually private so there is no point pretending it is.  just name the methods
 - do not name modules types.py (collides / confuses tooling); use modulename_types.py
 - US spelling
+- docstrings and comments: lowercase, no trailing period, leading and trailing space inside the quotes — eg. `""" return transforms for grid in XZ centered at origin """`
 
 Imports:
 - do not shorten library names eg. pyray should be imported as pyray, not pr

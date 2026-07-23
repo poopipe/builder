@@ -7,36 +7,36 @@ from collections.abc import Sequence
 
 from pyray import (
     Matrix,
-    Vector3,
+    Transform,
     draw_mesh_instanced,
     ffi,
     matrix_multiply,
-    matrix_rotate_xyz,
     matrix_scale,
     matrix_translate,
+    quaternion_to_matrix,
 )
 
-from builder.scene.scene_types import MeshId, Node, Transform
+from builder.scene.scene_types import MeshId, Node
 from builder.view.mesh_table import MeshTable
 from builder.view.prepare_mesh import PreparedMesh
 
 
 def transform_matrix(transform: Transform) -> Matrix:
-    """Build a model matrix from TRS (scale → rotate → translate)."""
+    """ build model matrix from raylib transform (scale then rotate then translate) """
     scale: Matrix = matrix_scale(
         transform.scale.x, transform.scale.y, transform.scale.z
     )
-    rotation: Matrix = matrix_rotate_xyz(
-        Vector3(transform.rotation.x, transform.rotation.y, transform.rotation.z)
-    )
+    rotation: Matrix = quaternion_to_matrix(transform.rotation)
     translation: Matrix = matrix_translate(
-        transform.position.x, transform.position.y, transform.position.z
+        transform.translation.x,
+        transform.translation.y,
+        transform.translation.z,
     )
     return matrix_multiply(translation, matrix_multiply(rotation, scale))
 
 
 def group_nodes_by_mesh(nodes: Sequence[Node]) -> dict[MeshId, list[Node]]:
-    """Bucket nodes by mesh id for one draw call per mesh."""
+    """ bucket nodes by mesh id for one draw call per mesh """
     groups: dict[MeshId, list[Node]] = defaultdict(list)
     node: Node
     for node in nodes:
@@ -45,7 +45,7 @@ def group_nodes_by_mesh(nodes: Sequence[Node]) -> dict[MeshId, list[Node]]:
 
 
 def draw_nodes_instanced(table: MeshTable, nodes: Sequence[Node]) -> None:
-    """Draw all nodes with ``draw_mesh_instanced``, one batch per mesh."""
+    """ draw all nodes with draw_mesh_instanced, one batch per mesh """
     mesh_id: MeshId
     group: list[Node]
     for mesh_id, group in group_nodes_by_mesh(nodes).items():

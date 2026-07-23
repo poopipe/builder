@@ -6,8 +6,7 @@ from builder.scene.scene_types import (
     PLACEHOLDER_NODE_ID,
     MeshId,
     Node,
-    Transform,
-    Vec3,
+    transform_at,
 )
 
 __all__ = [
@@ -16,6 +15,5 @@ __all__ = [
     "MeshId",
     "Node",
     "Scene",
-    "Transform",
-    "Vec3",
+    "transform_at",
 ]

@@ -12,6 +12,7 @@ from pyray import (
     Color,
     MouseButton,
     Rectangle,
+    Transform,
     Vector2,
     Vector3,
     begin_mode_3d,
@@ -34,13 +35,7 @@ from pyray import (
 
 from builder.meshes.builtins import make_cube
 from builder.scene.scene import Scene
-from builder.scene.scene_types import (
-    BUILTIN_CUBE,
-    PLACEHOLDER_NODE_ID,
-    Node,
-    Transform,
-    Vec3,
-)
+from builder.scene.scene_types import BUILTIN_CUBE, PLACEHOLDER_NODE_ID, Node
 from builder.view.grid import draw_ground_grid
 from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
@@ -80,15 +75,6 @@ class Viewport:
             self.mesh_table.add(
                 BUILTIN_CUBE,
                 prepare_mesh(make_cube(1.5), self.lighting.shader),
-            )
-            self.nodes.add_nodes(
-                [
-                    Node(
-                        id=PLACEHOLDER_NODE_ID,
-                        mesh_id=BUILTIN_CUBE,
-                        transform=Transform(position=Vec3(0.0, 0.75, 0.0)),
-                    )
-                ]
             )
         except (RuntimeError, ValueError):
             self.mesh_table.unload()
@@ -134,20 +120,20 @@ class Viewport:
         self.nodes.clear_nodes()
 
     def nudge_placeholder_up(self) -> None:
-        """Raise the placeholder node (example scene mutation)."""
+        """ raise the placeholder node (example scene mutation) """
         existing: Node | None = self.nodes.nodes.get(PLACEHOLDER_NODE_ID)
         if existing is None:
             return
-        position: Vec3 = existing.transform.position
+        translation: Vector3 = existing.transform.translation
         self.nodes.add_nodes(
             [
                 Node(
                     id=existing.id,
                     mesh_id=existing.mesh_id,
                     transform=Transform(
-                        position=Vec3(position.x, position.y + 0.5, position.z),
-                        rotation=existing.transform.rotation,
-                        scale=existing.transform.scale,
+                        vector3_add(translation, Vector3(0.0, 0.5, 0.0)),
+                        existing.transform.rotation,
+                        existing.transform.scale,
                     ),
                 )
             ]
