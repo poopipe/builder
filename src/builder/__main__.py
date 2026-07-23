@@ -1,10 +1,18 @@
 """Package entry: ``python -m builder``."""
 
-from builder.app import run_application
+from __future__ import annotations
+
+import sys
+
+from builder.application import run_application
 
 
 def main() -> None:
-    run_application()
+    try:
+        run_application()
+    except (FileNotFoundError, RuntimeError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
 
 
 if __name__ == "__main__":

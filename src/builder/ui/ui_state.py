@@ -1,4 +1,4 @@
-"""Mutable UI chrome state."""
+"""Mutable UI shell state."""
 
 from __future__ import annotations
 

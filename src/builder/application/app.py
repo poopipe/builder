@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pyray import (
     ConfigFlags,
     Font,
     KeyboardKey,
+    Vector2,
     begin_drawing,
     clear_background,
     close_window,
@@ -14,30 +17,36 @@ from pyray import (
     get_screen_height,
     get_screen_width,
     init_window,
+    is_window_ready,
     set_config_flags,
     set_exit_key,
     set_target_fps,
     window_should_close,
 )
 
-from builder.application_state import ApplicationState
+from builder.application.application_state import ApplicationState
 from builder.commands.builtin import (
     MENU_COMMANDS,
     PANEL_COMMANDS,
     builtin_commands,
 )
+from builder.commands.commands_types import Command
 from builder.commands.registry import bind_command, register_commands
 from builder.ui.font import load_app_font, unload_app_font
 from builder.ui.theme import COLOUR_BG, FONT_SIZE, SIDE_PANEL_WIDTH
 from builder.ui.ui_state import UiState
 from builder.ui.widgets import (
-    MenuItem,
-    StackButton,
+    Button,
+    LayoutRects,
     compute_layout,
     draw_button_stack,
     draw_menu_bar,
     draw_status_bar,
     is_point_in_rect,
+    layout_menu_bar_buttons,
+    layout_stack_buttons,
+    update_buttons,
+    update_clipped_buttons,
 )
 from builder.view.viewport import Viewport
 
@@ -51,33 +60,48 @@ class Application:
     """
 
     def __init__(self, scene: Viewport, font: Font) -> None:
-        self.application = ApplicationState()
-        self.scene = scene
-        self.ui = UiState(status=self.application.importer.status_message())
-        self.font = font
+        self.application: ApplicationState = ApplicationState()
+        self.scene: Viewport = scene
+        self.ui: UiState = UiState(
+            status=self.application.importer.status_message()
+        )
+        self.font: Font = font
         self.commands = register_commands(builtin_commands())
 
-    def menu_items(self) -> list[MenuItem]:
-        return [
-            MenuItem(command.label, bind_command(self, command))
-            for command in MENU_COMMANDS
-        ]
-
-    def panel_buttons(self) -> list[StackButton]:
-        return [
-            StackButton(command.label, bind_command(self, command))
-            for command in PANEL_COMMANDS
-        ]
+    def command_button_items(
+        self, commands: tuple[Command, ...]
+    ) -> list[tuple[str, Callable[[], None]]]:
+        items: list[tuple[str, Callable[[], None]]] = []
+        command: Command
+        for command in commands:
+            items.append((command.label, bind_command(self, command)))
+        return items
 
     def frame(self) -> None:
-        panel_width = SIDE_PANEL_WIDTH if self.ui.side_panel_open else 0
-        layout = compute_layout(
+        panel_width: int = SIDE_PANEL_WIDTH if self.ui.side_panel_open else 0
+        layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
             panel_width=panel_width,
         )
-        mouse = get_mouse_position()
-        ui_over = (
+
+        menu_buttons: list[Button] = layout_menu_bar_buttons(
+            self.font,
+            layout.menu,
+            self.command_button_items(MENU_COMMANDS),
+        )
+        update_buttons(menu_buttons)
+
+        panel_buttons: list[Button] = []
+        if self.ui.side_panel_open:
+            panel_buttons = layout_stack_buttons(
+                layout.panel,
+                self.command_button_items(PANEL_COMMANDS),
+            )
+            update_clipped_buttons(panel_buttons, layout.panel)
+
+        mouse: Vector2 = get_mouse_position()
+        ui_over: bool = (
             is_point_in_rect(mouse.x, mouse.y, layout.menu)
             or (
                 self.ui.side_panel_open
@@ -90,16 +114,20 @@ class Application:
         begin_drawing()
         clear_background(COLOUR_BG)
         self.scene.draw(layout.viewport)
-        draw_menu_bar(self.font, layout.menu, self.menu_items())
+        draw_menu_bar(self.font, layout.menu, menu_buttons)
         if self.ui.side_panel_open:
-            draw_button_stack(self.font, layout.panel, self.panel_buttons())
+            draw_button_stack(self.font, layout.panel, panel_buttons)
         draw_status_bar(self.font, layout.status, self.ui.status)
         end_drawing()
 
     def run(self) -> None:
-        """Pump frames until quit."""
         while not window_should_close() and not self.application.should_close:
             self.frame()
+
+    def shutdown(self) -> None:
+        """Release GPU resources owned by this session."""
+        self.scene.unload()
+        unload_app_font(self.font)
 
 
 def open_window() -> None:
@@ -108,19 +136,26 @@ def open_window() -> None:
         ConfigFlags.FLAG_WINDOW_RESIZABLE | ConfigFlags.FLAG_MSAA_4X_HINT
     )
     init_window(1280, 720, "Builder")
+    if not is_window_ready():
+        raise RuntimeError("failed to create application window")
     set_target_fps(60)
     set_exit_key(KeyboardKey.KEY_ESCAPE)
 
 
 def run_application() -> None:
-    """Open the window, build the application, and run until quit."""
+    """Open the window, build the application, run until quit, then tear down."""
     open_window()
-    font = load_app_font(FONT_SIZE)
-    scene = Viewport()
-    app = Application(scene=scene, font=font)
+    font: Font = load_app_font(FONT_SIZE)
+
+    scene: Viewport
     try:
-        app.run()
-    finally:
-        scene.unload()
+        scene = Viewport()
+    except RuntimeError:
         unload_app_font(font)
         close_window()
+        raise
+
+    app: Application = Application(scene=scene, font=font)
+    app.run()
+    app.shutdown()
+    close_window()

@@ -13,7 +13,7 @@ from pyray import (
     unload_font,
 )
 
-_FONT_NAME = "CaskaydiaCoveNerdFont-Regular.ttf"
+FONT_NAME: str = "CaskaydiaCoveNerdFont-Regular.ttf"
 
 
 def assets_fonts_dir() -> Path:
@@ -22,16 +22,15 @@ def assets_fonts_dir() -> Path:
 
 
 def load_app_font(size: int = 18) -> Font:
-    """Load CaskaydiaCove, or fall back to the raylib default font."""
-    path = assets_fonts_dir() / _FONT_NAME
+    """Load CaskaydiaCove. Raises if the file is missing or fails to load."""
+    path: Path = assets_fonts_dir() / FONT_NAME
     if not path.is_file():
-        print(f"warning: font not found at {path}; using default font")
-        return get_font_default()
+        raise FileNotFoundError(f"application font not found: {path}")
 
-    font = load_font_ex(str(path), size, None, 0)
-    if getattr(font, "glyphCount", getattr(font, "glyph_count", 0)) == 0:
-        print(f"warning: failed to load font {path}; using default font")
-        return get_font_default()
+    font: Font = load_font_ex(str(path), size, None, 0)
+    glyph_count: int = int(getattr(font, "glyphCount", getattr(font, "glyph_count", 0)))
+    if glyph_count == 0:
+        raise RuntimeError(f"failed to load application font: {path}")
 
     set_texture_filter(font.texture, TextureFilter.TEXTURE_FILTER_BILINEAR)
     return font
@@ -39,6 +38,6 @@ def load_app_font(size: int = 18) -> Font:
 
 def unload_app_font(font: Font) -> None:
     """Unload a font if it is not the built-in default."""
-    default = get_font_default()
+    default: Font = get_font_default()
     if font.texture.id != default.texture.id:
         unload_font(font)

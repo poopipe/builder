@@ -11,6 +11,8 @@ Style:
 - do not name modules types.py (collides / confuses tooling); use modulename_types.py
 - methods/functions that return a bool should be prefixed with is_, can_, has_ eg. is_point_in_rect(), can_import(), has_valid_suffix()  
 - I insist on strict type annotations - that means that the initial declaration of every variable must be annotated
+- do not use try/except/finally for control flow - there is always a better way
+- when catching exceptions, catch the specific types we are expecting rather than Exception 
 
 Imports:
 - do not shorten library names eg. pyray should be imported as pyray, not pr

@@ -22,17 +22,19 @@ class ImportedMesh:
 class MeshImporter:
     """Placeholder importer. Real FBX loading will plug in here."""
 
-    supported_suffixes = (".fbx",)
+    supported_suffixes: tuple[str, ...] = (".fbx",)
 
     def has_valid_suffix(self, path: str | Path) -> bool:
         """Return True if the path has a supported mesh file suffix."""
         return Path(path).suffix.lower() in self.supported_suffixes
 
     def import_path(self, path: str | Path) -> ImportedMesh:
-        """Attempt to import a mesh. Raises until a backend is installed."""
-        path = Path(path)
-        if not self.has_valid_suffix(path):
-            raise ValueError(f"unsupported mesh format: {path.suffix}")
+        """Load a mesh from disk. Raises on missing file, bad suffix, or no backend."""
+        mesh_path: Path = Path(path)
+        if not mesh_path.is_file():
+            raise FileNotFoundError(f"mesh file not found: {mesh_path}")
+        if not self.has_valid_suffix(mesh_path):
+            raise ValueError(f"unsupported mesh format: {mesh_path.suffix}")
         raise NotImplementedError(
             "FBX import is not wired yet. Prefer ufbx (pyufbx/pufbx) for "
             "cross-platform loading; avoid the Autodesk FBX SDK."

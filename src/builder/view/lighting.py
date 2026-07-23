@@ -10,12 +10,13 @@ from pyray import (
     Vector3,
     ffi,
     get_shader_location,
+    is_shader_valid,
     load_shader_from_memory,
     set_shader_value,
     unload_shader,
 )
 
-_VS = """
+VS_SOURCE: str = """
 #version 330
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
@@ -38,7 +39,7 @@ void main()
 }
 """
 
-_FS = """
+FS_SOURCE: str = """
 #version 330
 in vec3 fragPosition;
 in vec2 fragTexCoord;
@@ -83,7 +84,7 @@ void main()
 """
 
 
-def _set_float(shader: Shader, loc: int, value: float) -> None:
+def set_float(shader: Shader, loc: int, value: float) -> None:
     set_shader_value(
         shader,
         loc,
@@ -92,7 +93,7 @@ def _set_float(shader: Shader, loc: int, value: float) -> None:
     )
 
 
-def _set_vec3(shader: Shader, loc: int, value: Vector3) -> None:
+def set_vec3(shader: Shader, loc: int, value: Vector3) -> None:
     set_shader_value(shader, loc, value, ShaderUniformDataType.SHADER_UNIFORM_VEC3)
 
 
@@ -109,29 +110,40 @@ class Lighting:
     """Key / fill / rim lights bound to a shader."""
 
     def __init__(self) -> None:
-        self.shader = load_shader_from_memory(_VS, _FS)
-        self._loc_view = get_shader_location(self.shader, "viewPos")
-        self._loc_ambient = get_shader_location(self.shader, "ambient")
-        self.lights = [
+        self.shader: Shader = load_shader_from_memory(VS_SOURCE, FS_SOURCE)
+        if not is_shader_valid(self.shader):
+            raise RuntimeError("failed to compile lighting shader")
+
+        self.loc_view: int = get_shader_location(self.shader, "viewPos")
+        self.loc_ambient: int = get_shader_location(self.shader, "ambient")
+        if self.loc_view < 0 or self.loc_ambient < 0:
+            unload_shader(self.shader)
+            raise RuntimeError("lighting shader is missing required uniforms")
+
+        self.lights: list[PointLight] = [
             PointLight(Vector3(6.0, 8.0, 4.0), Vector3(1.0, 0.95, 0.9), 1.0),
             PointLight(Vector3(-5.0, 3.0, 2.0), Vector3(0.45, 0.55, 0.85), 0.55),
             PointLight(Vector3(0.0, 4.0, -6.0), Vector3(0.9, 0.9, 1.0), 0.7),
         ]
-        _set_vec3(self.shader, self._loc_ambient, Vector3(0.12, 0.12, 0.14))
-        self._upload_lights()
+        set_vec3(self.shader, self.loc_ambient, Vector3(0.12, 0.12, 0.14))
+        self.upload_lights()
 
-    def _upload_lights(self) -> None:
+    def upload_lights(self) -> None:
+        i: int
+        light: PointLight
         for i, light in enumerate(self.lights):
-            loc_pos = get_shader_location(self.shader, f"lights[{i}].position")
-            loc_col = get_shader_location(self.shader, f"lights[{i}].color")
-            loc_int = get_shader_location(self.shader, f"lights[{i}].intensity")
-            _set_vec3(self.shader, loc_pos, light.position)
-            _set_vec3(self.shader, loc_col, light.color)
-            _set_float(self.shader, loc_int, light.intensity)
+            loc_pos: int = get_shader_location(self.shader, f"lights[{i}].position")
+            loc_col: int = get_shader_location(self.shader, f"lights[{i}].color")
+            loc_int: int = get_shader_location(self.shader, f"lights[{i}].intensity")
+            if loc_pos < 0 or loc_col < 0 or loc_int < 0:
+                raise RuntimeError(f"lighting shader is missing light[{i}] uniforms")
+            set_vec3(self.shader, loc_pos, light.position)
+            set_vec3(self.shader, loc_col, light.color)
+            set_float(self.shader, loc_int, light.intensity)
 
     def update_view_position(self, position: Vector3) -> None:
         """Push the camera position into the shader for specular highlights."""
-        _set_vec3(self.shader, self._loc_view, position)
+        set_vec3(self.shader, self.loc_view, position)
 
     def unload(self) -> None:
         """Release GPU resources."""

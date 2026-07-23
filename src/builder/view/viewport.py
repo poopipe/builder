@@ -9,6 +9,8 @@ from pyray import (
     Camera3D,
     CameraProjection,
     Color,
+    Mesh,
+    Model,
     MouseButton,
     Rectangle,
     Vector2,
@@ -58,23 +60,37 @@ class Viewport:
     """Owns the 3D camera, lighting, and placeholder geometry."""
 
     def __init__(self) -> None:
-        self.orbit = OrbitState()
-        self.camera = Camera3D()
+        self.orbit: OrbitState = OrbitState()
+        self.camera: Camera3D = Camera3D()
         self.camera.up = Vector3(0.0, 1.0, 0.0)
         self.camera.fovy = 60.0
         self.camera.projection = CameraProjection.CAMERA_PERSPECTIVE
         self.apply_orbit()
 
-        self.lighting = Lighting()
-        mesh = gen_mesh_cube(1.5, 1.5, 1.5)
-        self.model = load_model_from_mesh(mesh)
+        self.lighting: Lighting = Lighting()
+        mesh: Mesh = gen_mesh_cube(1.5, 1.5, 1.5)
+        vertex_count: int = int(
+            getattr(mesh, "vertexCount", getattr(mesh, "vertex_count", 0))
+        )
+        if vertex_count <= 0:
+            self.lighting.unload()
+            raise RuntimeError("failed to generate placeholder mesh")
+
+        self.model: Model = load_model_from_mesh(mesh)
+        mesh_count: int = int(
+            getattr(self.model, "meshCount", getattr(self.model, "mesh_count", 0))
+        )
+        if mesh_count <= 0:
+            self.lighting.unload()
+            raise RuntimeError("failed to create placeholder model")
+
         self.model.materials[0].shader = self.lighting.shader
 
-        self.show_grid = True
-        self.placeholder_y = 0.75
-        self.dragging_orbit = False
-        self.dragging_pan = False
-        self.last_mouse = Vector2(0.0, 0.0)
+        self.show_grid: bool = True
+        self.placeholder_y: float = 0.75
+        self.dragging_orbit: bool = False
+        self.dragging_pan: bool = False
+        self.last_mouse: Vector2 = Vector2(0.0, 0.0)
 
     def apply_orbit(self) -> None:
         pitch = max(-89.0, min(89.0, self.orbit.pitch))

@@ -1,11 +1,12 @@
-"""Immediate-mode UI widgets: menu bar and clipped button stack."""
+"""UI widgets: layout, update, and draw as separate steps."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pyray import (
+    Color,
     Font,
     MouseButton,
     Rectangle,
@@ -42,19 +43,14 @@ from builder.ui.theme import (
 
 
 @dataclass
-class MenuItem:
-    """A single top-bar menu action."""
+class Button:
+    """A clickable control with layout and per-frame interaction state."""
 
     label: str
     on_click: Callable[[], None]
-
-
-@dataclass
-class StackButton:
-    """A single context-panel button."""
-
-    label: str
-    on_click: Callable[[], None]
+    rect: Rectangle = field(default_factory=lambda: Rectangle(0, 0, 0, 0))
+    is_hovered: bool = False
+    is_pressed: bool = False
 
 
 @dataclass
@@ -73,11 +69,11 @@ def compute_layout(
     panel_width: int = SIDE_PANEL_WIDTH,
 ) -> LayoutRects:
     """Split the window into menu, side panel, viewport, and status bar."""
-    menu_h = MENU_BAR_HEIGHT
-    status_h = STATUS_BAR_HEIGHT
-    panel_w = max(0, panel_width)
-    body_y = menu_h
-    body_h = max(0, height - menu_h - status_h)
+    menu_h: int = MENU_BAR_HEIGHT
+    status_h: int = STATUS_BAR_HEIGHT
+    panel_w: int = max(0, panel_width)
+    body_y: int = menu_h
+    body_h: int = max(0, height - menu_h - status_h)
     return LayoutRects(
         menu=Rectangle(0, 0, float(width), float(menu_h)),
         panel=Rectangle(0, float(body_y), float(panel_w), float(body_h)),
@@ -98,118 +94,167 @@ def compute_layout(
 
 def is_point_in_rect(x: float, y: float, rect: Rectangle) -> bool:
     """Return True if (x, y) lies inside rect."""
-    return rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height
+    return (
+        rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height
+    )
 
 
-def is_button_clicked(
-    font: Font,
-    rect: Rectangle,
-    label: str,
+def is_button_in_clip(button: Button, clip: Rectangle) -> bool:
+    """Return True if the button intersects the clip rectangle."""
+    return (
+        button.rect.y + button.rect.height > clip.y
+        and button.rect.y < clip.y + clip.height
+    )
+
+
+def update_button(
+    button: Button,
     mouse: Vector2,
-    mouse_pressed: bool,
-) -> bool:
-    hovered = is_point_in_rect(mouse.x, mouse.y, rect)
-    pressed = hovered and mouse_pressed
-    if pressed:
+    left_down: bool,
+    left_released: bool,
+    *,
+    can_activate: bool = True,
+) -> None:
+    """Refresh hover/press state and fire ``on_click`` on release."""
+    button.is_hovered = is_point_in_rect(mouse.x, mouse.y, button.rect)
+    button.is_pressed = button.is_hovered and left_down
+    if can_activate and button.is_hovered and left_released:
+        button.on_click()
+
+
+def update_buttons(buttons: Sequence[Button]) -> None:
+    """Update a flat list of buttons from the current mouse state."""
+    mouse: Vector2 = get_mouse_position()
+    left_down: bool = is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT)
+    left_released: bool = is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT)
+    button: Button
+    for button in buttons:
+        update_button(button, mouse, left_down, left_released)
+
+
+def update_clipped_buttons(buttons: Sequence[Button], clip: Rectangle) -> None:
+    """Update buttons; clicks only count when the pointer is inside ``clip``."""
+    mouse: Vector2 = get_mouse_position()
+    left_down: bool = is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT)
+    left_released: bool = is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT)
+    pointer_in_clip: bool = is_point_in_rect(mouse.x, mouse.y, clip)
+    button: Button
+    for button in buttons:
+        can_activate: bool = pointer_in_clip and is_button_in_clip(button, clip)
+        update_button(
+            button,
+            mouse,
+            left_down,
+            left_released,
+            can_activate=can_activate,
+        )
+
+
+def draw_button(button: Button, font: Font) -> None:
+    """Draw a button from its current interaction state."""
+    colour: Color
+    if button.is_pressed:
         colour = COLOUR_BUTTON_PRESS
-    elif hovered:
+    elif button.is_hovered:
         colour = COLOUR_BUTTON_HOVER
     else:
         colour = COLOUR_BUTTON
 
-    draw_rectangle_rec(rect, colour)
-    draw_rectangle_lines_ex(rect, 1, COLOUR_BORDER)
+    draw_rectangle_rec(button.rect, colour)
+    draw_rectangle_lines_ex(button.rect, 1, COLOUR_BORDER)
 
-    text_size = FONT_SIZE
-    text_w = measure_text_ex(font, label, float(text_size), 0).x
-    text_h = float(text_size)
-    tx = rect.x + (rect.width - text_w) * 0.5
-    ty = rect.y + (rect.height - text_h) * 0.5
+    text_size: int = FONT_SIZE
+    text_w: float = measure_text_ex(font, button.label, float(text_size), 0).x
+    text_h: float = float(text_size)
+    tx: float = button.rect.x + (button.rect.width - text_w) * 0.5
+    ty: float = button.rect.y + (button.rect.height - text_h) * 0.5
     draw_text_ex(
         font,
-        label,
+        button.label,
         Vector2(tx, ty),
         float(text_size),
         0,
         COLOUR_TEXT,
     )
 
-    return hovered and is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT)
 
-
-def draw_menu_bar(
+def layout_menu_bar_buttons(
     font: Font,
-    rect: Rectangle,
-    items: Sequence[MenuItem],
-) -> None:
-    """Draw the horizontal menu bar and handle item clicks."""
-    draw_rectangle_rec(rect, COLOUR_MENU)
+    bar: Rectangle,
+    items: Sequence[tuple[str, Callable[[], None]]],
+) -> list[Button]:
+    """Place menu buttons left-to-right inside the menu bar."""
+    buttons: list[Button] = []
+    x: float = bar.x + PAD
+    y: float = bar.y + (bar.height - BUTTON_HEIGHT) * 0.5
+    label: str
+    on_click: Callable[[], None]
+    for label, on_click in items:
+        label_w: float = measure_text_ex(font, label, float(FONT_SIZE), 0).x
+        bw: float = max(64.0, label_w + PAD * 2)
+        buttons.append(
+            Button(label, on_click, Rectangle(x, y, bw, float(BUTTON_HEIGHT)))
+        )
+        x += bw + BUTTON_GAP
+    return buttons
+
+
+def layout_stack_buttons(
+    panel: Rectangle,
+    items: Sequence[tuple[str, Callable[[], None]]],
+) -> list[Button]:
+    """Place buttons in a vertical stack inside the side panel."""
+    buttons: list[Button] = []
+    x: float = panel.x + PAD
+    y: float = panel.y + PAD
+    bw: float = panel.width - PAD * 2
+    label: str
+    on_click: Callable[[], None]
+    for label, on_click in items:
+        buttons.append(
+            Button(label, on_click, Rectangle(x, y, bw, float(BUTTON_HEIGHT)))
+        )
+        y += BUTTON_HEIGHT + BUTTON_GAP
+    return buttons
+
+
+def draw_menu_bar(font: Font, bar: Rectangle, buttons: Sequence[Button]) -> None:
+    """Draw the menu bar background and its buttons."""
+    draw_rectangle_rec(bar, COLOUR_MENU)
     draw_line(
-        int(rect.x),
-        int(rect.y + rect.height - 1),
-        int(rect.x + rect.width),
-        int(rect.y + rect.height - 1),
+        int(bar.x),
+        int(bar.y + bar.height - 1),
+        int(bar.x + bar.width),
+        int(bar.y + bar.height - 1),
         COLOUR_BORDER,
     )
-
-    mouse = get_mouse_position()
-    x = rect.x + PAD
-    y = rect.y + (rect.height - BUTTON_HEIGHT) * 0.5
-    for item in items:
-        label_w = measure_text_ex(font, item.label, float(FONT_SIZE), 0).x
-        bw = max(64.0, label_w + PAD * 2)
-        btn = Rectangle(x, y, bw, float(BUTTON_HEIGHT))
-        if is_button_clicked(
-            font,
-            btn,
-            item.label,
-            mouse,
-            is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT),
-        ):
-            item.on_click()
-        x += bw + BUTTON_GAP
+    button: Button
+    for button in buttons:
+        draw_button(button, font)
 
 
 def draw_button_stack(
-    font: Font,
-    rect: Rectangle,
-    buttons: Sequence[StackButton],
+    font: Font, panel: Rectangle, buttons: Sequence[Button]
 ) -> None:
-    """Draw a vertically stacked, scissor-clipped button panel."""
-    draw_rectangle_rec(rect, COLOUR_PANEL)
+    """Draw the side panel background and its clipped buttons."""
+    draw_rectangle_rec(panel, COLOUR_PANEL)
     draw_line(
-        int(rect.x + rect.width - 1),
-        int(rect.y),
-        int(rect.x + rect.width - 1),
-        int(rect.y + rect.height),
+        int(panel.x + panel.width - 1),
+        int(panel.y),
+        int(panel.x + panel.width - 1),
+        int(panel.y + panel.height),
         COLOUR_BORDER,
     )
-
-    mouse = get_mouse_position()
-    over = is_point_in_rect(mouse.x, mouse.y, rect)
-
     begin_scissor_mode(
-        int(rect.x),
-        int(rect.y),
-        int(rect.width),
-        int(rect.height),
+        int(panel.x),
+        int(panel.y),
+        int(panel.width),
+        int(panel.height),
     )
-    y = rect.y + PAD
-    x = rect.x + PAD
-    bw = rect.width - PAD * 2
+    button: Button
     for button in buttons:
-        btn = Rectangle(x, y, bw, float(BUTTON_HEIGHT))
-        visible = btn.y + btn.height > rect.y and btn.y < rect.y + rect.height
-        if visible and is_button_clicked(
-            font,
-            btn,
-            button.label,
-            mouse,
-            is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT),
-        ):
-            if over:
-                button.on_click()
-        y += BUTTON_HEIGHT + BUTTON_GAP
+        if is_button_in_clip(button, panel):
+            draw_button(button, font)
     end_scissor_mode()
 
 
