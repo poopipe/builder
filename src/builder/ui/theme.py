@@ -1,0 +1,23 @@
+"""UI theme constants (sizes and colours)."""
+
+from __future__ import annotations
+
+from pyray import Color
+
+MENU_BAR_HEIGHT = 36
+SIDE_PANEL_WIDTH = 180
+BUTTON_HEIGHT = 28
+BUTTON_GAP = 4
+PAD = 8
+FONT_SIZE = 18
+
+COLOUR_BG = Color(32, 34, 38, 255)
+COLOUR_MENU = Color(45, 48, 54, 255)
+COLOUR_PANEL = Color(40, 43, 49, 255)
+COLOUR_BUTTON = Color(60, 64, 72, 255)
+COLOUR_BUTTON_HOVER = Color(80, 86, 96, 255)
+COLOUR_BUTTON_PRESS = Color(50, 54, 62, 255)
+COLOUR_TEXT = Color(230, 230, 230, 255)
+COLOUR_BORDER = Color(70, 74, 82, 255)
+COLOUR_STATUS = Color(38, 41, 47, 255)
+STATUS_BAR_HEIGHT = 24

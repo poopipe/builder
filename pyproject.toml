@@ -1,0 +1,20 @@
+[project]
+name = "builder"
+version = "0.1.0"
+description = "Procedural mesh placement tool (raylib / pyray framework)"
+authors = [
+    {name = "poopipe",email = "ill_ness@hotmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "raylib>=6.0.1.0",
+]
+
+[tool.poetry]
+packages = [{include = "builder", from = "src"}]
+include = ["builder/assets/fonts/*.ttf"]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
