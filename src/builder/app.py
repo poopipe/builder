@@ -1,4 +1,4 @@
-"""Application window loop, layout, and input routing."""
+"""Application session and main window loop."""
 
 from __future__ import annotations
 
@@ -20,9 +20,13 @@ from pyray import (
     window_should_close,
 )
 
-from builder.io.mesh_import import MeshImporter
+from builder.application_state import ApplicationState
+from builder.commands.builtin import register_builtin_commands
+from builder.commands.commands_types import CommandId
+from builder.commands.registry import CommandRegistry
 from builder.ui.font import load_app_font, unload_app_font
-from builder.ui.theme import COLOUR_BG, FONT_SIZE
+from builder.ui.theme import COLOUR_BG, FONT_SIZE, SIDE_PANEL_WIDTH
+from builder.ui.ui_state import UiState
 from builder.ui.widgets import (
     MenuItem,
     StackButton,
@@ -30,23 +34,93 @@ from builder.ui.widgets import (
     draw_button_stack,
     draw_menu_bar,
     draw_status_bar,
-    point_in_rect,
+    is_point_in_rect,
 )
 from builder.view.viewport import Viewport
 
+MENU_COMMANDS: tuple[CommandId, ...] = (
+    "open",
+    "quit",
+    "about",
+    "toggle_side_panel",
+)
+PANEL_COMMANDS: tuple[CommandId, ...] = (
+    "import_mesh",
+    "toggle_grid",
+    "focus_camera",
+    "nudge_placeholder",
+    "clear_selection",
+    "place_example",
+)
 
-class App:
-    """Top-level application orchestrator."""
+
+class Application:
+    """Owns session state and runs the main loop.
+
+    Structurally satisfies ``CommandContext`` (application, scene, ui).
+    """
 
     def __init__(self) -> None:
-        self._should_close = False
-        self.status = "Ready"
-        self.importer = MeshImporter()
-        self.viewport: Viewport | None = None
+        self.application = ApplicationState()
+        self.scene: Viewport | None = None
+        self.ui = UiState()
         self.font: Font | None = None
+        self.commands = CommandRegistry()
+
+    def menu_items(self) -> list[MenuItem]:
+        items: list[MenuItem] = []
+        for command_id in MENU_COMMANDS:
+            command = self.commands.get(command_id)
+            if command is None:
+                continue
+            items.append(MenuItem(command.label, self.commands.bind(self, command_id)))
+        return items
+
+    def panel_buttons(self) -> list[StackButton]:
+        buttons: list[StackButton] = []
+        for command_id in PANEL_COMMANDS:
+            command = self.commands.get(command_id)
+            if command is None:
+                continue
+            buttons.append(
+                StackButton(command.label, self.commands.bind(self, command_id))
+            )
+        return buttons
+
+    def frame(self) -> None:
+        assert self.scene is not None
+        assert self.font is not None
+
+        panel_width = SIDE_PANEL_WIDTH if self.ui.side_panel_open else 0
+        layout = compute_layout(
+            get_screen_width(),
+            get_screen_height(),
+            panel_width=panel_width,
+        )
+        mouse = get_mouse_position()
+        ui_over = (
+            is_point_in_rect(mouse.x, mouse.y, layout.menu)
+            or (
+                self.ui.side_panel_open
+                and is_point_in_rect(mouse.x, mouse.y, layout.panel)
+            )
+            or is_point_in_rect(mouse.x, mouse.y, layout.status)
+        )
+        self.scene.handle_input(layout.viewport, ui_over)
+
+        begin_drawing()
+        clear_background(COLOUR_BG)
+        self.scene.draw(layout.viewport)
+        draw_menu_bar(self.font, layout.menu, self.menu_items())
+        if self.ui.side_panel_open:
+            draw_button_stack(self.font, layout.panel, self.panel_buttons())
+        draw_status_bar(self.font, layout.status, self.ui.status)
+        end_drawing()
 
     def run(self) -> None:
         """Create the window and run until quit."""
+        register_builtin_commands(self.commands)
+
         set_config_flags(
             ConfigFlags.FLAG_WINDOW_RESIZABLE | ConfigFlags.FLAG_MSAA_4X_HINT
         )
@@ -55,83 +129,14 @@ class App:
         set_exit_key(KeyboardKey.KEY_ESCAPE)
 
         self.font = load_app_font(FONT_SIZE)
-        self.viewport = Viewport()
-        self.status = self.importer.status_message()
+        self.scene = Viewport()
+        self.ui.status = self.application.importer.status_message()
 
-        while not window_should_close() and not self._should_close:
-            self._frame()
+        while not window_should_close() and not self.application.should_close:
+            self.frame()
 
-        assert self.viewport is not None
+        assert self.scene is not None
         assert self.font is not None
-        self.viewport.unload()
+        self.scene.unload()
         unload_app_font(self.font)
         close_window()
-
-    def _quit(self) -> None:
-        self._should_close = True
-
-    def _open(self) -> None:
-        self.status = "Open: not implemented"
-
-    def _toggle_grid(self) -> None:
-        assert self.viewport is not None
-        self.viewport.toggle_grid()
-        self.status = f"Grid {'on' if self.viewport.show_grid else 'off'}"
-
-    def _about(self) -> None:
-        self.status = "Builder framework — pyray / raylib 6"
-
-    def _import_mesh(self) -> None:
-        self.status = (
-            "Import mesh: no file dialog yet. " + self.importer.status_message()
-        )
-
-    def _clear_selection(self) -> None:
-        self.status = "Selection cleared (placeholder)"
-
-    def _place_example(self) -> None:
-        self.status = "Place: procedural placement not implemented yet"
-
-    def _extra_context(self, index: int) -> None:
-        self.status = f"Context action {index}"
-
-    def _frame(self) -> None:
-        assert self.viewport is not None
-        assert self.font is not None
-
-        width = get_screen_width()
-        height = get_screen_height()
-        layout = compute_layout(width, height)
-
-        menu_items = [
-            MenuItem("Open", self._open),
-            MenuItem("Quit", self._quit),
-            MenuItem("Grid", self._toggle_grid),
-            MenuItem("About", self._about),
-        ]
-
-        # Extra stack buttons so clipping is obvious when the window is short.
-        stack = [
-            StackButton("Import mesh", self._import_mesh),
-            StackButton("Focus camera", self.viewport.focus_origin),
-            StackButton("Clear selection", self._clear_selection),
-            StackButton("Place example", self._place_example),
-        ]
-        for i in range(1, 16):
-            stack.append(StackButton(f"Tool {i}", lambda i=i: self._extra_context(i)))
-
-        mouse = get_mouse_position()
-        ui_over = (
-            point_in_rect(mouse.x, mouse.y, layout.menu)
-            or point_in_rect(mouse.x, mouse.y, layout.panel)
-            or point_in_rect(mouse.x, mouse.y, layout.status)
-        )
-        self.viewport.handle_input(layout.viewport, ui_over)
-
-        begin_drawing()
-        clear_background(COLOUR_BG)
-        self.viewport.draw(layout.viewport)
-        draw_menu_bar(self.font, layout.menu, menu_items)
-        draw_button_stack(self.font, layout.panel, stack)
-        draw_status_bar(self.font, layout.status, self.status)
-        end_drawing()

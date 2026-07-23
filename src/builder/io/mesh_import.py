@@ -24,14 +24,14 @@ class MeshImporter:
 
     supported_suffixes = (".fbx",)
 
-    def can_import(self, path: str | Path) -> bool:
-        """Return True if the path looks like a supported mesh file."""
+    def has_valid_suffix(self, path: str | Path) -> bool:
+        """Return True if the path has a supported mesh file suffix."""
         return Path(path).suffix.lower() in self.supported_suffixes
 
     def import_path(self, path: str | Path) -> ImportedMesh:
         """Attempt to import a mesh. Raises until a backend is installed."""
         path = Path(path)
-        if not self.can_import(path):
+        if not self.has_valid_suffix(path):
             raise ValueError(f"unsupported mesh format: {path.suffix}")
         raise NotImplementedError(
             "FBX import is not wired yet. Prefer ufbx (pyufbx/pufbx) for "

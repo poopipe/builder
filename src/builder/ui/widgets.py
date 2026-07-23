@@ -67,11 +67,15 @@ class LayoutRects:
     status: Rectangle
 
 
-def compute_layout(width: int, height: int) -> LayoutRects:
+def compute_layout(
+    width: int,
+    height: int,
+    panel_width: int = SIDE_PANEL_WIDTH,
+) -> LayoutRects:
     """Split the window into menu, side panel, viewport, and status bar."""
     menu_h = MENU_BAR_HEIGHT
     status_h = STATUS_BAR_HEIGHT
-    panel_w = SIDE_PANEL_WIDTH
+    panel_w = max(0, panel_width)
     body_y = menu_h
     body_h = max(0, height - menu_h - status_h)
     return LayoutRects(
@@ -92,22 +96,19 @@ def compute_layout(width: int, height: int) -> LayoutRects:
     )
 
 
-def point_in_rect(x: float, y: float, rect: Rectangle) -> bool:
+def is_point_in_rect(x: float, y: float, rect: Rectangle) -> bool:
     """Return True if (x, y) lies inside rect."""
-    return (
-        rect.x <= x < rect.x + rect.width
-        and rect.y <= y < rect.y + rect.height
-    )
+    return rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height
 
 
-def _draw_button(
+def is_button_clicked(
     font: Font,
     rect: Rectangle,
     label: str,
     mouse: Vector2,
     mouse_pressed: bool,
 ) -> bool:
-    hovered = point_in_rect(mouse.x, mouse.y, rect)
+    hovered = is_point_in_rect(mouse.x, mouse.y, rect)
     pressed = hovered and mouse_pressed
     if pressed:
         colour = COLOUR_BUTTON_PRESS
@@ -140,8 +141,8 @@ def draw_menu_bar(
     font: Font,
     rect: Rectangle,
     items: Sequence[MenuItem],
-) -> bool:
-    """Draw the horizontal menu; return True if the mouse is over the bar."""
+) -> None:
+    """Draw the horizontal menu bar and handle item clicks."""
     draw_rectangle_rec(rect, COLOUR_MENU)
     draw_line(
         int(rect.x),
@@ -152,14 +153,13 @@ def draw_menu_bar(
     )
 
     mouse = get_mouse_position()
-    over = point_in_rect(mouse.x, mouse.y, rect)
     x = rect.x + PAD
     y = rect.y + (rect.height - BUTTON_HEIGHT) * 0.5
     for item in items:
         label_w = measure_text_ex(font, item.label, float(FONT_SIZE), 0).x
         bw = max(64.0, label_w + PAD * 2)
         btn = Rectangle(x, y, bw, float(BUTTON_HEIGHT))
-        if _draw_button(
+        if is_button_clicked(
             font,
             btn,
             item.label,
@@ -168,19 +168,14 @@ def draw_menu_bar(
         ):
             item.on_click()
         x += bw + BUTTON_GAP
-    return over
 
 
 def draw_button_stack(
     font: Font,
     rect: Rectangle,
     buttons: Sequence[StackButton],
-) -> bool:
-    """Draw a vertically stacked, scissor-clipped button panel.
-
-    Buttons that extend past the panel are clipped. Returns True if the
-    mouse is over the panel.
-    """
+) -> None:
+    """Draw a vertically stacked, scissor-clipped button panel."""
     draw_rectangle_rec(rect, COLOUR_PANEL)
     draw_line(
         int(rect.x + rect.width - 1),
@@ -191,7 +186,7 @@ def draw_button_stack(
     )
 
     mouse = get_mouse_position()
-    over = point_in_rect(mouse.x, mouse.y, rect)
+    over = is_point_in_rect(mouse.x, mouse.y, rect)
 
     begin_scissor_mode(
         int(rect.x),
@@ -205,7 +200,7 @@ def draw_button_stack(
     for button in buttons:
         btn = Rectangle(x, y, bw, float(BUTTON_HEIGHT))
         visible = btn.y + btn.height > rect.y and btn.y < rect.y + rect.height
-        if visible and _draw_button(
+        if visible and is_button_clicked(
             font,
             btn,
             button.label,
@@ -216,7 +211,6 @@ def draw_button_stack(
                 button.on_click()
         y += BUTTON_HEIGHT + BUTTON_GAP
     end_scissor_mode()
-    return over
 
 
 def draw_status_bar(font: Font, rect: Rectangle, text: str) -> None:

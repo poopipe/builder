@@ -1,10 +1,10 @@
 """Package entry: ``python -m builder``."""
 
-from builder.app import App
+from builder.app import Application
 
 
 def main() -> None:
-    App().run()
+    Application().run()
 
 
 if __name__ == "__main__":

@@ -63,7 +63,7 @@ class Viewport:
         self.camera.up = Vector3(0.0, 1.0, 0.0)
         self.camera.fovy = 60.0
         self.camera.projection = CameraProjection.CAMERA_PERSPECTIVE
-        self._apply_orbit()
+        self.apply_orbit()
 
         self.lighting = Lighting()
         mesh = gen_mesh_cube(1.5, 1.5, 1.5)
@@ -71,11 +71,12 @@ class Viewport:
         self.model.materials[0].shader = self.lighting.shader
 
         self.show_grid = True
-        self._dragging_orbit = False
-        self._dragging_pan = False
-        self._last_mouse = Vector2(0.0, 0.0)
+        self.placeholder_y = 0.75
+        self.dragging_orbit = False
+        self.dragging_pan = False
+        self.last_mouse = Vector2(0.0, 0.0)
 
-    def _apply_orbit(self) -> None:
+    def apply_orbit(self) -> None:
         pitch = max(-89.0, min(89.0, self.orbit.pitch))
         self.orbit.pitch = pitch
         yaw_r = radians(self.orbit.yaw)
@@ -94,11 +95,15 @@ class Viewport:
         self.orbit.distance = 12.0
         self.orbit.yaw = 45.0
         self.orbit.pitch = 30.0
-        self._apply_orbit()
+        self.apply_orbit()
 
     def toggle_grid(self) -> None:
         """Toggle ground grid visibility."""
         self.show_grid = not self.show_grid
+
+    def nudge_placeholder_up(self) -> None:
+        """Raise the placeholder cube (example scene mutation)."""
+        self.placeholder_y += 0.5
 
     def handle_input(self, view_rect: Rectangle, ui_blocks_mouse: bool) -> None:
         """Orbit / pan / zoom when the mouse is over the viewport."""
@@ -108,33 +113,33 @@ class Viewport:
             and view_rect.y <= mouse.y < view_rect.y + view_rect.height
         )
         if ui_blocks_mouse or not over:
-            self._dragging_orbit = False
-            self._dragging_pan = False
+            self.dragging_orbit = False
+            self.dragging_pan = False
             return
 
         if is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_RIGHT):
-            self._dragging_orbit = True
-            self._last_mouse = mouse
+            self.dragging_orbit = True
+            self.last_mouse = mouse
         if is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_MIDDLE):
-            self._dragging_pan = True
-            self._last_mouse = mouse
+            self.dragging_pan = True
+            self.last_mouse = mouse
         if is_mouse_button_released(MouseButton.MOUSE_BUTTON_RIGHT):
-            self._dragging_orbit = False
+            self.dragging_orbit = False
         if is_mouse_button_released(MouseButton.MOUSE_BUTTON_MIDDLE):
-            self._dragging_pan = False
+            self.dragging_pan = False
 
-        if self._dragging_orbit and is_mouse_button_down(MouseButton.MOUSE_BUTTON_RIGHT):
-            dx = mouse.x - self._last_mouse.x
-            dy = mouse.y - self._last_mouse.y
+        if self.dragging_orbit and is_mouse_button_down(MouseButton.MOUSE_BUTTON_RIGHT):
+            dx = mouse.x - self.last_mouse.x
+            dy = mouse.y - self.last_mouse.y
             self.orbit.yaw -= dx * 0.35
             self.orbit.pitch += dy * 0.35
-            self._last_mouse = mouse
-            self._apply_orbit()
+            self.last_mouse = mouse
+            self.apply_orbit()
 
-        if self._dragging_pan and is_mouse_button_down(MouseButton.MOUSE_BUTTON_MIDDLE):
-            dx = mouse.x - self._last_mouse.x
-            dy = mouse.y - self._last_mouse.y
-            self._last_mouse = mouse
+        if self.dragging_pan and is_mouse_button_down(MouseButton.MOUSE_BUTTON_MIDDLE):
+            dx = mouse.x - self.last_mouse.x
+            dy = mouse.y - self.last_mouse.y
+            self.last_mouse = mouse
             forward = vector3_normalize(
                 vector3_subtract(self.camera.target, self.camera.position)
             )
@@ -147,12 +152,12 @@ class Viewport:
             )
             assert self.orbit.target is not None
             self.orbit.target = vector3_add(self.orbit.target, delta)
-            self._apply_orbit()
+            self.apply_orbit()
 
         wheel = get_mouse_wheel_move()
         if wheel != 0.0:
             self.orbit.distance = max(2.0, min(80.0, self.orbit.distance - wheel * 1.5))
-            self._apply_orbit()
+            self.apply_orbit()
 
     def draw(self, view_rect: Rectangle) -> None:
         """Render the 3D scene into the viewport rectangle using scissor."""
@@ -168,7 +173,12 @@ class Viewport:
         begin_mode_3d(self.camera)
         if self.show_grid:
             draw_ground_grid(40, 1.0)
-        draw_model(self.model, Vector3(0.0, 0.75, 0.0), 1.0, WHITE)
+        draw_model(
+            self.model,
+            Vector3(0.0, self.placeholder_y, 0.0),
+            1.0,
+            WHITE,
+        )
         for light in self.lighting.lights:
             draw_sphere(light.position, 0.15, Color(255, 220, 120, 255))
         end_mode_3d()
