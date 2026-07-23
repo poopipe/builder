@@ -29,4 +29,3 @@ def transform_at(translation: Vector3) -> Transform:
 
 
 BUILTIN_CUBE: MeshId = MeshId("cube")
-PLACEHOLDER_NODE_ID: str = "placeholder"

@@ -30,10 +30,6 @@ class SceneContext(Protocol):
         """Remove every scene node."""
         ...
 
-    def nudge_placeholder_up(self) -> None:
-        """Example scene mutation: raise the placeholder node."""
-        ...
-
 
 class UiContext(Protocol):
     """UI decoration and shell state exposed to commands."""

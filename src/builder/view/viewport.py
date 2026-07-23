@@ -12,7 +12,6 @@ from pyray import (
     Color,
     MouseButton,
     Rectangle,
-    Transform,
     Vector2,
     Vector3,
     begin_mode_3d,
@@ -35,7 +34,7 @@ from pyray import (
 
 from builder.meshes.builtins import make_cube
 from builder.scene.scene import Scene
-from builder.scene.scene_types import BUILTIN_CUBE, PLACEHOLDER_NODE_ID, Node
+from builder.scene.scene_types import BUILTIN_CUBE, Node
 from builder.view.grid import draw_ground_grid
 from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
@@ -118,26 +117,6 @@ class Viewport:
     def clear_nodes(self) -> None:
         """Remove every scene node."""
         self.nodes.clear_nodes()
-
-    def nudge_placeholder_up(self) -> None:
-        """ raise the placeholder node (example scene mutation) """
-        existing: Node | None = self.nodes.nodes.get(PLACEHOLDER_NODE_ID)
-        if existing is None:
-            return
-        translation: Vector3 = existing.transform.translation
-        self.nodes.add_nodes(
-            [
-                Node(
-                    id=existing.id,
-                    mesh_id=existing.mesh_id,
-                    transform=Transform(
-                        vector3_add(translation, Vector3(0.0, 0.5, 0.0)),
-                        existing.transform.rotation,
-                        existing.transform.scale,
-                    ),
-                )
-            ]
-        )
 
     def handle_input(self, view_rect: Rectangle, ui_blocks_mouse: bool) -> None:
         """Orbit / pan / zoom when the mouse is over the viewport."""
