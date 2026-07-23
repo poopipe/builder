@@ -16,11 +16,12 @@ class MeshId:
 
 @dataclass(frozen=True)
 class Node:
-    """A placed instance of a mesh in the scene."""
+    """ a scene node; mesh_id none means transform-only group """
 
     id: str
-    mesh_id: MeshId
+    parent_id: str | None
     transform: Transform
+    mesh_id: MeshId | None
 
 
 def transform_at(translation: Vector3) -> Transform:

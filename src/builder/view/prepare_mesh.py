@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pyray import Material, Mesh, Shader, load_material_default
+from pyray import (
+    BoundingBox,
+    Material,
+    Mesh,
+    Shader,
+    get_mesh_bounding_box,
+    load_material_default,
+)
 
 
 @dataclass(frozen=True)
@@ -13,6 +20,7 @@ class PreparedMesh:
 
     mesh: Mesh
     material: Material
+    local_bounds: BoundingBox
 
 
 def prepare_mesh(mesh: Mesh, shader: Shader) -> PreparedMesh:
@@ -27,4 +35,5 @@ def prepare_mesh(mesh: Mesh, shader: Shader) -> PreparedMesh:
         raise RuntimeError("mesh has no vertices")
     material: Material = load_material_default()
     material.shader = shader
-    return PreparedMesh(mesh=mesh, material=material)
+    local_bounds: BoundingBox = get_mesh_bounding_box(mesh)
+    return PreparedMesh(mesh=mesh, material=material, local_bounds=local_bounds)

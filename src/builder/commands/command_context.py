@@ -7,12 +7,16 @@ from typing import Protocol
 
 from builder.io.mesh_import import MeshImporter
 from builder.scene.scene_types import Node
+from builder.view.gizmo_types import GizmoMode, GizmoSpace
 
 
 class SceneContext(Protocol):
     """3D scene capabilities exposed to commands."""
 
     show_grid: bool
+    selected_ids: set[str]
+    gizmo_mode: GizmoMode
+    gizmo_space: GizmoSpace
 
     def toggle_grid(self) -> None:
         """Show or hide the ground grid."""
@@ -28,6 +32,22 @@ class SceneContext(Protocol):
 
     def clear_nodes(self) -> None:
         """Remove every scene node."""
+        ...
+
+    def set_selection(self, group_ids: Sequence[str]) -> None:
+        """Replace the active group selection."""
+        ...
+
+    def clear_selection(self) -> None:
+        """Clear the active group selection."""
+        ...
+
+    def set_gizmo_mode(self, mode: GizmoMode) -> None:
+        """Set the active transform gizmo mode."""
+        ...
+
+    def set_gizmo_space(self, space: GizmoSpace) -> None:
+        """Set whether the gizmo operates in world or local space."""
         ...
 
 
