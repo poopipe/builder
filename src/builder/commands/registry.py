@@ -1,38 +1,35 @@
-"""Command registration and dispatch."""
+"""Command registration and binding."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 from builder.commands.command_context import CommandContext
-from builder.commands.commands_types import Command, CommandId
+from builder.commands.commands_types import Command
 
 
 @dataclass
 class CommandRegistry:
-    """Per-application map of command id → handler."""
+    """Ordered list of available commands."""
 
-    commands: dict[CommandId, Command] = field(default_factory=dict)
+    commands: list[Command] = field(default_factory=list)
 
     def register(self, command: Command) -> None:
-        """Add or replace a command."""
-        self.commands[command.id] = command
+        """Append a command."""
+        self.commands.append(command)
 
-    def get(self, command_id: CommandId) -> Command | None:
-        """Look up a command by id."""
-        return self.commands.get(command_id)
 
-    def dispatch(self, context: CommandContext, command_id: CommandId) -> None:
-        """Execute a command, or set an error status if missing."""
-        command = self.commands.get(command_id)
-        if command is None:
-            context.ui.status = f"Unknown command: {command_id}"
-            return
-        command.run(context)
+def register_commands(commands: Iterable[Command]) -> CommandRegistry:
+    """Register commands into a new registry and return it."""
+    registry = CommandRegistry()
+    for command in commands:
+        registry.register(command)
+    return registry
 
-    def bind(
-        self, context: CommandContext, command_id: CommandId
-    ) -> Callable[[], None]:
-        """Return a zero-arg callback suitable for UI widgets."""
-        return lambda: self.dispatch(context, command_id)
+
+def bind_command(
+    context: CommandContext, command: Command
+) -> Callable[[], None]:
+    """Return a zero-arg callback that runs ``command`` with ``context``."""
+    return lambda: command.run(context)

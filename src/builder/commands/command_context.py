@@ -14,12 +14,15 @@ class SceneContext(Protocol):
 
     def toggle_grid(self) -> None:
         """Show or hide the ground grid."""
+        ...
 
     def focus_origin(self) -> None:
         """Reset the camera on the origin."""
+        ...
 
     def nudge_placeholder_up(self) -> None:
         """Example scene mutation: raise the placeholder model."""
+        ...
 
 
 class UiContext(Protocol):
@@ -30,6 +33,7 @@ class UiContext(Protocol):
 
     def toggle_side_panel(self) -> None:
         """Show or hide the context side panel."""
+        ...
 
 
 class ApplicationContext(Protocol):
@@ -45,11 +49,14 @@ class CommandContext(Protocol):
     @property
     def application(self) -> ApplicationContext:
         """Session / application state."""
+        ...
 
     @property
-    def scene(self) -> SceneContext | None:
-        """Active 3D scene, if created."""
+    def scene(self) -> SceneContext:
+        """Active 3D scene."""
+        ...
 
     @property
     def ui(self) -> UiContext:
         """UI shell state."""
+        ...

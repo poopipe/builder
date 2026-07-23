@@ -10,9 +10,9 @@ Style:
 - the _method convention is stupid - it's not actually private so there is no point pretending it is.  just name the methods
 - do not name modules types.py (collides / confuses tooling); use modulename_types.py
 - methods/functions that return a bool should be prefixed with is_, can_, has_ eg. is_point_in_rect(), can_import(), has_valid_suffix()  
+- I insist on strict type annotations - that means that the initial declaration of every variable must be annotated
 
 Imports:
 - do not shorten library names eg. pyray should be imported as pyray, not pr
 - in general do not import full modules. instead import types/functions etc. individually eg. from module import function, otherfunction, a_type
 - in general i dislike object oriented design patterns, i prefer a functional style using dataclasses and libraries of pure (where possible) functions (exceptions are allowed with discussion)
-- I insist on strict type annotations
