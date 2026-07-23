@@ -3,95 +3,89 @@
 from __future__ import annotations
 
 from builder.commands.command_context import CommandContext
-from builder.commands.commands_types import Command
+from builder.commands.commands_types import CommandItem, Command, CommandEntry
 
 
-def quit_app(context: CommandContext) -> None:
+def quit_app(context: CommandContext, _: None) -> None:
     context.application.should_close = True
 
 
-def open_scene(context: CommandContext) -> None:
+def open_scene(context: CommandContext, _: None) -> None:
     context.ui.status = "Open: not implemented"
 
 
-def about(context: CommandContext) -> None:
+def about(context: CommandContext, _: None) -> None:
     context.ui.status = "Builder framework — pyray / raylib 6"
 
 
-def import_mesh(context: CommandContext) -> None:
+def import_mesh(context: CommandContext, _: None) -> None:
     context.ui.status = (
         "Import mesh: no file dialog yet. "
         + context.application.importer.status_message()
     )
 
 
-def clear_selection(context: CommandContext) -> None:
+def clear_selection(context: CommandContext, _: None) -> None:
     context.ui.status = "Selection cleared (placeholder)"
 
 
-def place_example(context: CommandContext) -> None:
+def place_example(context: CommandContext, _: None) -> None:
     context.ui.status = "Place: procedural placement not implemented yet"
 
 
-def toggle_grid(context: CommandContext) -> None:
+def toggle_grid(context: CommandContext, _: None) -> None:
     context.scene.toggle_grid()
     context.ui.status = f"Grid {'on' if context.scene.show_grid else 'off'}"
 
 
-def focus_camera(context: CommandContext) -> None:
+def focus_camera(context: CommandContext, _: None) -> None:
     context.scene.focus_origin()
     context.ui.status = "Camera focused on origin"
 
 
-def toggle_side_panel(context: CommandContext) -> None:
+def toggle_side_panel(context: CommandContext, _: None) -> None:
     context.ui.toggle_side_panel()
     state = "shown" if context.ui.side_panel_open else "hidden"
     context.ui.status = f"Side panel {state}"
 
 
-def make_nudge_up_command(steps: int = 1) -> Command:
-    """Build a scene nudge command; ``steps`` is closed over by ``run``."""
-
-    def run(context: CommandContext) -> None:
-        for _ in range(steps):
-            context.scene.nudge_placeholder_up()
-        context.ui.status = (
-            "Nudged placeholder upward"
-            if steps == 1
-            else f"Nudged placeholder upward x{steps}"
-        )
-
-    label = "Nudge up" if steps == 1 else f"Nudge up x{steps}"
-    return Command(label, run)
+def nudge_placeholder_up(context: CommandContext, steps: int) -> None:
+    for _ in range(steps):
+        context.scene.nudge_placeholder_up()
+    context.ui.status = (
+        "Nudged placeholder upward"
+        if steps == 1
+        else f"Nudged placeholder upward x{steps}"
+    )
 
 
-QUIT = Command("Quit", quit_app)
-OPEN = Command("Open", open_scene)
-ABOUT = Command("About", about)
-TOGGLE_SIDE_PANEL = Command("Panel", toggle_side_panel)
-IMPORT_MESH = Command("Import mesh", import_mesh)
-TOGGLE_GRID = Command("Grid", toggle_grid)
-FOCUS_CAMERA = Command("Focus camera", focus_camera)
-NUDGE_PLACEHOLDER = make_nudge_up_command(1)
-CLEAR_SELECTION = Command("Clear selection", clear_selection)
-PLACE_EXAMPLE = Command("Place example", place_example)
+QUIT: Command[None] = Command("Quit", quit_app)
+OPEN: Command[None] = Command("Open", open_scene)
+ABOUT: Command[None] = Command("About", about)
+TOGGLE_SIDE_PANEL: Command[None] = Command("Panel", toggle_side_panel)
+IMPORT_MESH: Command[None] = Command("Import mesh", import_mesh)
+TOGGLE_GRID: Command[None] = Command("Grid", toggle_grid)
+FOCUS_CAMERA: Command[None] = Command("Focus camera", focus_camera)
+NUDGE_PLACEHOLDER: Command[int] = Command("Nudge up", nudge_placeholder_up)
+CLEAR_SELECTION: Command[None] = Command("Clear selection", clear_selection)
+PLACE_EXAMPLE: Command[None] = Command("Place example", place_example)
 
-MENU_COMMANDS: tuple[Command, ...] = (
-    OPEN,
-    QUIT,
-    ABOUT,
-    TOGGLE_SIDE_PANEL,
+MENU_COMMANDS: tuple[CommandItem, ...] = (
+    CommandEntry(OPEN, None),
+    CommandEntry(QUIT, None),
+    CommandEntry(ABOUT, None),
+    CommandEntry(TOGGLE_SIDE_PANEL, None),
 )
-PANEL_COMMANDS: tuple[Command, ...] = (
-    IMPORT_MESH,
-    TOGGLE_GRID,
-    FOCUS_CAMERA,
-    NUDGE_PLACEHOLDER,
-    CLEAR_SELECTION,
-    PLACE_EXAMPLE,
+PANEL_COMMANDS: tuple[CommandItem, ...] = (
+    CommandEntry(IMPORT_MESH, None),
+    CommandEntry(TOGGLE_GRID, None),
+    CommandEntry(FOCUS_CAMERA, None),
+    CommandEntry(NUDGE_PLACEHOLDER, 1),
+    CommandEntry(CLEAR_SELECTION, None),
+    CommandEntry(PLACE_EXAMPLE, None),
 )
 
 
-def builtin_commands() -> tuple[Command, ...]:
+def builtin_commands() -> tuple[CommandItem, ...]:
     """Return the default command set."""
     return MENU_COMMANDS + PANEL_COMMANDS

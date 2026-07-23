@@ -30,8 +30,8 @@ from builder.commands.builtin import (
     PANEL_COMMANDS,
     builtin_commands,
 )
-from builder.commands.commands_types import Command
-from builder.commands.registry import bind_command, register_commands
+from builder.commands.commands_types import CommandItem
+from builder.commands.registry import bind_entry, register_commands
 from builder.ui.font import load_app_font, unload_app_font
 from builder.ui.theme import COLOUR_BG, FONT_SIZE, SIDE_PANEL_WIDTH
 from builder.ui.ui_state import UiState
@@ -52,29 +52,24 @@ from builder.view.viewport import Viewport
 
 
 class Application:
-    """Owns session state and runs the main loop.
-
-    Structurally satisfies ``CommandContext`` (application, scene, ui).
-    Construct only after the raylib window exists so ``scene`` and ``font``
-    can be created up front.
+    """
+    construct after raylib window exists  - requires scene and font
     """
 
     def __init__(self, scene: Viewport, font: Font) -> None:
         self.application: ApplicationState = ApplicationState()
         self.scene: Viewport = scene
-        self.ui: UiState = UiState(
-            status=self.application.importer.status_message()
-        )
+        self.ui: UiState = UiState(status=self.application.importer.status_message())
         self.font: Font = font
         self.commands = register_commands(builtin_commands())
 
     def command_button_items(
-        self, commands: tuple[Command, ...]
+        self, entries: tuple[CommandItem, ...]
     ) -> list[tuple[str, Callable[[], None]]]:
         items: list[tuple[str, Callable[[], None]]] = []
-        command: Command
-        for command in commands:
-            items.append((command.label, bind_command(self, command)))
+        entry: CommandItem
+        for entry in entries:
+            items.append((entry.command.label, bind_entry(self, entry)))
         return items
 
     def frame(self) -> None:
@@ -131,10 +126,8 @@ class Application:
 
 
 def open_window() -> None:
-    """Create the raylib window (required before GPU resources)."""
-    set_config_flags(
-        ConfigFlags.FLAG_WINDOW_RESIZABLE | ConfigFlags.FLAG_MSAA_4X_HINT
-    )
+    """create raylib window - must do this before we start using GPU resources"""
+    set_config_flags(ConfigFlags.FLAG_WINDOW_RESIZABLE | ConfigFlags.FLAG_MSAA_4X_HINT)
     init_window(1280, 720, "Builder")
     if not is_window_ready():
         raise RuntimeError("failed to create application window")
@@ -143,7 +136,7 @@ def open_window() -> None:
 
 
 def run_application() -> None:
-    """Open the window, build the application, run until quit, then tear down."""
+    """run the application and then clean up"""
     open_window()
     font: Font = load_app_font(FONT_SIZE)
 

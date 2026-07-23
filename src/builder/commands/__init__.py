@@ -11,23 +11,27 @@ from builder.commands.command_context import (
     SceneContext,
     UiContext,
 )
-from builder.commands.commands_types import Command
+from builder.commands.commands_types import CommandItem, Command, CommandEntry
 from builder.commands.registry import (
     CommandRegistry,
     bind_command,
+    bind_entry,
     register_commands,
 )
 
 __all__ = [
+    "AnyCommandEntry",
     "ApplicationContext",
     "Command",
     "CommandContext",
+    "CommandEntry",
     "CommandRegistry",
     "MENU_COMMANDS",
     "PANEL_COMMANDS",
     "SceneContext",
     "UiContext",
     "bind_command",
+    "bind_entry",
     "builtin_commands",
     "register_commands",
 ]
