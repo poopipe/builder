@@ -52,8 +52,11 @@ from builder.view.viewport import Viewport
 
 
 class Application:
-    """
-    construct after raylib window exists  - requires scene and font
+    """Owns session state and runs the main loop.
+
+    Structurally satisfies ``CommandContext`` (application, scene, ui).
+    Construct only after the raylib window exists so ``scene`` and ``font``
+    can be created up front.
     """
 
     def __init__(self, scene: Viewport, font: Font) -> None:
@@ -126,7 +129,7 @@ class Application:
 
 
 def open_window() -> None:
-    """create raylib window - must do this before we start using GPU resources"""
+    """Create the raylib window (required before GPU resources)."""
     set_config_flags(ConfigFlags.FLAG_WINDOW_RESIZABLE | ConfigFlags.FLAG_MSAA_4X_HINT)
     init_window(1280, 720, "Builder")
     if not is_window_ready():
@@ -136,7 +139,7 @@ def open_window() -> None:
 
 
 def run_application() -> None:
-    """run the application and then clean up"""
+    """Open the window, build the application, run until quit, then tear down."""
     open_window()
     font: Font = load_app_font(FONT_SIZE)
 

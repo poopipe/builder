@@ -1,7 +1,8 @@
-"""3D viewport: camera, grid, lit placeholder, and resize-aware draw."""
+"""3D viewport: camera, grid, scene nodes, and resize-aware draw."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import cos, radians, sin
 
@@ -9,28 +10,21 @@ from pyray import (
     Camera3D,
     CameraProjection,
     Color,
-    Mesh,
-    Model,
     MouseButton,
     Rectangle,
     Vector2,
     Vector3,
-    WHITE,
     begin_mode_3d,
     begin_scissor_mode,
     clear_background,
-    draw_model,
     draw_sphere,
     end_mode_3d,
     end_scissor_mode,
-    gen_mesh_cube,
     get_mouse_position,
     get_mouse_wheel_move,
     is_mouse_button_down,
     is_mouse_button_pressed,
     is_mouse_button_released,
-    load_model_from_mesh,
-    unload_model,
     vector3_add,
     vector3_cross_product,
     vector3_normalize,
@@ -38,8 +32,20 @@ from pyray import (
     vector3_subtract,
 )
 
+from builder.meshes.builtins import make_cube
+from builder.scene.scene import Scene
+from builder.scene.scene_types import (
+    BUILTIN_CUBE,
+    PLACEHOLDER_NODE_ID,
+    Node,
+    Transform,
+    Vec3,
+)
 from builder.view.grid import draw_ground_grid
+from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
+from builder.view.mesh_table import MeshTable
+from builder.view.prepare_mesh import prepare_mesh
 
 
 @dataclass
@@ -57,7 +63,7 @@ class OrbitState:
 
 
 class Viewport:
-    """Owns the 3D camera, lighting, and placeholder geometry."""
+    """Owns the 3D camera, lighting, prepared meshes, and scene nodes."""
 
     def __init__(self) -> None:
         self.orbit: OrbitState = OrbitState()
@@ -68,26 +74,28 @@ class Viewport:
         self.apply_orbit()
 
         self.lighting: Lighting = Lighting()
-        mesh: Mesh = gen_mesh_cube(1.5, 1.5, 1.5)
-        vertex_count: int = int(
-            getattr(mesh, "vertexCount", getattr(mesh, "vertex_count", 0))
-        )
-        if vertex_count <= 0:
+        self.mesh_table: MeshTable = MeshTable()
+        self.nodes: Scene = Scene()
+        try:
+            self.mesh_table.add(
+                BUILTIN_CUBE,
+                prepare_mesh(make_cube(1.5), self.lighting.shader),
+            )
+            self.nodes.add_nodes(
+                [
+                    Node(
+                        id=PLACEHOLDER_NODE_ID,
+                        mesh_id=BUILTIN_CUBE,
+                        transform=Transform(position=Vec3(0.0, 0.75, 0.0)),
+                    )
+                ]
+            )
+        except (RuntimeError, ValueError):
+            self.mesh_table.unload()
             self.lighting.unload()
-            raise RuntimeError("failed to generate placeholder mesh")
-
-        self.model: Model = load_model_from_mesh(mesh)
-        mesh_count: int = int(
-            getattr(self.model, "meshCount", getattr(self.model, "mesh_count", 0))
-        )
-        if mesh_count <= 0:
-            self.lighting.unload()
-            raise RuntimeError("failed to create placeholder model")
-
-        self.model.materials[0].shader = self.lighting.shader
+            raise
 
         self.show_grid: bool = True
-        self.placeholder_y: float = 0.75
         self.dragging_orbit: bool = False
         self.dragging_pan: bool = False
         self.last_mouse: Vector2 = Vector2(0.0, 0.0)
@@ -117,9 +125,33 @@ class Viewport:
         """Toggle ground grid visibility."""
         self.show_grid = not self.show_grid
 
+    def add_nodes(self, nodes: Sequence[Node]) -> None:
+        """Insert or replace scene nodes."""
+        self.nodes.add_nodes(nodes)
+
+    def clear_nodes(self) -> None:
+        """Remove every scene node."""
+        self.nodes.clear_nodes()
+
     def nudge_placeholder_up(self) -> None:
-        """Raise the placeholder cube (example scene mutation)."""
-        self.placeholder_y += 0.5
+        """Raise the placeholder node (example scene mutation)."""
+        existing: Node | None = self.nodes.nodes.get(PLACEHOLDER_NODE_ID)
+        if existing is None:
+            return
+        position: Vec3 = existing.transform.position
+        self.nodes.add_nodes(
+            [
+                Node(
+                    id=existing.id,
+                    mesh_id=existing.mesh_id,
+                    transform=Transform(
+                        position=Vec3(position.x, position.y + 0.5, position.z),
+                        rotation=existing.transform.rotation,
+                        scale=existing.transform.scale,
+                    ),
+                )
+            ]
+        )
 
     def handle_input(self, view_rect: Rectangle, ui_blocks_mouse: bool) -> None:
         """Orbit / pan / zoom when the mouse is over the viewport."""
@@ -189,12 +221,7 @@ class Viewport:
         begin_mode_3d(self.camera)
         if self.show_grid:
             draw_ground_grid(40, 1.0)
-        draw_model(
-            self.model,
-            Vector3(0.0, self.placeholder_y, 0.0),
-            1.0,
-            WHITE,
-        )
+        draw_nodes_instanced(self.mesh_table, self.nodes.all_nodes())
         for light in self.lighting.lights:
             draw_sphere(light.position, 0.15, Color(255, 220, 120, 255))
         end_mode_3d()
@@ -202,5 +229,5 @@ class Viewport:
 
     def unload(self) -> None:
         """Release GPU resources."""
-        unload_model(self.model)
+        self.mesh_table.unload()
         self.lighting.unload()

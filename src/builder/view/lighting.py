@@ -1,4 +1,4 @@
-"""Three-point lighting via a small GLSL shader."""
+"""Three-point lighting via a small GLSL shader (instanced meshes)."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ from dataclasses import dataclass
 
 from pyray import (
     Shader,
+    ShaderLocationIndex,
     ShaderUniformDataType,
     Vector3,
     ffi,
     get_shader_location,
+    get_shader_location_attrib,
     is_shader_valid,
     load_shader_from_memory,
     set_shader_value,
@@ -21,21 +23,19 @@ VS_SOURCE: str = """
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;
-in vec4 vertexColor;
+in mat4 instanceTransform;
 out vec3 fragPosition;
 out vec2 fragTexCoord;
 out vec4 fragColor;
 out vec3 fragNormal;
 uniform mat4 mvp;
-uniform mat4 matModel;
-uniform mat4 matNormal;
 void main()
 {
-    fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+    fragPosition = vec3(instanceTransform * vec4(vertexPosition, 1.0));
     fragTexCoord = vertexTexCoord;
-    fragColor = vertexColor;
-    fragNormal = normalize(vec3(matNormal * vec4(vertexNormal, 1.0)));
-    gl_Position = mvp * vec4(vertexPosition, 1.0);
+    fragColor = vec4(1.0);
+    fragNormal = normalize(mat3(instanceTransform) * vertexNormal);
+    gl_Position = mvp * instanceTransform * vec4(vertexPosition, 1.0);
 }
 """
 
@@ -107,12 +107,28 @@ class PointLight:
 
 
 class Lighting:
-    """Key / fill / rim lights bound to a shader."""
+    """Key / fill / rim lights bound to an instancing-capable shader."""
 
     def __init__(self) -> None:
         self.shader: Shader = load_shader_from_memory(VS_SOURCE, FS_SOURCE)
         if not is_shader_valid(self.shader):
             raise RuntimeError("failed to compile lighting shader")
+
+        self.shader.locs[ShaderLocationIndex.SHADER_LOC_MATRIX_MVP] = (
+            get_shader_location(self.shader, "mvp")
+        )
+        self.shader.locs[ShaderLocationIndex.SHADER_LOC_VERTEX_INSTANCETRANSFORM] = (
+            get_shader_location_attrib(self.shader, "instanceTransform")
+        )
+        if self.shader.locs[ShaderLocationIndex.SHADER_LOC_MATRIX_MVP] < 0:
+            unload_shader(self.shader)
+            raise RuntimeError("lighting shader is missing mvp uniform")
+        if (
+            self.shader.locs[ShaderLocationIndex.SHADER_LOC_VERTEX_INSTANCETRANSFORM]
+            < 0
+        ):
+            unload_shader(self.shader)
+            raise RuntimeError("lighting shader is missing instanceTransform")
 
         self.loc_view: int = get_shader_location(self.shader, "viewPos")
         self.loc_ambient: int = get_shader_location(self.shader, "ambient")

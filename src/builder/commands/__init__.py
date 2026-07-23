@@ -20,7 +20,7 @@ from builder.commands.registry import (
 )
 
 __all__ = [
-    "AnyCommandEntry",
+    "CommandItem",
     "ApplicationContext",
     "Command",
     "CommandContext",

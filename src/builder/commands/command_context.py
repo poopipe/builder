@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from builder.io.mesh_import import MeshImporter
+from builder.scene.scene_types import Node
 
 
 class SceneContext(Protocol):
@@ -20,8 +22,16 @@ class SceneContext(Protocol):
         """Reset the camera on the origin."""
         ...
 
+    def add_nodes(self, nodes: Sequence[Node]) -> None:
+        """Insert or replace scene nodes."""
+        ...
+
+    def clear_nodes(self) -> None:
+        """Remove every scene node."""
+        ...
+
     def nudge_placeholder_up(self) -> None:
-        """Example scene mutation: raise the placeholder model."""
+        """Example scene mutation: raise the placeholder node."""
         ...
 
 

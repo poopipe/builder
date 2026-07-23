@@ -1,0 +1,29 @@
+---
+description: Builder project agent rules (mirrors Rules.md)
+alwaysApply: true
+---
+
+# builder agent rules
+
+Mirror of `Rules.md`. Prefer on-disk `Rules.md` if they diverge.
+
+## General
+
+- Responses must be concise and deliver only the information requested. If you have something other than a direct answer to a question to say, confirm that the user wants to hear it before wasting tokens.
+- Comments should be concise and describe intent rather than behaviour.
+- The user edits code outside Cursor — always work from the most recently saved on-disk file.
+- Never use PowerShell for shell commands or file I/O; use `cmd`, `git`, `python`, or other direct tools instead.
+- No mutable module-level globals; pass state explicitly (immutable constants are fine).
+
+## Style
+
+- Do not use the `_method` convention; just name the methods.
+- Do not name modules `types.py`; use `modulename_types.py`.
+- **US spelling** in prose, comments, and identifiers (not UK spelling).
+
+## Imports / types / design
+
+- Do not shorten library names (e.g. `pyray`, not `pr`).
+- Prefer individual imports over importing full modules.
+- Prefer a functional style with dataclasses and pure functions where possible; classes only with discussion.
+- Strict type annotations on every variable at first declaration.
