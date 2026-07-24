@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 from pyray import (
-    Quaternion,
     Transform,
     Vector3,
     quaternion_multiply,
@@ -15,7 +14,7 @@ from pyray import (
     vector3_subtract,
 )
 
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import Node, Quaternion
 
 
 def with_transform(node: Node, transform: Transform) -> Node:

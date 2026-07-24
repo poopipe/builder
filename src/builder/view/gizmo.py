@@ -8,7 +8,6 @@ from math import atan2, cos, pi, sin
 from pyray import (
     Camera3D,
     Color,
-    Quaternion,
     Ray,
     RayCollision,
     Transform,
@@ -30,7 +29,7 @@ from pyray import (
 )
 
 from builder.scene.scene import Scene
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import Node, Quaternion
 from builder.scene.transform_ops import (
     rotate_transform_local,
     rotate_transform_world,

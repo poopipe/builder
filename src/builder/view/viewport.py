@@ -12,7 +12,6 @@ from pyray import (
     Color,
     KeyboardKey,
     MouseButton,
-    Quaternion,
     Ray,
     Rectangle,
     Vector2,
@@ -38,7 +37,7 @@ from pyray import (
 
 from builder.meshes.builtins import make_cube
 from builder.scene.scene import Scene
-from builder.scene.scene_types import BUILTIN_CUBE, Node
+from builder.scene.scene_types import BUILTIN_CUBE, Node, Quaternion
 from builder.scene.selection import root_group_id
 from builder.view.gizmo import (
     GizmoState,

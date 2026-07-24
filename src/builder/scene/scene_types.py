@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pyray import Transform, Vector3, quaternion_identity
+from pyray import Transform, Vector3, Vector4, quaternion_identity
+
+# raylib stores quaternions as Vector4 (x, y, z, w); stubs have no Quaternion type
+type Quaternion = Vector4
 
 
 @dataclass(frozen=True)
