@@ -38,9 +38,25 @@ from pyray import (
 )
 
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
-from builder.meshes.builtins import make_cube
+from builder.meshes.builtins import (
+    make_cone,
+    make_cube,
+    make_cylinder,
+    make_sphere,
+    make_torus,
+)
 from builder.scene.scene import Scene
-from builder.scene.scene_types import builtin_cube, MeshId, Node, Quaternion
+from builder.scene.scene_types import (
+    MeshId,
+    Node,
+    Quaternion,
+    builtin_cone,
+    builtin_cube,
+    builtin_cylinder,
+    builtin_mesh_ids,
+    builtin_sphere,
+    builtin_torus,
+)
 from builder.scene.selection import root_group_id
 from builder.view.gizmo import (
     GizmoState,
@@ -98,10 +114,23 @@ class Viewport:
         self.draw_cache: DrawCache = DrawCache()
         self.gizmo: GizmoState = GizmoState()
         try:
-            self.mesh_table.add(
-                builtin_cube,
-                prepare_mesh(make_cube(1.5), self.lighting.shader),
+            builtins: tuple[tuple[MeshId, PreparedMesh], ...] = (
+                (builtin_cube, prepare_mesh(make_cube(), self.lighting.shader)),
+                (
+                    builtin_cylinder,
+                    prepare_mesh(make_cylinder(), self.lighting.shader),
+                ),
+                (builtin_cone, prepare_mesh(make_cone(), self.lighting.shader)),
+                (builtin_torus, prepare_mesh(make_torus(), self.lighting.shader)),
+                (
+                    builtin_sphere,
+                    prepare_mesh(make_sphere(), self.lighting.shader),
+                ),
             )
+            mesh_id: MeshId
+            prepared: PreparedMesh
+            for mesh_id, prepared in builtins:
+                self.mesh_table.add(mesh_id, prepared)
         except (RuntimeError, ValueError):
             self.mesh_table.unload()
             self.lighting.unload()
@@ -168,8 +197,8 @@ class Viewport:
         return mesh_id
 
     def clear_non_builtin_meshes(self) -> None:
-        """unload every imported mesh; keep built-in cube GPU data"""
-        self.mesh_table.clear_except({builtin_cube})
+        """unload every imported mesh; keep built-in GPU data"""
+        self.mesh_table.clear_except(builtin_mesh_ids)
 
     def rebind_mesh_id(self, from_id: MeshId, to_id: MeshId) -> None:
         """move a prepared mesh to a new id (for stable scene-file ids)"""

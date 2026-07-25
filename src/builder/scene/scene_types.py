@@ -38,3 +38,16 @@ def transform_at(translation: Vector3) -> Transform:
 
 
 builtin_cube: MeshId = MeshId("cube")
+builtin_cylinder: MeshId = MeshId("cylinder")
+builtin_cone: MeshId = MeshId("cone")
+builtin_torus: MeshId = MeshId("torus")
+builtin_sphere: MeshId = MeshId("sphere")
+builtin_mesh_ids: frozenset[MeshId] = frozenset(
+    {
+        builtin_cube,
+        builtin_cylinder,
+        builtin_cone,
+        builtin_torus,
+        builtin_sphere,
+    }
+)

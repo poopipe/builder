@@ -173,7 +173,7 @@ def radial_grid_transforms(
     """return transforms for stacked concentric rings around a cylinder axis
 
     spacing is the angular step in degrees.
-    count_radius adds concentric rings starting at radius, spaced by spacing_radius.
+    radius is the outer ring; count_radius rings step inward by spacing_radius.
     count_height stacks copies along axis.
     when face_center is set each transform's +Z points toward the cylinder axis.
     """
@@ -187,7 +187,9 @@ def radial_grid_transforms(
         height: float = (float(ih) - (height_count - 1) * 0.5) * spacing_height
         height_offset: Vector3 = axis_vector(cylinder, height)
         for ir in range(radius_count):
-            ring_radius: float = radius + float(ir) * spacing_radius
+            ring_radius: float = radius - float(ir) * spacing_radius
+            if ring_radius <= 0.0:
+                continue
             angle_deg: float = 0.0
             while angle_deg < 360.0:
                 angle_rad: float = radians(angle_deg)

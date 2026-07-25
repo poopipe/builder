@@ -37,7 +37,7 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
         ParamField(
             "axis", "Axis (0=X 1=Y 2=Z)", "int", 1.0, minimum=0.0, maximum=2.0
         ),
-        ParamField("radius", "Radius", "float", 0.5, minimum=0.1, maximum=50.0),
+        ParamField("radius", "Outer radius", "float", 0.5, minimum=0.1, maximum=50.0),
         ParamField("spacing", "Spacing deg", "float", 5.0, minimum=1.0, maximum=180.0),
         ParamField(
             "count_radius", "Count radius", "int", 1.0, minimum=1.0, maximum=512.0

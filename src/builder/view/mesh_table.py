@@ -35,7 +35,7 @@ class MeshTable:
         """return True if ``mesh_id`` is in the table"""
         return mesh_id in self.entries
 
-    def clear_except(self, keep: set[MeshId]) -> None:
+    def clear_except(self, keep: frozenset[MeshId] | set[MeshId]) -> None:
         """unload every mesh except those in keep"""
         mesh_id: MeshId
         for mesh_id in list(self.entries.keys()):
