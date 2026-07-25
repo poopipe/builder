@@ -72,6 +72,7 @@ class Application:
         return items
 
     def frame(self) -> None:
+        """define the UI layout"""
         panel_width: int = SIDE_PANEL_WIDTH if self.ui.side_panel_open else 0
         layout: LayoutRects = compute_layout(
             get_screen_width(),
@@ -85,6 +86,13 @@ class Application:
             self.command_button_items(MENU_COMMANDS),
         )
         update_buttons(menu_buttons)
+        """ 
+            buttons run commands 
+            commands are listed in consts (eg. PANEL_COMMANDS)
+            executable code for command lives in a file per context (eg. view.py)
+            CommandContext is used to give a command access to the app state 
+            (application, scene, ui) 
+        """
 
         panel_buttons: list[Button] = []
         if self.ui.side_panel_open:

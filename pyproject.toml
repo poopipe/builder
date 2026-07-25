@@ -15,6 +15,15 @@ dependencies = [
 packages = [{include = "builder", from = "src"}]
 include = ["builder/assets/fonts/*.ttf"]
 
+[tool.poetry.group.dev.dependencies]
+pyright = "^1.1.411"
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"

@@ -11,7 +11,7 @@ from builder.commands.command_context import CommandContext
 
 @dataclass(frozen=True)
 class Command[P]:
-    """A labelled action; ``run`` always receives ``(context, params)``."""
+    """generic. labelled action, run always receives context, params"""
 
     label: str
     run: Callable[[CommandContext, P], None]
@@ -19,11 +19,11 @@ class Command[P]:
 
 @dataclass(frozen=True)
 class CommandEntry[P]:
-    """A command paired with the params used when the UI invokes it."""
+    """generic. command plus params(of any type) used when invoked"""
 
     command: Command[P]
     params: P
 
 
-# Heterogeneous menus erase ``P`` at the collection boundary.
+# alias that stops the type checker getting upset when you eg. have a list of CommandEntry that use different types
 type CommandItem = CommandEntry[Any]

@@ -51,7 +51,7 @@ from builder.view.gizmo import (
     selection_pivot,
     selection_rotation,
 )
-from builder.view.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
+from builder.view.gizmo_types import GizmoAxis
 from builder.view.grid import draw_ground_grid
 from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
@@ -106,18 +106,6 @@ class Viewport:
         self.dragging_pan: bool = False
         self.last_mouse: Vector2 = Vector2(0.0, 0.0)
 
-    @property
-    def selected_ids(self) -> set[str]:
-        return self.nodes.selected_ids
-
-    @property
-    def gizmo_mode(self) -> GizmoMode:
-        return self.gizmo.mode
-
-    @property
-    def gizmo_space(self) -> GizmoSpace:
-        return self.gizmo.space
-
     def apply_orbit(self) -> None:
         pitch = max(-89.0, min(89.0, self.orbit.pitch))
         self.orbit.pitch = pitch
@@ -160,16 +148,6 @@ class Viewport:
     def clear_selection(self) -> None:
         """Clear the active group selection."""
         self.nodes.clear_selection()
-        end_gizmo_drag(self.gizmo)
-
-    def set_gizmo_mode(self, mode: GizmoMode) -> None:
-        """Set the active transform gizmo mode."""
-        self.gizmo.mode = mode
-        end_gizmo_drag(self.gizmo)
-
-    def set_gizmo_space(self, space: GizmoSpace) -> None:
-        """Set whether the gizmo operates in world or local space."""
-        self.gizmo.space = space
         end_gizmo_drag(self.gizmo)
 
     def handle_selection_click(self, ray: Ray) -> None:

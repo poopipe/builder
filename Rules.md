@@ -5,6 +5,7 @@ General:
 - never edit from chat history or memory: before every change, re-read that file from disk in the same turn; base the edit only on what you just read; do not rewrite a whole file from an earlier version in the conversation
 - never use PowerShell for shell commands or file I/O; use cmd, git, python, or other direct tools instead
 - no mutable module-level globals; pass state explicitly (immutable constants are fine)
+- do not obfuscate ownership with forwarding properties or thin wrappers that re-expose nested state under a flatter name (eg. `selected_ids` that only returns `self.nodes.selected_ids`). access the owning object directly so it is obvious what the data belongs to
 
 Style:
 - the _method convention is stupid - it's not actually private so there is no point pretending it is.  just name the methods

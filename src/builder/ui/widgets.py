@@ -44,8 +44,6 @@ from builder.ui.theme import (
 
 @dataclass
 class Button:
-    """A clickable control with layout and per-frame interaction state."""
-
     label: str
     on_click: Callable[[], None]
     rect: Rectangle = field(default_factory=lambda: Rectangle(0, 0, 0, 0))
@@ -94,9 +92,7 @@ def compute_layout(
 
 def is_point_in_rect(x: float, y: float, rect: Rectangle) -> bool:
     """Return True if (x, y) lies inside rect."""
-    return (
-        rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height
-    )
+    return rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height
 
 
 def is_button_in_clip(button: Button, clip: Rectangle) -> bool:
@@ -233,9 +229,7 @@ def draw_menu_bar(font: Font, bar: Rectangle, buttons: Sequence[Button]) -> None
         draw_button(button, font)
 
 
-def draw_button_stack(
-    font: Font, panel: Rectangle, buttons: Sequence[Button]
-) -> None:
+def draw_button_stack(font: Font, panel: Rectangle, buttons: Sequence[Button]) -> None:
     """Draw the side panel background and its clipped buttons."""
     draw_rectangle_rec(panel, COLOUR_PANEL)
     draw_line(

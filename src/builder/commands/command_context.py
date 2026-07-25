@@ -6,17 +6,17 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from builder.io.mesh_import import MeshImporter
+from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
-from builder.view.gizmo_types import GizmoMode, GizmoSpace
+from builder.view.gizmo import GizmoState
 
 
 class SceneContext(Protocol):
     """3D scene capabilities exposed to commands."""
 
     show_grid: bool
-    selected_ids: set[str]
-    gizmo_mode: GizmoMode
-    gizmo_space: GizmoSpace
+    nodes: Scene
+    gizmo: GizmoState
 
     def toggle_grid(self) -> None:
         """Show or hide the ground grid."""
@@ -40,14 +40,6 @@ class SceneContext(Protocol):
 
     def clear_selection(self) -> None:
         """Clear the active group selection."""
-        ...
-
-    def set_gizmo_mode(self, mode: GizmoMode) -> None:
-        """Set the active transform gizmo mode."""
-        ...
-
-    def set_gizmo_space(self, space: GizmoSpace) -> None:
-        """Set whether the gizmo operates in world or local space."""
         ...
 
 
@@ -74,7 +66,7 @@ class CommandContext(Protocol):
 
     @property
     def application(self) -> ApplicationContext:
-        """Session / application state."""
+        """Session and application state."""
         ...
 
     @property

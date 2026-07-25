@@ -24,17 +24,17 @@ def toggle_side_panel(context: CommandContext, _: None) -> None:
 
 
 def set_gizmo_mode(context: CommandContext, mode: GizmoMode) -> None:
-    context.scene.set_gizmo_mode(mode)
+    context.scene.gizmo.mode = mode
     context.ui.status = f"Gizmo mode: {mode.value}"
 
 
 def set_gizmo_space(context: CommandContext, space: GizmoSpace) -> None:
-    context.scene.set_gizmo_space(space)
+    context.scene.gizmo.space = space
     context.ui.status = f"Gizmo space: {space.value}"
 
 
 def toggle_gizmo_space(context: CommandContext, _: None) -> None:
-    if context.scene.gizmo_space is GizmoSpace.world:
+    if context.scene.gizmo.space is GizmoSpace.world:
         set_gizmo_space(context, GizmoSpace.local)
     else:
         set_gizmo_space(context, GizmoSpace.world)

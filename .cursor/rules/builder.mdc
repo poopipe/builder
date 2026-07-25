@@ -14,6 +14,7 @@ Mirror of `Rules.md`. Prefer on-disk `Rules.md` if they diverge.
 - The user edits code outside Cursor — always work from the most recently saved on-disk file.
 - Never use PowerShell for shell commands or file I/O; use `cmd`, `git`, `python`, or other direct tools instead.
 - No mutable module-level globals; pass state explicitly (immutable constants are fine).
+- Do not obfuscate ownership with forwarding properties or thin wrappers that re-expose nested state under a flatter name (eg. `selected_ids` that only returns `self.nodes.selected_ids`). Access the owning object directly so it is obvious what the data belongs to.
 
 ## Style
 
