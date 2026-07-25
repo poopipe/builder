@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pyray import Transform, Vector3, Vector4, quaternion_identity
+
+if TYPE_CHECKING:
+    from builder.generators.generator_types import Generator
 
 # raylib stores quaternions as Vector4 (x, y, z, w); stubs have no Quaternion type
 type Quaternion = Vector4
@@ -25,6 +29,7 @@ class Node:
     parent_id: str | None
     transform: Transform
     mesh_id: MeshId | None
+    generator: Generator | None = None
 
 
 def transform_at(translation: Vector3) -> Transform:

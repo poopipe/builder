@@ -28,13 +28,23 @@ from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandItem
 from builder.commands.menus import MENU_COMMANDS, PANEL_COMMANDS, all_commands
 from builder.commands.registry import bind_entry, register_commands
+from builder.generators.regenerate import selected_parametric_group
+from builder.scene.scene_types import Node
 from builder.ui.font import load_app_font, unload_app_font
+from builder.ui.inspector import (
+    ParamRowRects,
+    apply_inspector_exit_key,
+    draw_inspector,
+    sync_inspector_focus,
+    update_inspector,
+)
 from builder.ui.theme import (
     BUTTON_GAP,
     BUTTON_HEIGHT,
     BUTTON_MIN_WIDTH,
     COLOUR_BG,
     FONT_SIZE,
+    INSPECTOR_PANEL_WIDTH,
     PAD,
     SIDE_PANEL_WIDTH,
 )
@@ -80,11 +90,17 @@ class Application:
 
     def frame(self) -> None:
         """define the UI layout"""
+        group: Node | None = selected_parametric_group(self.scene.nodes)
+        sync_inspector_focus(self.ui, group)
+        apply_inspector_exit_key(self.ui)
+
         panel_width: int = SIDE_PANEL_WIDTH if self.ui.side_panel_open else 0
+        inspector_width: int = INSPECTOR_PANEL_WIDTH if group is not None else 0
         layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
             panel_width=panel_width,
+            inspector_width=inspector_width,
         )
 
         menu_buttons: list[Button] = layout_buttons_horizontal(
@@ -117,12 +133,31 @@ class Application:
             )
             update_buttons(panel_buttons, layout.panel)
 
+        inspector_buttons: list[Button] = []
+        inspector_rows: list[ParamRowRects] = []
+        if group is not None:
+            group_id: str = group.id
+            inspector_buttons, inspector_rows = update_inspector(
+                self.scene.nodes,
+                self.ui,
+                layout.inspector,
+                group,
+            )
+            # steppers/bake replace the group node; re-read the same id so the
+            # drawn group stays consistent with rows even if selection changed
+            refreshed: Node | None = self.scene.nodes.nodes.get(group_id)
+            group = refreshed if refreshed is not None and refreshed.generator is not None else None
+
         mouse: Vector2 = get_mouse_position()
         ui_over: bool = (
             is_point_in_rect(mouse.x, mouse.y, layout.menu)
             or (
                 self.ui.side_panel_open
                 and is_point_in_rect(mouse.x, mouse.y, layout.panel)
+            )
+            or (
+                group is not None
+                and is_point_in_rect(mouse.x, mouse.y, layout.inspector)
             )
             or is_point_in_rect(mouse.x, mouse.y, layout.status)
         )
@@ -134,6 +169,15 @@ class Application:
         draw_menu_bar(self.font, layout.menu, menu_buttons)
         if self.ui.side_panel_open:
             draw_button_stack(self.font, layout.panel, panel_buttons)
+        if group is not None:
+            draw_inspector(
+                self.font,
+                layout.inspector,
+                self.ui,
+                group,
+                inspector_buttons,
+                inspector_rows,
+            )
         draw_status_bar(self.font, layout.status, self.ui.status)
         end_drawing()
 

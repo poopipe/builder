@@ -56,6 +56,7 @@ class LayoutRects:
     menu: Rectangle
     panel: Rectangle
     viewport: Rectangle
+    inspector: Rectangle
     status: Rectangle
 
 
@@ -63,20 +64,29 @@ def compute_layout(
     width: int,
     height: int,
     panel_width: int = SIDE_PANEL_WIDTH,
+    inspector_width: int = 0,
 ) -> LayoutRects:
-    """Split the window into menu, side panel, viewport, and status bar."""
+    """Split the window into menu, side panels, viewport, and status bar."""
     menu_h: int = MENU_BAR_HEIGHT
     status_h: int = STATUS_BAR_HEIGHT
     panel_w: int = max(0, panel_width)
+    inspector_w: int = max(0, inspector_width)
     body_y: int = menu_h
     body_h: int = max(0, height - menu_h - status_h)
+    viewport_w: int = max(0, width - panel_w - inspector_w)
     return LayoutRects(
         menu=Rectangle(0, 0, float(width), float(menu_h)),
         panel=Rectangle(0, float(body_y), float(panel_w), float(body_h)),
         viewport=Rectangle(
             float(panel_w),
             float(body_y),
-            float(max(0, width - panel_w)),
+            float(viewport_w),
+            float(body_h),
+        ),
+        inspector=Rectangle(
+            float(panel_w + viewport_w),
+            float(body_y),
+            float(inspector_w),
             float(body_h),
         ),
         status=Rectangle(
