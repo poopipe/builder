@@ -9,10 +9,12 @@ from pyray import Transform
 from builder.generators.generator_types import (
     Generator,
     GeneratorSpec,
+    MeshPattern,
     ParamField,
     ParamMap,
     ParamValue,
 )
+from builder.generators.mesh_pattern import mesh_for_index
 from builder.generators.registry import clamp_param, field_for, get_spec
 from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
@@ -45,14 +47,15 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
     locals_: list[Transform] = spec.build_transforms(generator.params)
     scene.remove_nodes(child_ids(scene.nodes, group_id))
     children: list[Node] = []
+    index: int
     local: Transform
-    for local in locals_:
+    for index, local in enumerate(locals_):
         children.append(
             Node(
                 id=new_node_id(),
                 parent_id=group_id,
                 transform=local,
-                mesh_id=generator.mesh_id,
+                mesh_id=mesh_for_index(generator.meshes, index),
                 generator=None,
             )
         )
@@ -105,3 +108,21 @@ def step_generator_param(
     current: ParamValue = generator.params[key]
     stepped: float = float(current) + field.step * float(direction)
     set_generator_param(scene, group_id, key, stepped)
+
+
+def require_generator(scene: Scene, group_id: str) -> Generator:
+    """return the group's generator or raise if it has none"""
+    generator: Generator | None = scene.nodes[group_id].generator
+    if generator is None:
+        raise ValueError(f"group {group_id} has no generator")
+    return generator
+
+
+def set_generator_pattern(scene: Scene, group_id: str, pattern: MeshPattern) -> None:
+    """replace the generator mesh pattern and regenerate children"""
+    group: Node = scene.nodes[group_id]
+    generator: Generator = require_generator(scene, group_id)
+    scene.add_nodes(
+        [replace(group, generator=replace(generator, meshes=pattern))]
+    )
+    regenerate_group(scene, group_id)

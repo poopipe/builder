@@ -6,13 +6,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from builder.commands.command_context import CommandContext
+from builder.generators.generator_types import MeshPattern
 from builder.generators.regenerate import regenerate_group
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.io.scene_format import (
     scene_format_version,
     SceneDocument,
     SceneUiState,
-    catalog_to_assets,
     dumps_document,
     loads_document,
     nodes_for_save,
@@ -51,7 +51,7 @@ def build_document(context: CommandContext) -> SceneDocument:
             side_panel_open=context.ui.side_panel_open,
             meshes_panel_open=context.ui.meshes_panel_open,
         ),
-        meshes=catalog_to_assets(context.application.mesh_catalog),
+        meshes=tuple(context.application.mesh_catalog.entries.values()),
         nodes=tuple(nodes_for_save(context.scene.nodes.nodes)),
     )
 
@@ -97,13 +97,16 @@ def apply_mesh_fallbacks(node: Node, fallbacks: dict[str, MeshId]) -> Node:
         if mesh_id is node.mesh_id:
             return node
         return replace(node, mesh_id=mesh_id)
-    generator_mesh: MeshId = remap_mesh_id(node.generator.mesh_id, fallbacks) or builtin_cube
-    if mesh_id is node.mesh_id and generator_mesh == node.generator.mesh_id:
+    pattern: MeshPattern = node.generator.meshes
+    remapped: tuple[MeshId, ...] = tuple(
+        remap_mesh_id(slot, fallbacks) or builtin_cube for slot in pattern.mesh_ids
+    )
+    if mesh_id is node.mesh_id and remapped == pattern.mesh_ids:
         return node
     return replace(
         node,
         mesh_id=mesh_id,
-        generator=replace(node.generator, mesh_id=generator_mesh),
+        generator=replace(node.generator, meshes=replace(pattern, mesh_ids=remapped)),
     )
 
 

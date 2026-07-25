@@ -6,11 +6,17 @@ from typing import Any
 
 from pyray import Transform, Vector3, Vector4
 
-from builder.generators.generator_types import Generator, ParamMap, ParamValue
-from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind, MeshCatalog
+from builder.generators.generator_types import (
+    Generator,
+    MeshPattern,
+    MeshSequenceMode,
+    ParamMap,
+    ParamValue,
+)
+from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node
 
-scene_format_version: int = 1
+scene_format_version: int = 2
 scene_file_suffix: str = ".scene"
 
 
@@ -82,11 +88,46 @@ def transform_from_json(data: Any) -> Transform:
     )
 
 
+def mesh_pattern_to_json(pattern: MeshPattern) -> dict[str, Any]:
+    """encode a mesh pattern"""
+    return {
+        "mesh_ids": [mesh_id.name for mesh_id in pattern.mesh_ids],
+        "mode": pattern.mode,
+        "seed": pattern.seed,
+    }
+
+
+def mesh_pattern_from_json(data: dict[str, Any]) -> MeshPattern:
+    """decode a mesh pattern, accepting the legacy single 'mesh_id' string"""
+    ids_raw: Any = data.get("mesh_ids")
+    if ids_raw is None:
+        legacy: Any = data.get("mesh_id")
+        if not isinstance(legacy, str) or legacy == "":
+            raise ValueError("generator requires 'mesh_ids' or legacy 'mesh_id'")
+        return MeshPattern(mesh_ids=(MeshId(legacy),), mode="repeat", seed=0)
+    if not isinstance(ids_raw, list):
+        raise ValueError("generator.mesh_ids must be an array")
+    mesh_ids: list[MeshId] = []
+    entry: Any
+    for entry in ids_raw:
+        if not isinstance(entry, str) or entry == "":
+            raise ValueError("generator.mesh_ids entries must be non-empty strings")
+        mesh_ids.append(MeshId(entry))
+    mode_raw: Any = data.get("mode", "repeat")
+    if mode_raw not in ("repeat", "pingpong", "random"):
+        raise ValueError("generator.mode must be repeat, pingpong, or random")
+    mode: MeshSequenceMode = mode_raw
+    seed_raw: Any = data.get("seed", 0)
+    if isinstance(seed_raw, bool) or not isinstance(seed_raw, int):
+        raise ValueError("generator.seed must be an integer")
+    return MeshPattern(mesh_ids=tuple(mesh_ids), mode=mode, seed=seed_raw)
+
+
 def generator_to_json(generator: Generator) -> dict[str, Any]:
     """encode a generator recipe"""
     return {
         "kind": generator.kind,
-        "mesh_id": generator.mesh_id.name,
+        "meshes": mesh_pattern_to_json(generator.meshes),
         "params": dict(generator.params),
     }
 
@@ -96,14 +137,16 @@ def generator_from_json(data: Any) -> Generator:
     if not isinstance(data, dict):
         raise ValueError("generator must be an object")
     kind: Any = data.get("kind")
-    mesh_name: Any = data.get("mesh_id")
     params_raw: Any = data.get("params")
     if not isinstance(kind, str) or kind == "":
         raise ValueError("generator.kind must be a non-empty string")
-    if not isinstance(mesh_name, str) or mesh_name == "":
-        raise ValueError("generator.mesh_id must be a non-empty string")
     if not isinstance(params_raw, dict):
         raise ValueError("generator.params must be an object")
+    meshes_raw: Any = data.get("meshes")
+    # v2 nests the pattern under "meshes"; v1 kept a flat "mesh_id" string
+    pattern: MeshPattern = mesh_pattern_from_json(
+        meshes_raw if isinstance(meshes_raw, dict) else data
+    )
     params: ParamMap = {}
     key: Any
     value: Any
@@ -114,7 +157,7 @@ def generator_from_json(data: Any) -> Generator:
             raise ValueError(f"generator.params[{key!r}] must be a number")
         param_value: ParamValue = int(value) if isinstance(value, int) else float(value)
         params[key] = param_value
-    return Generator(kind=kind, mesh_id=MeshId(mesh_name), params=params)
+    return Generator(kind=kind, meshes=pattern, params=params)
 
 
 def mesh_asset_to_json(asset: MeshAsset, relative_source: str | None) -> dict[str, Any]:
@@ -294,8 +337,3 @@ def loads_document(text: str) -> tuple[SceneDocument, list[str]]:
     """parse scene json text"""
     data: Any = json.loads(text)
     return document_from_json(data)
-
-
-def catalog_to_assets(catalog: MeshCatalog) -> tuple[MeshAsset, ...]:
-    """snapshot catalog entries for saving"""
-    return tuple(catalog.entries.values())

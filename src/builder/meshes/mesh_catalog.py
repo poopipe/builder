@@ -40,8 +40,3 @@ def default_mesh_catalog() -> MeshCatalog:
 def register_mesh_asset(catalog: MeshCatalog, asset: MeshAsset) -> None:
     """add or replace mesh metadata by id"""
     catalog.entries[asset.mesh_id] = asset
-
-
-def catalog_assets(catalog: MeshCatalog) -> list[MeshAsset]:
-    """return catalog assets in insertion order"""
-    return list(catalog.entries.values())

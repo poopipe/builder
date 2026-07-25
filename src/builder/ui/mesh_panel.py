@@ -24,7 +24,7 @@ from pyray import (
     measure_text_ex,
 )
 
-from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog, catalog_assets
+from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
 from builder.scene.scene_types import MeshId
 from builder.ui.theme import (
     ui_button_gap,
@@ -73,7 +73,7 @@ def update_mesh_panel(
     on_select: Callable[[MeshId], None],
 ) -> list[MeshRow]:
     """layout rows, handle scroll/clicks, return rows for drawing"""
-    assets: list[MeshAsset] = catalog_assets(catalog)
+    assets: list[MeshAsset] = list(catalog.entries.values())
     title_h: float = float(ui_font_size + ui_pad)
     list_top: float = area.y + ui_pad + title_h
     list_h: float = max(0.0, area.height - ui_pad * 2.0 - title_h)

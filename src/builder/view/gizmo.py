@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import atan2, cos, pi, sin
 
 from pyray import (
@@ -35,7 +35,6 @@ from builder.scene.transform_ops import (
     rotate_transform_world,
     scale_transform_uniform,
     translate_transform,
-    with_transform,
 )
 from builder.scene.transforms import matrix_translation, world_matrix
 from builder.view.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
@@ -421,9 +420,9 @@ def apply_drag_to_scene(
         delta = vector3_scale(axis, vector3_dot_product(delta, axis))
         for group_id, start_transform in drag.start_transforms.items():
             scene.set_node(
-                with_transform(
+                replace(
                     scene.nodes[group_id],
-                    translate_transform(start_transform, delta),
+                    transform=translate_transform(start_transform, delta),
                 )
             )
         return
@@ -454,9 +453,9 @@ def apply_drag_to_scene(
                     quaternion_from_axis_angle(local_axis, delta_angle),
                 )
             scene.set_node(
-                with_transform(
+                replace(
                     scene.nodes[group_id],
-                    new_transform,
+                    transform=new_transform,
                 )
             )
         return
@@ -473,9 +472,11 @@ def apply_drag_to_scene(
         factor = max(0.05, min(20.0, factor))
         for group_id, start_transform in drag.start_transforms.items():
             scene.set_node(
-                with_transform(
+                replace(
                     scene.nodes[group_id],
-                    scale_transform_uniform(start_transform, factor, drag.pivot),
+                    transform=scale_transform_uniform(
+                        start_transform, factor, drag.pivot
+                    ),
                 )
             )
 

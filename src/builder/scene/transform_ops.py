@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from pyray import (
     Transform,
     Vector3,
@@ -14,12 +12,7 @@ from pyray import (
     vector3_subtract,
 )
 
-from builder.scene.scene_types import Node, Quaternion
-
-
-def with_transform(node: Node, transform: Transform) -> Node:
-    """return a copy of node with a new transform"""
-    return replace(node, transform=transform)
+from builder.scene.scene_types import Quaternion
 
 
 def translate_transform(transform: Transform, delta_world: Vector3) -> Transform:

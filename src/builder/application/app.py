@@ -224,6 +224,8 @@ class Application:
                 self.ui,
                 layout.inspector,
                 group,
+                self.application.mesh_catalog,
+                self.application.active_mesh_id,
             )
             # steppers/bake replace the group node; re-read the same id so the
             # drawn group stays consistent with rows even if selection changed

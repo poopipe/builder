@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from random import randrange
 
 from pyray import (
     Color,
@@ -27,6 +27,7 @@ from pyray import (
 from builder.generators.generator_types import (
     Generator,
     GeneratorSpec,
+    MeshPattern,
     ParamField,
     ParamValue,
 )
@@ -36,13 +37,16 @@ from builder.generators.registry import (
     get_spec,
     parse_param,
 )
+from builder.generators.mesh_pattern import next_mode, remove_slot, set_slot
 from builder.generators.regenerate import (
     bake_group,
-    step_generator_param,
     set_generator_param,
+    set_generator_pattern,
+    step_generator_param,
 )
+from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
 from builder.scene.scene import Scene
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import MeshId, Node
 from builder.ui.theme import (
     ui_button_gap,
     ui_button_height,
@@ -210,13 +214,140 @@ def handle_inspector_typing(scene: Scene, ui: UiState, group: Node) -> None:
         code = get_char_pressed()
 
 
-def make_stepper_button(
-    label: str,
-    rect: Rectangle,
-    on_click: Callable[[], None],
-) -> Button:
-    """build a +/- stepper button at a fixed rect"""
-    return Button(label=label, on_click=on_click, rect=rect)
+def mesh_label(catalog: MeshCatalog, mesh_id: MeshId) -> str:
+    """return the catalog label for a mesh id, or its raw name if unknown"""
+    asset: MeshAsset | None = catalog.entries.get(mesh_id)
+    return asset.label if asset is not None else mesh_id.name
+
+
+def build_pattern_buttons(
+    scene: Scene,
+    ui: UiState,
+    group: Node,
+    pattern: MeshPattern,
+    catalog: MeshCatalog,
+    active_mesh_id: MeshId,
+    area: Rectangle,
+    start_y: float,
+) -> tuple[list[Button], float]:
+    """build mesh-pattern controls below the param rows; return (buttons, next_y)"""
+    x: float = area.x + ui_pad
+    inner_w: float = area.width - ui_pad * 2
+    row_h: float = float(ui_button_height)
+    step_w: float = float(ui_stepper_width)
+    y: float = start_y
+    buttons: list[Button] = []
+
+    def clear() -> None:
+        ui.clear_inspector_focus()
+
+    def cycle_mode() -> None:
+        clear()
+        set_generator_pattern(
+            scene, group.id, replace(pattern, mode=next_mode(pattern.mode))
+        )
+
+    buttons.append(
+        Button(
+            label=f"Order: {pattern.mode}",
+            on_click=cycle_mode,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+
+    if pattern.mode == "random":
+
+        def seed_minus() -> None:
+            clear()
+            set_generator_pattern(
+                scene, group.id, replace(pattern, seed=max(0, pattern.seed - 1))
+            )
+
+        def seed_plus() -> None:
+            clear()
+            set_generator_pattern(
+                scene, group.id, replace(pattern, seed=pattern.seed + 1)
+            )
+
+        def seed_reroll() -> None:
+            clear()
+            set_generator_pattern(
+                scene, group.id, replace(pattern, seed=randrange(0, 1_000_000))
+            )
+
+        value_x: float = x + step_w + ui_button_gap
+        value_w: float = inner_w - (step_w + ui_button_gap) * 2
+        buttons.append(
+            Button(
+                label="-",
+                on_click=seed_minus,
+                rect=Rectangle(x, y, step_w, row_h),
+            )
+        )
+        buttons.append(
+            Button(
+                label=f"Seed {pattern.seed}",
+                on_click=seed_reroll,
+                rect=Rectangle(value_x, y, value_w, row_h),
+            )
+        )
+        buttons.append(
+            Button(
+                label="+",
+                on_click=seed_plus,
+                rect=Rectangle(x + inner_w - step_w, y, step_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+
+    slot: int
+    mesh_id: MeshId
+    for slot, mesh_id in enumerate(pattern.mesh_ids):
+
+        def assign(s: int = slot) -> None:
+            clear()
+            set_generator_pattern(
+                scene, group.id, set_slot(pattern, s, active_mesh_id)
+            )
+
+        def remove(s: int = slot) -> None:
+            clear()
+            set_generator_pattern(scene, group.id, remove_slot(pattern, s))
+
+        buttons.append(
+            Button(
+                label=f"{slot + 1}. {mesh_label(catalog, mesh_id)}",
+                on_click=assign,
+                rect=Rectangle(x, y, inner_w - step_w - ui_button_gap, row_h),
+            )
+        )
+        buttons.append(
+            Button(
+                label="x",
+                on_click=remove,
+                rect=Rectangle(x + inner_w - step_w, y, step_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+
+    def add_active() -> None:
+        clear()
+        set_generator_pattern(
+            scene,
+            group.id,
+            replace(pattern, mesh_ids=pattern.mesh_ids + (active_mesh_id,)),
+        )
+
+    buttons.append(
+        Button(
+            label="+ Add active mesh",
+            on_click=add_active,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_pad
+    return buttons, y
 
 
 def update_inspector(
@@ -224,6 +355,8 @@ def update_inspector(
     ui: UiState,
     area: Rectangle,
     group: Node,
+    catalog: MeshCatalog,
+    active_mesh_id: MeshId,
 ) -> tuple[list[Button], list[ParamRowRects]]:
     """handle inspector input; return stepper/bake buttons and row geometry"""
     generator: Generator | None = group.generator
@@ -249,12 +382,32 @@ def update_inspector(
             ui.clear_inspector_focus()
             step_generator_param(scene, group.id, k, 1)
 
-        buttons.append(make_stepper_button("-", row.minus, step_minus))
-        buttons.append(make_stepper_button("+", row.plus, step_plus))
+        buttons.append(Button(label="-", on_click=step_minus, rect=row.minus))
+        buttons.append(Button(label="+", on_click=step_plus, rect=row.plus))
         if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
             focus_param_field(ui, group, field)
 
-    bake_rect: Rectangle = bake_button_rect(area, rows)
+    pattern_start: float = bake_button_rect(area, rows).y
+    pattern_buttons: list[Button]
+    bake_y: float
+    pattern_buttons, bake_y = build_pattern_buttons(
+        scene,
+        ui,
+        group,
+        generator.meshes,
+        catalog,
+        active_mesh_id,
+        area,
+        pattern_start,
+    )
+    buttons.extend(pattern_buttons)
+
+    bake_rect: Rectangle = Rectangle(
+        area.x + ui_pad,
+        bake_y,
+        area.width - ui_pad * 2,
+        float(ui_button_height),
+    )
 
     def on_bake() -> None:
         ui.clear_inspector_focus()

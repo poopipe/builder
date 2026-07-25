@@ -8,7 +8,7 @@ from pyray import Transform, Vector3
 
 from builder.commands.command_context import CommandContext
 from builder.commands.commands_types import Command
-from builder.generators.generator_types import Generator, GeneratorSpec, ParamMap
+from builder.generators.generator_types import Generator, GeneratorSpec, MeshPattern, ParamMap
 from builder.generators.registry import default_params, get_spec
 from builder.meshes.mesh_catalog import MeshAsset
 from builder.scene.ids import new_node_id
@@ -90,7 +90,7 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
         return
     generator: Generator = Generator(
         kind=kind,
-        mesh_id=mesh_id,
+        meshes=MeshPattern(mesh_ids=(mesh_id,)),
         params=params,
     )
     locals_: list[Transform] = spec.build_transforms(params)
@@ -98,7 +98,7 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
     nodes: list[Node] = build_mesh_group(
         transform_at(Vector3(0.0, group_y, 0.0)),
         locals_,
-        generator.mesh_id,
+        mesh_id,
         generator,
     )
     context.scene.add_nodes(nodes)

@@ -39,10 +39,26 @@ class GeneratorSpec:
     build_transforms: BuildTransforms
 
 
+type MeshSequenceMode = Literal["repeat", "pingpong", "random"]
+
+
+@dataclass(frozen=True)
+class MeshPattern:
+    """ordered meshes plus how to sequence them across generated slots
+
+    an empty mesh_ids tuple is tolerated (a deleted mesh may empty a slot);
+    consumers fall back to the builtin cube
+    """
+
+    mesh_ids: tuple[MeshId, ...]
+    mode: MeshSequenceMode = "repeat"
+    seed: int = 0
+
+
 @dataclass(frozen=True)
 class Generator:
     """parametric recipe owned by a group node until baked"""
 
     kind: str
-    mesh_id: MeshId
+    meshes: MeshPattern
     params: ParamMap
