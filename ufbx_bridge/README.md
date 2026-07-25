@@ -1,7 +1,6 @@
 # ufbx bridge
 
-This folder builds a tiny DLL that wraps [ufbx](https://github.com/ufbx/ufbx).
-No numpy, no Assimp, no Autodesk SDK.
+This folder builds a tiny DLL that wraps [ufbx](https://github.com/ufbx/ufbx) so we don't need to use numpy (pyufbx dependency)
 
 ## Build (Windows, cmd.exe)
 
