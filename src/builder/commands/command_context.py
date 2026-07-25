@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from builder.io.mesh_import import ImportedMesh, MeshImporter
+from builder.meshes.mesh_catalog import MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
 from builder.view.gizmo import GizmoState
@@ -42,8 +43,8 @@ class SceneContext(Protocol):
         """Clear the active group selection."""
         ...
 
-    def register_and_place_imported_mesh(self, imported: ImportedMesh) -> MeshId:
-        """ upload, register, and place an imported mesh; return its mesh id """
+    def register_imported_mesh(self, imported: ImportedMesh) -> MeshId:
+        """ upload and register an imported mesh; return its mesh id """
         ...
 
 
@@ -52,9 +53,15 @@ class UiContext(Protocol):
 
     status: str
     side_panel_open: bool
+    meshes_panel_open: bool
+    meshes_panel_scroll: float
 
     def toggle_side_panel(self) -> None:
         """Show or hide the context side panel."""
+        ...
+
+    def toggle_meshes_panel(self) -> None:
+        """ show or hide the mesh catalog panel """
         ...
 
 
@@ -63,6 +70,8 @@ class ApplicationContext(Protocol):
 
     should_close: bool
     importer: MeshImporter
+    mesh_catalog: MeshCatalog
+    active_mesh_id: MeshId
 
 
 class CommandContext(Protocol):

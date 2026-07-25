@@ -27,6 +27,9 @@ from pyray import (
     is_mouse_button_down,
     is_mouse_button_pressed,
     is_mouse_button_released,
+    rl_disable_depth_test,
+    rl_draw_render_batch_active,
+    rl_enable_depth_test,
     vector3_add,
     vector3_cross_product,
     vector3_normalize,
@@ -34,11 +37,10 @@ from pyray import (
     vector3_subtract,
 )
 
-from builder.meshes.builtins import make_cube
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
-from builder.scene.ids import new_node_id
+from builder.meshes.builtins import make_cube
 from builder.scene.scene import Scene
-from builder.scene.scene_types import BUILTIN_CUBE, MeshId, Node, Quaternion, transform_at
+from builder.scene.scene_types import BUILTIN_CUBE, MeshId, Node, Quaternion
 from builder.scene.selection import root_group_id
 from builder.view.gizmo import (
     GizmoState,
@@ -158,39 +160,11 @@ class Viewport:
         """ insert or replace a prepared mesh in the mesh table """
         self.mesh_table.add_or_replace(mesh_id, prepared)
 
-    def place_imported_mesh(self, mesh_id: MeshId) -> str:
-        """ place one instance of a registered mesh under a new group; return group id """
-        if not self.mesh_table.has_mesh(mesh_id):
-            raise KeyError(f"mesh not registered: {mesh_id.name}")
-        group_id: str = new_node_id()
-        child_id: str = new_node_id()
-        nodes: list[Node] = [
-            Node(
-                id=group_id,
-                parent_id=None,
-                transform=transform_at(Vector3(0.0, 0.0, 0.0)),
-                mesh_id=None,
-                generator=None,
-            ),
-            Node(
-                id=child_id,
-                parent_id=group_id,
-                transform=transform_at(Vector3(0.0, 0.0, 0.0)),
-                mesh_id=mesh_id,
-                generator=None,
-            ),
-        ]
-        self.nodes.add_nodes(nodes)
-        self.nodes.set_selection([group_id])
-        end_gizmo_drag(self.gizmo)
-        return group_id
-
-    def register_and_place_imported_mesh(self, imported: ImportedMesh) -> MeshId:
-        """ upload an imported mesh, register it, place one instance, return mesh id """
+    def register_imported_mesh(self, imported: ImportedMesh) -> MeshId:
+        """ upload and register an imported mesh; return its mesh id """
         mesh_id: MeshId = MeshId(mesh_id_for_import(imported))
         prepared: PreparedMesh = upload_imported_mesh(imported, self.lighting.shader)
         self.register_mesh(mesh_id, prepared)
-        self.place_imported_mesh(mesh_id)
         return mesh_id
 
     def handle_selection_click(self, ray: Ray) -> None:
@@ -331,6 +305,10 @@ class Viewport:
             self.mesh_table, self.nodes, self.draw_cache, self.lighting
         )
 
+        # flush scene draws, then submit gizmos with depth off and flush again
+        # before restoring depth — otherwise EndMode3D draws them with depth on
+        rl_draw_render_batch_active()
+        rl_disable_depth_test()
         pivot: Vector3 | None = selection_pivot(self.nodes, self.nodes.selected_ids)
         if pivot is not None:
             rotation: Quaternion = selection_rotation(
@@ -345,6 +323,8 @@ class Viewport:
                 axes,
                 gizmo_size(self.camera, pivot),
             )
+        rl_draw_render_batch_active()
+        rl_enable_depth_test()
 
         end_mode_3d()
         end_scissor_mode()

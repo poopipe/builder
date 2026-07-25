@@ -1,15 +1,19 @@
-"""Session-level application state."""
+""" session-level application state """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from builder.io.mesh_import import MeshImporter
+from builder.meshes.mesh_catalog import MeshCatalog, default_mesh_catalog
+from builder.scene.scene_types import BUILTIN_CUBE, MeshId
 
 
 @dataclass
 class ApplicationState:
-    """Quit flag and services owned by the running session."""
+    """ session services and selected mesh asset """
 
     should_close: bool = False
     importer: MeshImporter = field(default_factory=MeshImporter)
+    mesh_catalog: MeshCatalog = field(default_factory=default_mesh_catalog)
+    active_mesh_id: MeshId = BUILTIN_CUBE

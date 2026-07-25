@@ -32,12 +32,13 @@ from pyray import (
 )
 
 from builder.application.application_state import ApplicationState
-from builder.commands.commands_types import CommandItem
+from builder.commands.commands_types import CommandEntry, CommandItem
 from builder.commands.file import import_mesh_from_path
 from builder.commands.menus import MENU_COMMANDS, PANEL_COMMANDS, all_commands
 from builder.commands.registry import bind_entry, register_commands
+from builder.commands.scene import cmd_select_mesh
 from builder.generators.regenerate import selected_parametric_group
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import MeshId, Node
 from builder.ui.font import load_app_font, unload_app_font
 from builder.ui.inspector import (
     ParamRowRects,
@@ -46,6 +47,7 @@ from builder.ui.inspector import (
     sync_inspector_focus,
     update_inspector,
 )
+from builder.ui.mesh_panel import MeshRow, draw_mesh_panel, update_mesh_panel
 from builder.ui.theme import (
     BUTTON_GAP,
     BUTTON_HEIGHT,
@@ -53,6 +55,7 @@ from builder.ui.theme import (
     COLOUR_BG,
     FONT_SIZE,
     INSPECTOR_PANEL_WIDTH,
+    MESHES_PANEL_WIDTH,
     PAD,
     SIDE_PANEL_WIDTH,
 )
@@ -143,11 +146,13 @@ class Application:
         apply_inspector_exit_key(self.ui)
 
         panel_width: int = SIDE_PANEL_WIDTH if self.ui.side_panel_open else 0
+        meshes_width: int = MESHES_PANEL_WIDTH if self.ui.meshes_panel_open else 0
         inspector_width: int = INSPECTOR_PANEL_WIDTH if group is not None else 0
         layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
             panel_width=panel_width,
+            meshes_width=meshes_width,
             inspector_width=inspector_width,
         )
 
@@ -181,6 +186,19 @@ class Application:
             )
             update_buttons(panel_buttons, layout.panel)
 
+        mesh_rows: list[MeshRow] = []
+        if self.ui.meshes_panel_open:
+            def select_active_mesh(mesh_id: MeshId) -> None:
+                bind_entry(self, CommandEntry(cmd_select_mesh, mesh_id))()
+
+            mesh_rows = update_mesh_panel(
+                self.application.mesh_catalog,
+                self.application.active_mesh_id,
+                self.ui,
+                layout.meshes,
+                select_active_mesh,
+            )
+
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
         if group is not None:
@@ -204,6 +222,10 @@ class Application:
                 and is_point_in_rect(mouse.x, mouse.y, layout.panel)
             )
             or (
+                self.ui.meshes_panel_open
+                and is_point_in_rect(mouse.x, mouse.y, layout.meshes)
+            )
+            or (
                 group is not None
                 and is_point_in_rect(mouse.x, mouse.y, layout.inspector)
             )
@@ -217,6 +239,8 @@ class Application:
         draw_menu_bar(self.font, layout.menu, menu_buttons)
         if self.ui.side_panel_open:
             draw_button_stack(self.font, layout.panel, panel_buttons)
+        if self.ui.meshes_panel_open:
+            draw_mesh_panel(self.font, layout.meshes, mesh_rows)
         if group is not None:
             draw_inspector(
                 self.font,

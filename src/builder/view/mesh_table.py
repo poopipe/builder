@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pyray import unload_mesh
-
 from builder.scene.scene_types import MeshId
-from builder.view.prepare_mesh import PreparedMesh
+from builder.view.prepare_mesh import PreparedMesh, release_prepared_mesh
 
 
 @dataclass
@@ -26,7 +24,7 @@ class MeshTable:
         """ store a prepared mesh, unloading any previous entry with the same id """
         existing: PreparedMesh | None = self.entries.get(mesh_id)
         if existing is not None:
-            unload_mesh(existing.mesh)
+            release_prepared_mesh(existing)
         self.entries[mesh_id] = prepared
 
     def get(self, mesh_id: MeshId) -> PreparedMesh:
@@ -45,5 +43,5 @@ class MeshTable:
         """
         prepared: PreparedMesh
         for prepared in self.entries.values():
-            unload_mesh(prepared.mesh)
+            release_prepared_mesh(prepared)
         self.entries.clear()

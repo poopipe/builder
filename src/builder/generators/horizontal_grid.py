@@ -26,7 +26,7 @@ def horizontal_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transf
 
 HORIZONTAL_GRID_SPEC: GeneratorSpec = GeneratorSpec(
     kind="horizontal_grid",
-    label="Cube grid",
+    label="Horizontal grid",
     fields=(
         ParamField("count_x", "Count X", "int", 1.0, minimum=1.0, maximum=512.0),
         ParamField("count_z", "Count Z", "int", 1.0, minimum=1.0, maximum=512.0),

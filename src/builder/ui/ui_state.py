@@ -11,6 +11,8 @@ class UiState:
 
     status: str = "Ready"
     side_panel_open: bool = True
+    meshes_panel_open: bool = True
+    meshes_panel_scroll: float = 0.0
     inspector_group_id: str | None = None
     inspector_focus_key: str | None = None
     inspector_draft: str | None = None
@@ -19,6 +21,10 @@ class UiState:
     def toggle_side_panel(self) -> None:
         """Show or hide the context side panel."""
         self.side_panel_open = not self.side_panel_open
+
+    def toggle_meshes_panel(self) -> None:
+        """ show or hide the mesh catalog panel """
+        self.meshes_panel_open = not self.meshes_panel_open
 
     def clear_inspector_focus(self) -> None:
         """ discard in-progress inspector text editing """

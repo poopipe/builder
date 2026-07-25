@@ -10,8 +10,10 @@ from pyray import (
     Material,
     Mesh,
     Shader,
+    ffi,
     get_mesh_bounding_box,
     load_material_default,
+    unload_mesh,
 )
 
 
@@ -40,3 +42,30 @@ def prepare_mesh(mesh: Mesh, shader: Shader) -> PreparedMesh:
     material.shader = shader
     local_bounds: BoundingBox = get_mesh_bounding_box(mesh)
     return PreparedMesh(mesh=mesh, material=material, local_bounds=local_bounds)
+
+
+def release_prepared_mesh(prepared: PreparedMesh) -> None:
+    """ unload GPU mesh without freeing cffi-owned CPU attribute buffers """
+    mesh: Mesh = prepared.mesh
+    if prepared.keep_alive:
+        # UnloadMesh would RL_FREE these; they belong to keep_alive
+        field_name: str
+        for field_name in (
+            "vertices",
+            "texcoords",
+            "texcoords2",
+            "normals",
+            "tangents",
+            "colors",
+            "indices",
+            "animVertices",
+            "animNormals",
+            "boneIds",
+            "boneWeights",
+            "boneMatrices",
+        ):
+            try:
+                setattr(mesh, field_name, ffi.NULL)
+            except AttributeError:
+                pass
+    unload_mesh(mesh)
