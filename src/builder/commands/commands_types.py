@@ -8,6 +8,8 @@ from typing import Any
 
 from builder.commands.command_context import CommandContext
 
+""" being brave and using generics """
+
 
 @dataclass(frozen=True)
 class Command[P]:

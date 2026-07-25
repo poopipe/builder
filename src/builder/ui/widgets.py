@@ -24,8 +24,6 @@ from pyray import (
 )
 
 from builder.ui.theme import (
-    BUTTON_GAP,
-    BUTTON_HEIGHT,
     COLOUR_BORDER,
     COLOUR_BUTTON,
     COLOUR_BUTTON_HOVER,
@@ -118,18 +116,8 @@ def update_button(
         button.on_click()
 
 
-def update_buttons(buttons: Sequence[Button]) -> None:
-    """Update a flat list of buttons from the current mouse state."""
-    mouse: Vector2 = get_mouse_position()
-    left_down: bool = is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT)
-    left_released: bool = is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT)
-    button: Button
-    for button in buttons:
-        update_button(button, mouse, left_down, left_released)
-
-
-def update_clipped_buttons(buttons: Sequence[Button], clip: Rectangle) -> None:
-    """Update buttons; clicks only count when the pointer is inside ``clip``."""
+def update_buttons(buttons: Sequence[Button], clip: Rectangle) -> None:
+    """update buttons, ignore clicks unless pointer and button are inside clip rectangle"""
     mouse: Vector2 = get_mouse_position()
     left_down: bool = is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT)
     left_released: bool = is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT)
@@ -174,43 +162,53 @@ def draw_button(button: Button, font: Font) -> None:
     )
 
 
-def layout_menu_bar_buttons(
+def layout_buttons_horizontal(
     font: Font,
-    bar: Rectangle,
+    area: Rectangle,
     items: Sequence[tuple[str, Callable[[], None]]],
+    *,
+    pad: float,
+    gap: float,
+    button_height: float,
+    min_width: float,
+    font_size: float,
 ) -> list[Button]:
-    """Place menu buttons left-to-right inside the menu bar."""
+    """ place buttons left to right inside area """
     buttons: list[Button] = []
-    x: float = bar.x + PAD
-    y: float = bar.y + (bar.height - BUTTON_HEIGHT) * 0.5
+    x: float = area.x + pad
+    y: float = area.y + (area.height - button_height) * 0.5
     label: str
     on_click: Callable[[], None]
     for label, on_click in items:
-        label_w: float = measure_text_ex(font, label, float(FONT_SIZE), 0).x
-        bw: float = max(64.0, label_w + PAD * 2)
+        label_w: float = measure_text_ex(font, label, font_size, 0).x
+        bw: float = max(min_width, label_w + pad * 2)
         buttons.append(
-            Button(label, on_click, Rectangle(x, y, bw, float(BUTTON_HEIGHT)))
+            Button(label, on_click, Rectangle(x, y, bw, button_height))
         )
-        x += bw + BUTTON_GAP
+        x += bw + gap
     return buttons
 
 
-def layout_stack_buttons(
-    panel: Rectangle,
+def layout_buttons_vertical(
+    area: Rectangle,
     items: Sequence[tuple[str, Callable[[], None]]],
+    *,
+    pad: float,
+    gap: float,
+    button_height: float,
 ) -> list[Button]:
-    """Place buttons in a vertical stack inside the side panel."""
+    """ place buttons top to bottom inside area """
     buttons: list[Button] = []
-    x: float = panel.x + PAD
-    y: float = panel.y + PAD
-    bw: float = panel.width - PAD * 2
+    x: float = area.x + pad
+    y: float = area.y + pad
+    bw: float = area.width - pad * 2
     label: str
     on_click: Callable[[], None]
     for label, on_click in items:
         buttons.append(
-            Button(label, on_click, Rectangle(x, y, bw, float(BUTTON_HEIGHT)))
+            Button(label, on_click, Rectangle(x, y, bw, button_height))
         )
-        y += BUTTON_HEIGHT + BUTTON_GAP
+        y += button_height + gap
     return buttons
 
 

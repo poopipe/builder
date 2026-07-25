@@ -29,7 +29,15 @@ from builder.commands.commands_types import CommandItem
 from builder.commands.menus import MENU_COMMANDS, PANEL_COMMANDS, all_commands
 from builder.commands.registry import bind_entry, register_commands
 from builder.ui.font import load_app_font, unload_app_font
-from builder.ui.theme import COLOUR_BG, FONT_SIZE, SIDE_PANEL_WIDTH
+from builder.ui.theme import (
+    BUTTON_GAP,
+    BUTTON_HEIGHT,
+    BUTTON_MIN_WIDTH,
+    COLOUR_BG,
+    FONT_SIZE,
+    PAD,
+    SIDE_PANEL_WIDTH,
+)
 from builder.ui.ui_state import UiState
 from builder.ui.widgets import (
     Button,
@@ -39,10 +47,9 @@ from builder.ui.widgets import (
     draw_menu_bar,
     draw_status_bar,
     is_point_in_rect,
-    layout_menu_bar_buttons,
-    layout_stack_buttons,
+    layout_buttons_horizontal,
+    layout_buttons_vertical,
     update_buttons,
-    update_clipped_buttons,
 )
 from builder.view.viewport import Viewport
 
@@ -80,27 +87,35 @@ class Application:
             panel_width=panel_width,
         )
 
-        menu_buttons: list[Button] = layout_menu_bar_buttons(
+        menu_buttons: list[Button] = layout_buttons_horizontal(
             self.font,
             layout.menu,
             self.command_button_items(MENU_COMMANDS),
+            pad=float(PAD),
+            gap=float(BUTTON_GAP),
+            button_height=float(BUTTON_HEIGHT),
+            min_width=float(BUTTON_MIN_WIDTH),
+            font_size=float(FONT_SIZE),
         )
-        update_buttons(menu_buttons)
+        update_buttons(menu_buttons, layout.menu)
         """ 
             buttons run commands 
             commands are listed in consts (eg. PANEL_COMMANDS)
             executable code for command lives in a file per context (eg. view.py)
-            CommandContext is used to give a command access to the app state 
+            CommandContext is used to give the command access to the app state 
             (application, scene, ui) 
         """
 
         panel_buttons: list[Button] = []
         if self.ui.side_panel_open:
-            panel_buttons = layout_stack_buttons(
+            panel_buttons = layout_buttons_vertical(
                 layout.panel,
                 self.command_button_items(PANEL_COMMANDS),
+                pad=float(PAD),
+                gap=float(BUTTON_GAP),
+                button_height=float(BUTTON_HEIGHT),
             )
-            update_clipped_buttons(panel_buttons, layout.panel)
+            update_buttons(panel_buttons, layout.panel)
 
         mouse: Vector2 = get_mouse_position()
         ui_over: bool = (

@@ -12,7 +12,7 @@ from builder.view.gizmo import GizmoState
 
 
 class SceneContext(Protocol):
-    """3D scene capabilities exposed to commands."""
+    """expose scene functions/state to commands"""
 
     show_grid: bool
     nodes: Scene
@@ -44,7 +44,7 @@ class SceneContext(Protocol):
 
 
 class UiContext(Protocol):
-    """UI decoration and shell state exposed to commands."""
+    """expose ui functions/state to commands"""
 
     status: str
     side_panel_open: bool
@@ -55,14 +55,14 @@ class UiContext(Protocol):
 
 
 class ApplicationContext(Protocol):
-    """Session-level application capabilities exposed to commands."""
+    """expose application functions/state to commands"""
 
     should_close: bool
     importer: MeshImporter
 
 
 class CommandContext(Protocol):
-    """Composition root passed to every command."""
+    """app, scene, and ui state handed to every command"""
 
     @property
     def application(self) -> ApplicationContext:

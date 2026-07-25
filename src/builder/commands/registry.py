@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from builder.commands.command_context import CommandContext
-from builder.commands.commands_types import CommandItem, Command, CommandEntry
+from builder.commands.commands_types import CommandItem, CommandEntry
 
 
 @dataclass
@@ -30,15 +30,6 @@ def register_commands(entries: Iterable[CommandItem]) -> CommandRegistry:
     return registry
 
 
-def bind_command[P](
-    context: CommandContext,
-    command: Command[P],
-    params: P,
-) -> Callable[[], None]:
-    """Return a zero-arg callback that runs ``command`` with ``context`` and ``params``."""
-    return lambda: command.run(context, params)
-
-
 def bind_entry(context: CommandContext, entry: CommandEntry[Any]) -> Callable[[], None]:
-    """Bind a ``CommandEntry`` (command + params) to a zero-arg UI callback."""
-    return bind_command(context, entry.command, entry.params)
+    """ return a zero-arg callback that runs the entry's command with context and params """
+    return lambda: entry.command.run(context, entry.params)
