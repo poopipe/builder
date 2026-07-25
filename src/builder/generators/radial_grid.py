@@ -20,6 +20,7 @@ def radial_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]
         Vector3(0.0, 0.0, 0.0),
         radius=float(params["radius"]),
         spacing=float(params["spacing"]),
+        face_center=bool(int(params["face_center"])),
     )
 
 
@@ -29,7 +30,8 @@ RADIAL_GRID_SPEC: GeneratorSpec = GeneratorSpec(
     fields=(
         ParamField("radius", "Radius", "float", 0.5, minimum=0.1, maximum=50.0),
         ParamField("spacing", "Spacing deg", "float", 5.0, minimum=1.0, maximum=180.0),
+        ParamField("face_center", "Face center", "int", 1.0, minimum=0.0, maximum=1.0),
     ),
-    defaults={"radius": 5.0, "spacing": 30.0},
+    defaults={"radius": 5.0, "spacing": 30.0, "face_center": 1},
     build_transforms=radial_grid_from_params,
 )
