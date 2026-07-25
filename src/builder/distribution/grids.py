@@ -13,6 +13,7 @@ from pyray import (
     vector3_add,
     vector3_cross_product,
     vector3_dot_product,
+    vector3_length,
     vector3_normalize,
     vector3_scale,
     vector3_subtract,
@@ -57,16 +58,25 @@ def ring_direction(axis: AxisIndex, angle_rad: float) -> Vector3:
     return Vector3(c, s, 0.0)
 
 
-def rotation_from_z_to(direction: Vector3) -> Vector4:
-    """quaternion rotating +Z onto direction"""
+def rotation_from_z_to(direction: Vector3, up_hint: Vector3) -> Vector4:
+    """quaternion rotating +Z onto direction
+
+    when direction is -Z the 180° axis is taken from up_hint projected into the
+    XY plane, so a Y-up radial ring keeps +Y upright instead of flipping about X
+    """
     target: Vector3 = vector3_normalize(direction)
     z: Vector3 = Vector3(0.0, 0.0, 1.0)
     dot: float = vector3_dot_product(z, target)
     if dot > 0.999999:
         return quaternion_identity()
     if dot < -0.999999:
-        return quaternion_from_axis_angle(Vector3(1.0, 0.0, 0.0), pi)
-    axis: Vector3 = vector3_normalize(vector3_cross_product(z, target))
+        axis: Vector3 = Vector3(float(up_hint.x), float(up_hint.y), 0.0)
+        if vector3_length(axis) < 1e-6:
+            axis = Vector3(1.0, 0.0, 0.0)
+        else:
+            axis = vector3_normalize(axis)
+        return quaternion_from_axis_angle(axis, pi)
+    axis = vector3_normalize(vector3_cross_product(z, target))
     angle: float = acos(max(-1.0, min(1.0, dot)))
     return quaternion_from_axis_angle(axis, angle)
 
@@ -194,7 +204,9 @@ def radial_grid_transforms(
                     transforms.append(
                         Transform(
                             position,
-                            rotation_from_z_to(inward),
+                            rotation_from_z_to(
+                                inward, axis_vector(cylinder, 1.0)
+                            ),
                             Vector3(1.0, 1.0, 1.0),
                         )
                     )
