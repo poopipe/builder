@@ -156,39 +156,49 @@ def radial_grid_transforms(
     axis: AxisIndex = 1,
     count_height: int = 1,
     spacing_height: float = 2.0,
+    count_radius: int = 1,
+    spacing_radius: float = 2.0,
     build_from: AxisIndex = 1,
 ) -> list[Transform]:
-    """return transforms for stacked rings around a cylinder axis
+    """return transforms for stacked concentric rings around a cylinder axis
 
-    spacing is the angular step in degrees. count_height stacks copies along axis.
+    spacing is the angular step in degrees.
+    count_radius adds concentric rings starting at radius, spaced by spacing_radius.
+    count_height stacks copies along axis.
     when face_center is set each transform's +Z points toward the cylinder axis.
     """
     cylinder: AxisIndex = clamp_axis(axis)
     height_count: int = max(1, int(count_height))
+    radius_count: int = max(1, int(count_radius))
     transforms: list[Transform] = []
     ih: int
+    ir: int
     for ih in range(height_count):
         height: float = (float(ih) - (height_count - 1) * 0.5) * spacing_height
         height_offset: Vector3 = axis_vector(cylinder, height)
-        angle_deg: float = 0.0
-        while angle_deg < 360.0:
-            angle_rad: float = radians(angle_deg)
-            direction: Vector3 = ring_direction(cylinder, angle_rad)
-            position: Vector3 = vector3_add(
-                origin,
-                vector3_add(vector3_scale(direction, radius), height_offset),
-            )
-            if face_center:
-                # +Z toward the cylinder axis = opposite the ring direction
-                inward: Vector3 = vector3_scale(direction, -1.0)
-                transforms.append(
-                    Transform(
-                        position,
-                        rotation_from_z_to(inward),
-                        Vector3(1.0, 1.0, 1.0),
-                    )
+        for ir in range(radius_count):
+            ring_radius: float = radius + float(ir) * spacing_radius
+            angle_deg: float = 0.0
+            while angle_deg < 360.0:
+                angle_rad: float = radians(angle_deg)
+                direction: Vector3 = ring_direction(cylinder, angle_rad)
+                position: Vector3 = vector3_add(
+                    origin,
+                    vector3_add(
+                        vector3_scale(direction, ring_radius), height_offset
+                    ),
                 )
-            else:
-                transforms.append(transform_at(position))
-            angle_deg += spacing
+                if face_center:
+                    # +Z toward the cylinder axis = opposite the ring direction
+                    inward: Vector3 = vector3_scale(direction, -1.0)
+                    transforms.append(
+                        Transform(
+                            position,
+                            rotation_from_z_to(inward),
+                            Vector3(1.0, 1.0, 1.0),
+                        )
+                    )
+                else:
+                    transforms.append(transform_at(position))
+                angle_deg += spacing
     return align_build_from(transforms, origin, build_from)

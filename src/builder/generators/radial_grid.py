@@ -24,6 +24,8 @@ def radial_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]
         axis=int(params.get("axis", 1)),
         count_height=int(params.get("count_height", 1)),
         spacing_height=float(params.get("spacing_height", 2.0)),
+        count_radius=int(params.get("count_radius", 1)),
+        spacing_radius=float(params.get("spacing_radius", 2.0)),
         build_from=int(params.get("build_from", 1)),
     )
 
@@ -37,6 +39,17 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
         ),
         ParamField("radius", "Radius", "float", 0.5, minimum=0.1, maximum=50.0),
         ParamField("spacing", "Spacing deg", "float", 5.0, minimum=1.0, maximum=180.0),
+        ParamField(
+            "count_radius", "Count radius", "int", 1.0, minimum=1.0, maximum=512.0
+        ),
+        ParamField(
+            "spacing_radius",
+            "Spacing radius",
+            "float",
+            0.25,
+            minimum=0.1,
+            maximum=50.0,
+        ),
         ParamField(
             "count_height", "Count height", "int", 1.0, minimum=1.0, maximum=512.0
         ),
@@ -57,6 +70,8 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
         "axis": 1,
         "radius": 5.0,
         "spacing": 30.0,
+        "count_radius": 1,
+        "spacing_radius": 2.0,
         "count_height": 1,
         "spacing_height": 2.0,
         "face_center": 1,
