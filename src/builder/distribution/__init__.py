@@ -1,8 +1,8 @@
 """spatial distribution helpers — produce transforms only"""
 
-from builder.distribution.grids import horizontal_grid_transforms, radial_grid_transforms
+from builder.distribution.grids import grid_transforms, radial_grid_transforms
 
 __all__ = [
-    "horizontal_grid_transforms",
+    "grid_transforms",
     "radial_grid_transforms",
 ]

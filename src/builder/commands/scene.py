@@ -12,6 +12,7 @@ from builder.generators.generator_types import Generator, GeneratorSpec, ParamMa
 from builder.generators.registry import default_params, get_spec
 from builder.meshes.mesh_catalog import MeshAsset
 from builder.scene.ids import new_node_id
+from builder.scene.selection import subtree_ids
 from builder.scene.scene_types import builtin_cube, MeshId, Node, transform_at
 
 
@@ -107,15 +108,30 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
     )
 
 
-def place_horizontal_grid(context: CommandContext, _: None) -> None:
-    place_generator_group(context, "horizontal_grid")
+def place_grid(context: CommandContext, _: None) -> None:
+    place_generator_group(context, "grid")
 
 
 def place_radial_grid(context: CommandContext, _: None) -> None:
     place_generator_group(context, "radial_grid")
 
 
+def delete_selection(context: CommandContext, _: None) -> None:
+    """remove selected groups and their descendants"""
+    selected: list[str] = list(context.scene.nodes.selected_ids)
+    if not selected:
+        context.ui.status = "Nothing selected"
+        return
+    to_remove: list[str] = subtree_ids(context.scene.nodes.nodes, selected)
+    context.scene.nodes.remove_nodes(to_remove)
+    context.scene.clear_selection()
+    count: int = len(selected)
+    label: str = "group" if count == 1 else "groups"
+    context.ui.status = f"Deleted {count} {label}"
+
+
 cmd_place_mesh: Command[None] = Command("Place mesh", place_active_mesh)
 cmd_select_mesh: Command[MeshId] = Command("Select mesh", select_mesh)
-cmd_place_horizontal_grid: Command[None] = Command("Grid", place_horizontal_grid)
+cmd_place_grid: Command[None] = Command("Grid", place_grid)
 cmd_place_radial_grid: Command[None] = Command("Radial grid", place_radial_grid)
+cmd_delete: Command[None] = Command("Delete", delete_selection)

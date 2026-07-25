@@ -16,35 +16,47 @@ from pyray import (
 from builder.scene.scene_types import transform_at
 
 
-def horizontal_grid_transforms(
+def grid_transforms(
     origin: Vector3,
     count_x: int = 3,
+    count_y: int = 1,
     count_z: int = 3,
-    spacing: float = 2.0,
+    spacing_x: float = 2.0,
+    spacing_y: float = 2.0,
+    spacing_z: float = 2.0,
 ) -> list[Transform]:
-    """return transforms for grid in XZ centered at origin"""
-    step_x: Vector3 = Vector3(spacing, 0.0, 0.0)
-    step_z: Vector3 = Vector3(0.0, 0.0, spacing)
+    """return transforms for a regular XYZ lattice centered at origin"""
+    step_x: Vector3 = Vector3(spacing_x, 0.0, 0.0)
+    step_y: Vector3 = Vector3(0.0, spacing_y, 0.0)
+    step_z: Vector3 = Vector3(0.0, 0.0, spacing_z)
     start: Vector3 = vector3_subtract(
         origin,
         vector3_add(
-            vector3_scale(step_x, (count_x - 1) * 0.5),
+            vector3_add(
+                vector3_scale(step_x, (count_x - 1) * 0.5),
+                vector3_scale(step_y, (count_y - 1) * 0.5),
+            ),
             vector3_scale(step_z, (count_z - 1) * 0.5),
         ),
     )
     transforms: list[Transform] = []
     ix: int
+    iy: int
     iz: int
     for iz in range(count_z):
-        for ix in range(count_x):
-            position: Vector3 = vector3_add(
-                start,
-                vector3_add(
-                    vector3_scale(step_x, float(ix)),
-                    vector3_scale(step_z, float(iz)),
-                ),
-            )
-            transforms.append(transform_at(position))
+        for iy in range(count_y):
+            for ix in range(count_x):
+                position: Vector3 = vector3_add(
+                    start,
+                    vector3_add(
+                        vector3_add(
+                            vector3_scale(step_x, float(ix)),
+                            vector3_scale(step_y, float(iy)),
+                        ),
+                        vector3_scale(step_z, float(iz)),
+                    ),
+                )
+                transforms.append(transform_at(position))
     return transforms
 
 

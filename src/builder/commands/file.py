@@ -6,7 +6,6 @@ from pathlib import Path
 
 from builder.commands.command_context import CommandContext
 from builder.commands.commands_types import Command
-from builder.commands.scene import place_mesh_group
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.io.scene_format import scene_file_suffix
 from builder.io.scene_io import load_scene_from_path, save_scene_to_path
@@ -90,7 +89,7 @@ def import_mesh(context: CommandContext, _: None) -> None:
 
 
 def import_mesh_from_path(context: CommandContext, path: str) -> None:
-    """import an fbx; replace GPU data if already loaded, else place one instance"""
+    """import an fbx into the mesh catalog and make it active"""
     imported: ImportedMesh = context.application.importer.import_path(path)
     mesh_id: MeshId = MeshId(mesh_id_for_import(imported))
     replacing: bool = mesh_id in context.application.mesh_catalog.entries
@@ -109,9 +108,8 @@ def import_mesh_from_path(context: CommandContext, path: str) -> None:
             f"({imported.triangle_count} tris)"
         )
         return
-    place_mesh_group(context, registered_id)
     context.ui.status = (
-        f"Imported and selected {Path(path).name} as '{imported.name}' "
+        f"Imported '{imported.name}' "
         f"({imported.triangle_count} tris)"
     )
 

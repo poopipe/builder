@@ -11,11 +11,11 @@ from builder.generators.generator_types import (
     ParamMap,
     ParamValue,
 )
-from builder.generators.horizontal_grid import horizontal_grid_spec
+from builder.generators.grid import grid_spec
 from builder.generators.radial_grid import radial_grid_spec
 
 generator_specs: tuple[GeneratorSpec, ...] = (
-    horizontal_grid_spec,
+    grid_spec,
     radial_grid_spec,
 )
 
