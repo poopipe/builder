@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from builder.io.mesh_import import MeshImporter
+from builder.io.mesh_import import ImportedMesh, MeshImporter
 from builder.scene.scene import Scene
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import MeshId, Node
 from builder.view.gizmo import GizmoState
 
 
@@ -40,6 +40,10 @@ class SceneContext(Protocol):
 
     def clear_selection(self) -> None:
         """Clear the active group selection."""
+        ...
+
+    def register_and_place_imported_mesh(self, imported: ImportedMesh) -> MeshId:
+        """ upload, register, and place an imported mesh; return its mesh id """
         ...
 
 

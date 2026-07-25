@@ -22,6 +22,13 @@ class MeshTable:
             raise ValueError(f"mesh already registered: {mesh_id.name}")
         self.entries[mesh_id] = prepared
 
+    def add_or_replace(self, mesh_id: MeshId, prepared: PreparedMesh) -> None:
+        """ store a prepared mesh, unloading any previous entry with the same id """
+        existing: PreparedMesh | None = self.entries.get(mesh_id)
+        if existing is not None:
+            unload_mesh(existing.mesh)
+        self.entries[mesh_id] = prepared
+
     def get(self, mesh_id: MeshId) -> PreparedMesh:
         """Return a prepared mesh. Raises ``KeyError`` if missing."""
         return self.entries[mesh_id]

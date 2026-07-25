@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from pyray import (
     BoundingBox,
@@ -21,6 +22,8 @@ class PreparedMesh:
     mesh: Mesh
     material: Material
     local_bounds: BoundingBox
+    # ffi buffers that must outlive the Mesh (imported uploads only)
+    keep_alive: tuple[Any, ...] = ()
 
 
 def prepare_mesh(mesh: Mesh, shader: Shader) -> PreparedMesh:

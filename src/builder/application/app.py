@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from pyray import (
     ConfigFlags,
+    FilePathList,
     Font,
     KeyboardKey,
     Vector2,
@@ -13,19 +16,24 @@ from pyray import (
     clear_background,
     close_window,
     end_drawing,
+    ffi,
     get_mouse_position,
     get_screen_height,
     get_screen_width,
     init_window,
+    is_file_dropped,
     is_window_ready,
+    load_dropped_files,
     set_config_flags,
     set_exit_key,
     set_target_fps,
+    unload_dropped_files,
     window_should_close,
 )
 
 from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandItem
+from builder.commands.file import import_mesh_from_path
 from builder.commands.menus import MENU_COMMANDS, PANEL_COMMANDS, all_commands
 from builder.commands.registry import bind_entry, register_commands
 from builder.generators.regenerate import selected_parametric_group
@@ -64,6 +72,16 @@ from builder.ui.widgets import (
 from builder.view.viewport import Viewport
 
 
+def dropped_path_string(raw: Any) -> str:
+    """ decode a FilePathList.paths entry (str, bytes, or cffi char*) """
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="surrogateescape")
+    # cffi char* — str(cdata) is a pointer repr, not the path text
+    return ffi.string(raw).decode("utf-8", errors="surrogateescape")
+
+
 class Application:
     """Owns session state and runs the main loop.
 
@@ -88,8 +106,38 @@ class Application:
             items.append((entry.command.label, bind_entry(self, entry)))
         return items
 
+    def handle_dropped_files(self) -> None:
+        """ import the first dropped .fbx, or report why nothing was imported """
+        if not is_file_dropped():
+            return
+        dropped: FilePathList = load_dropped_files()
+        try:
+            count: int = int(dropped.count)
+            if count <= 0:
+                return
+            seen: list[str] = []
+            index: int
+            for index in range(count):
+                path: str = dropped_path_string(dropped.paths[index])
+                seen.append(path)
+                if not self.application.importer.has_valid_suffix(path):
+                    continue
+                try:
+                    import_mesh_from_path(self, path)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    self.ui.status = f"Import failed: {exc}"
+                return
+            sample: str = Path(seen[0]).name if seen else "?"
+            self.ui.status = (
+                f"Dropped {count} file(s); none were .fbx "
+                f"(got '{sample}')"
+            )
+        finally:
+            unload_dropped_files(dropped)
+
     def frame(self) -> None:
         """define the UI layout"""
+        self.handle_dropped_files()
         group: Node | None = selected_parametric_group(self.scene.nodes)
         sync_inspector_focus(self.ui, group)
         apply_inspector_exit_key(self.ui)

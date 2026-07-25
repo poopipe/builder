@@ -55,7 +55,7 @@ uniform vec4 colDiffuse;
 uniform vec3 viewPos;
 
 struct Light {
-    vec3 position;
+    vec3 direction;
     vec3 color;
     float intensity;
 };
@@ -70,7 +70,8 @@ void main()
     vec3 lighting = ambient;
 
     for (int i = 0; i < 3; i++) {
-        vec3 lightDir = normalize(lights[i].position - fragPosition);
+        // direction is travel of light rays; lighting uses the opposite
+        vec3 lightDir = normalize(-lights[i].direction);
         float diff = max(dot(normal, lightDir), 0.0);
         vec3 diffuse = lights[i].color * diff * lights[i].intensity;
 
@@ -78,9 +79,7 @@ void main()
         float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
         vec3 specular = lights[i].color * spec * lights[i].intensity * 0.35;
 
-        float dist = length(lights[i].position - fragPosition);
-        float atten = 1.0 / (1.0 + 0.02 * dist + 0.001 * dist * dist);
-        lighting += (diffuse + specular) * atten;
+        lighting += diffuse + specular;
     }
 
     finalColor = vec4(texel.rgb * colDiffuse.rgb * fragColor.rgb * lighting, texel.a * colDiffuse.a);
@@ -107,16 +106,16 @@ def set_matrix(shader: Shader, loc: int, value: Matrix) -> None:
 
 
 @dataclass
-class PointLight:
-    """A simple point light for the three-point setup."""
+class DirectionalLight:
+    """A directional light (parallel rays). ``direction`` is ray travel direction."""
 
-    position: Vector3
+    direction: Vector3
     color: Vector3
     intensity: float
 
 
 class Lighting:
-    """Key / fill / rim lights bound to an instancing-capable shader."""
+    """Key / fill / rim directional lights bound to an instancing-capable shader."""
 
     def __init__(self) -> None:
         self.shader: Shader = load_shader_from_memory(VS_SOURCE, FS_SOURCE)
@@ -146,10 +145,11 @@ class Lighting:
             unload_shader(self.shader)
             raise RuntimeError("lighting shader is missing required uniforms")
 
-        self.lights: list[PointLight] = [
-            PointLight(Vector3(6.0, 8.0, 4.0), Vector3(1.0, 0.95, 0.9), 1.0),
-            PointLight(Vector3(-5.0, 3.0, 2.0), Vector3(0.45, 0.55, 0.85), 0.55),
-            PointLight(Vector3(0.0, 4.0, -6.0), Vector3(0.9, 0.9, 1.0), 0.7),
+        # three-point: key (sun), fill, rim — directions are ray travel
+        self.lights: list[DirectionalLight] = [
+            DirectionalLight(Vector3(-0.45, -1.0, -0.35), Vector3(1.0, 0.95, 0.9), 1.0),
+            DirectionalLight(Vector3(0.85, -0.35, 0.25), Vector3(0.45, 0.55, 0.85), 0.4),
+            DirectionalLight(Vector3(0.1, -0.15, 1.0), Vector3(0.9, 0.9, 1.0), 0.55),
         ]
         set_vec3(self.shader, self.loc_ambient, Vector3(0.12, 0.12, 0.14))
         self.upload_lights()
@@ -157,16 +157,17 @@ class Lighting:
     def set_parent_transform(self, matrix: Matrix) -> None:
         """ bind the parent world matrix for the next instanced draw """
         set_matrix(self.shader, self.loc_parent, matrix)
+
     def upload_lights(self) -> None:
         i: int
-        light: PointLight
+        light: DirectionalLight
         for i, light in enumerate(self.lights):
-            loc_pos: int = get_shader_location(self.shader, f"lights[{i}].position")
+            loc_dir: int = get_shader_location(self.shader, f"lights[{i}].direction")
             loc_col: int = get_shader_location(self.shader, f"lights[{i}].color")
             loc_int: int = get_shader_location(self.shader, f"lights[{i}].intensity")
-            if loc_pos < 0 or loc_col < 0 or loc_int < 0:
+            if loc_dir < 0 or loc_col < 0 or loc_int < 0:
                 raise RuntimeError(f"lighting shader is missing light[{i}] uniforms")
-            set_vec3(self.shader, loc_pos, light.position)
+            set_vec3(self.shader, loc_dir, light.direction)
             set_vec3(self.shader, loc_col, light.color)
             set_float(self.shader, loc_int, light.intensity)
 

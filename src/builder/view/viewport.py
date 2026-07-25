@@ -19,7 +19,6 @@ from pyray import (
     begin_mode_3d,
     begin_scissor_mode,
     clear_background,
-    draw_sphere,
     end_mode_3d,
     end_scissor_mode,
     get_mouse_position,
@@ -36,8 +35,10 @@ from pyray import (
 )
 
 from builder.meshes.builtins import make_cube
+from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
+from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
-from builder.scene.scene_types import BUILTIN_CUBE, Node, Quaternion
+from builder.scene.scene_types import BUILTIN_CUBE, MeshId, Node, Quaternion, transform_at
 from builder.scene.selection import root_group_id
 from builder.view.gizmo import (
     GizmoState,
@@ -58,23 +59,24 @@ from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
 from builder.view.mesh_table import MeshTable
 from builder.view.picking import pick_nearest_mesh_node
-from builder.view.prepare_mesh import prepare_mesh
+from builder.view.prepare_mesh import PreparedMesh, prepare_mesh
+from builder.view.upload_mesh import upload_imported_mesh
 from builder.view.viewport_ray import mouse_in_rect, viewport_world_ray
 from builder.view.world_axes import draw_world_axes
 
 
 @dataclass
 class OrbitState:
-    """Spherical orbit camera around a target."""
+    """Spherical orbit camera around a target (distances in metres)."""
 
     yaw: float = 45.0
     pitch: float = 30.0
-    distance: float = 12.0
+    distance: float = 10.0
     target: Vector3 | None = None
 
     def __post_init__(self) -> None:
         if self.target is None:
-            self.target = Vector3(0.0, 0.5, 0.0)
+            self.target = Vector3(0.0, 0.0, 0.0)
 
 
 class Viewport:
@@ -123,8 +125,8 @@ class Viewport:
 
     def focus_origin(self) -> None:
         """Reset the orbit target to the origin."""
-        self.orbit.target = Vector3(0.0, 0.5, 0.0)
-        self.orbit.distance = 12.0
+        self.orbit.target = Vector3(0.0, 0.0, 0.0)
+        self.orbit.distance = 10.0
         self.orbit.yaw = 45.0
         self.orbit.pitch = 30.0
         self.apply_orbit()
@@ -151,6 +153,45 @@ class Viewport:
         """Clear the active group selection."""
         self.nodes.clear_selection()
         end_gizmo_drag(self.gizmo)
+
+    def register_mesh(self, mesh_id: MeshId, prepared: PreparedMesh) -> None:
+        """ insert or replace a prepared mesh in the mesh table """
+        self.mesh_table.add_or_replace(mesh_id, prepared)
+
+    def place_imported_mesh(self, mesh_id: MeshId) -> str:
+        """ place one instance of a registered mesh under a new group; return group id """
+        if not self.mesh_table.has_mesh(mesh_id):
+            raise KeyError(f"mesh not registered: {mesh_id.name}")
+        group_id: str = new_node_id()
+        child_id: str = new_node_id()
+        nodes: list[Node] = [
+            Node(
+                id=group_id,
+                parent_id=None,
+                transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                mesh_id=None,
+                generator=None,
+            ),
+            Node(
+                id=child_id,
+                parent_id=group_id,
+                transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                mesh_id=mesh_id,
+                generator=None,
+            ),
+        ]
+        self.nodes.add_nodes(nodes)
+        self.nodes.set_selection([group_id])
+        end_gizmo_drag(self.gizmo)
+        return group_id
+
+    def register_and_place_imported_mesh(self, imported: ImportedMesh) -> MeshId:
+        """ upload an imported mesh, register it, place one instance, return mesh id """
+        mesh_id: MeshId = MeshId(mesh_id_for_import(imported))
+        prepared: PreparedMesh = upload_imported_mesh(imported, self.lighting.shader)
+        self.register_mesh(mesh_id, prepared)
+        self.place_imported_mesh(mesh_id)
+        return mesh_id
 
     def handle_selection_click(self, ray: Ray) -> None:
         """Select a group from a mesh hit, or clear on a miss."""
@@ -268,7 +309,7 @@ class Viewport:
 
         wheel = get_mouse_wheel_move()
         if wheel != 0.0:
-            self.orbit.distance = max(2.0, min(80.0, self.orbit.distance - wheel * 1.5))
+            self.orbit.distance = max(0.5, min(200.0, self.orbit.distance - wheel * 1.5))
             self.apply_orbit()
 
     def draw(self, view_rect: Rectangle) -> None:
@@ -305,8 +346,6 @@ class Viewport:
                 gizmo_size(self.camera, pivot),
             )
 
-        for light in self.lighting.lights:
-            draw_sphere(light.position, 0.15, Color(255, 220, 120, 255))
         end_mode_3d()
         end_scissor_mode()
 
