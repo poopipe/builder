@@ -2,46 +2,36 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Sequence
-
-from pyray import draw_mesh_instanced, ffi
+from pyray import Matrix, draw_mesh_instanced, ffi, matrix_identity
 
 from builder.scene.scene import Scene
-from builder.scene.scene_types import MeshId, Node
-from builder.scene.transforms import world_matrix
+from builder.view.draw_cache import DrawCache, MeshInstanceBatch, sync_draw_cache
+from builder.view.lighting import Lighting
 from builder.view.mesh_table import MeshTable
 from builder.view.prepare_mesh import PreparedMesh
 
 
-def group_nodes_by_mesh(nodes: Sequence[Node]) -> dict[MeshId, list[Node]]:
-    """ bucket drawable nodes by mesh id for one draw call per mesh """
-    groups: dict[MeshId, list[Node]] = defaultdict(list)
-    node: Node
-    for node in nodes:
-        if node.mesh_id is None:
+def draw_nodes_instanced(
+    table: MeshTable,
+    scene: Scene,
+    cache: DrawCache,
+    lighting: Lighting,
+) -> None:
+    """ draw meshed nodes: one call per (mesh, parent), parent world as a uniform """
+    sync_draw_cache(scene, cache)
+    identity: Matrix = matrix_identity()
+    batch: MeshInstanceBatch
+    for batch in cache.batches.values():
+        if batch.count == 0 or not table.has_mesh(batch.mesh_id):
             continue
-        groups[node.mesh_id].append(node)
-    return groups
-
-
-def draw_nodes_instanced(table: MeshTable, scene: Scene) -> None:
-    """ draw all meshed nodes with draw_mesh_instanced, one batch per mesh """
-    mesh_id: MeshId
-    group: list[Node]
-    for mesh_id, group in group_nodes_by_mesh(scene.all_nodes()).items():
-        if not group:
-            continue
-        prepared: PreparedMesh = table.get(mesh_id)
-        count: int = len(group)
-        transforms = ffi.new("Matrix[]", count)
-        index: int
-        node: Node
-        for index, node in enumerate(group):
-            transforms[index] = world_matrix(scene.nodes, node.id)
+        prepared: PreparedMesh = table.get(batch.mesh_id)
+        parent: Matrix = identity
+        if batch.parent_id is not None:
+            parent = cache.world[batch.parent_id]
+        lighting.set_parent_transform(parent)
         draw_mesh_instanced(
             prepared.mesh,
             prepared.material,
-            ffi.cast("Matrix *", transforms),
-            count,
+            ffi.cast("Matrix *", batch.transforms),
+            batch.count,
         )

@@ -430,9 +430,11 @@ def apply_drag_to_scene(
         axis: Vector3 = vector3_normalize(drag.axis_dir)
         delta = vector3_scale(axis, vector3_dot_product(delta, axis))
         for group_id, start_transform in drag.start_transforms.items():
-            scene.nodes[group_id] = with_transform(
-                scene.nodes[group_id],
-                translate_transform(start_transform, delta),
+            scene.set_node(
+                with_transform(
+                    scene.nodes[group_id],
+                    translate_transform(start_transform, delta),
+                )
             )
         return
 
@@ -462,9 +464,11 @@ def apply_drag_to_scene(
                     start_transform,
                     quaternion_from_axis_angle(local_axis, delta_angle),
                 )
-            scene.nodes[group_id] = with_transform(
-                scene.nodes[group_id],
-                new_transform,
+            scene.set_node(
+                with_transform(
+                    scene.nodes[group_id],
+                    new_transform,
+                )
             )
         return
 
@@ -479,9 +483,11 @@ def apply_drag_to_scene(
         factor: float = distance / drag.start_scale_distance
         factor = max(0.05, min(20.0, factor))
         for group_id, start_transform in drag.start_transforms.items():
-            scene.nodes[group_id] = with_transform(
-                scene.nodes[group_id],
-                scale_transform_uniform(start_transform, factor, drag.pivot),
+            scene.set_node(
+                with_transform(
+                    scene.nodes[group_id],
+                    scale_transform_uniform(start_transform, factor, drag.pivot),
+                )
             )
 
 

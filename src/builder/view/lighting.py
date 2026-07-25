@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pyray import (
+    Matrix,
     Shader,
     ShaderLocationIndex,
     ShaderUniformDataType,
@@ -15,6 +16,7 @@ from pyray import (
     is_shader_valid,
     load_shader_from_memory,
     set_shader_value,
+    set_shader_value_matrix,
     unload_shader,
 )
 
@@ -29,13 +31,15 @@ out vec2 fragTexCoord;
 out vec4 fragColor;
 out vec3 fragNormal;
 uniform mat4 mvp;
+uniform mat4 parentTransform;
 void main()
 {
-    fragPosition = vec3(instanceTransform * vec4(vertexPosition, 1.0));
+    mat4 world = parentTransform * instanceTransform;
+    fragPosition = vec3(world * vec4(vertexPosition, 1.0));
     fragTexCoord = vertexTexCoord;
     fragColor = vec4(1.0);
-    fragNormal = normalize(mat3(instanceTransform) * vertexNormal);
-    gl_Position = mvp * instanceTransform * vec4(vertexPosition, 1.0);
+    fragNormal = normalize(mat3(world) * vertexNormal);
+    gl_Position = mvp * world * vec4(vertexPosition, 1.0);
 }
 """
 
@@ -97,6 +101,11 @@ def set_vec3(shader: Shader, loc: int, value: Vector3) -> None:
     set_shader_value(shader, loc, value, ShaderUniformDataType.SHADER_UNIFORM_VEC3)
 
 
+def set_matrix(shader: Shader, loc: int, value: Matrix) -> None:
+    # matrices have no ShaderUniformDataType member; raylib provides a dedicated call
+    set_shader_value_matrix(shader, loc, value)
+
+
 @dataclass
 class PointLight:
     """A simple point light for the three-point setup."""
@@ -132,7 +141,8 @@ class Lighting:
 
         self.loc_view: int = get_shader_location(self.shader, "viewPos")
         self.loc_ambient: int = get_shader_location(self.shader, "ambient")
-        if self.loc_view < 0 or self.loc_ambient < 0:
+        self.loc_parent: int = get_shader_location(self.shader, "parentTransform")
+        if self.loc_view < 0 or self.loc_ambient < 0 or self.loc_parent < 0:
             unload_shader(self.shader)
             raise RuntimeError("lighting shader is missing required uniforms")
 
@@ -144,6 +154,9 @@ class Lighting:
         set_vec3(self.shader, self.loc_ambient, Vector3(0.12, 0.12, 0.14))
         self.upload_lights()
 
+    def set_parent_transform(self, matrix: Matrix) -> None:
+        """ bind the parent world matrix for the next instanced draw """
+        set_matrix(self.shader, self.loc_parent, matrix)
     def upload_lights(self) -> None:
         i: int
         light: PointLight

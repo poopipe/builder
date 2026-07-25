@@ -53,6 +53,7 @@ from builder.view.gizmo import (
 )
 from builder.view.gizmo_types import GizmoAxis
 from builder.view.grid import draw_ground_grid
+from builder.view.draw_cache import DrawCache, clear_draw_cache
 from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
 from builder.view.mesh_table import MeshTable
@@ -90,6 +91,7 @@ class Viewport:
         self.lighting: Lighting = Lighting()
         self.mesh_table: MeshTable = MeshTable()
         self.nodes: Scene = Scene()
+        self.draw_cache: DrawCache = DrawCache()
         self.gizmo: GizmoState = GizmoState()
         try:
             self.mesh_table.add(
@@ -153,7 +155,7 @@ class Viewport:
     def handle_selection_click(self, ray: Ray) -> None:
         """Select a group from a mesh hit, or clear on a miss."""
         hit_id: str | None = pick_nearest_mesh_node(
-            self.nodes, self.mesh_table, ray
+            self.nodes, self.mesh_table, ray, self.draw_cache
         )
         if hit_id is None:
             self.clear_selection()
@@ -284,7 +286,9 @@ class Viewport:
         if self.show_grid:
             draw_ground_grid(40, 1.0)
         draw_world_axes()
-        draw_nodes_instanced(self.mesh_table, self.nodes)
+        draw_nodes_instanced(
+            self.mesh_table, self.nodes, self.draw_cache, self.lighting
+        )
 
         pivot: Vector3 | None = selection_pivot(self.nodes, self.nodes.selected_ids)
         if pivot is not None:
@@ -307,6 +311,12 @@ class Viewport:
         end_scissor_mode()
 
     def unload(self) -> None:
-        """Release GPU resources."""
+        """Release GPU resources and drop large CPU caches before process exit."""
+        self.nodes.nodes.clear()
+        self.nodes.selected_ids.clear()
+        self.nodes.dirty_ids.clear()
+        self.nodes.added_ids.clear()
+        self.nodes.removed.clear()
+        clear_draw_cache(self.draw_cache)
         self.mesh_table.unload()
         self.lighting.unload()

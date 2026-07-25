@@ -7,7 +7,7 @@ from pyray import BoundingBox, Ray, RayCollision, get_ray_collision_box
 from builder.scene.bounds import transform_bounding_box
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
-from builder.scene.transforms import world_matrix
+from builder.view.draw_cache import DrawCache, sync_draw_cache, world_matrix_for
 from builder.view.mesh_table import MeshTable
 from builder.view.prepare_mesh import PreparedMesh
 
@@ -16,8 +16,10 @@ def pick_nearest_mesh_node(
     scene: Scene,
     mesh_table: MeshTable,
     ray: Ray,
+    cache: DrawCache,
 ) -> str | None:
     """ return id of the nearest meshed node hit by ray, or none """
+    sync_draw_cache(scene, cache)
     best_id: str | None = None
     best_distance: float = float("inf")
     node: Node
@@ -29,7 +31,7 @@ def pick_nearest_mesh_node(
         prepared: PreparedMesh = mesh_table.get(node.mesh_id)
         world_bounds: BoundingBox = transform_bounding_box(
             prepared.local_bounds,
-            world_matrix(scene.nodes, node.id),
+            world_matrix_for(scene, cache, node.id),
         )
         hit: RayCollision = get_ray_collision_box(ray, world_bounds)
         if hit.hit and hit.distance < best_distance:
