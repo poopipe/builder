@@ -1,4 +1,4 @@
-"""FBX mesh import via the ufbx_bridge DLL (no numpy)."""
+"""FBX mesh import via the ufbx_bridge DLL (no numpy)"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from builder.io.ufbx_bridge import default_dll_path, load_fbx_via_bridge
 
 @dataclass(frozen=True)
 class ImportedMesh:
-    """ triangulated mesh ready for GPU upload (non-indexed corner verts) """
+    """triangulated mesh ready for GPU upload (non-indexed corner verts)"""
 
     name: str
     source_path: str
@@ -31,16 +31,16 @@ class ImportedMesh:
 
 @dataclass
 class MeshImporter:
-    """ loads .fbx files into ImportedMesh payloads """
+    """loads .fbx files into ImportedMesh payloads"""
 
     supported_suffixes: tuple[str, ...] = (".fbx",)
 
     def has_valid_suffix(self, path: str | Path) -> bool:
-        """ return true if the path has a supported mesh file suffix """
+        """return true if the path has a supported mesh file suffix"""
         return Path(path).suffix.lower() in self.supported_suffixes
 
     def status_message(self) -> str:
-        """ human-readable backend status for the UI """
+        """human-readable backend status for the UI"""
         if not default_dll_path().is_file():
             return (
                 "Mesh import: build ufbx_bridge\\build\\ufbx_bridge.dll "
@@ -49,7 +49,7 @@ class MeshImporter:
         return "Mesh import: drop an .fbx file onto the window"
 
     def import_path(self, path: str | Path) -> ImportedMesh:
-        """ load the largest mesh from an fbx file """
+        """load the largest mesh from an fbx file"""
         mesh_path: Path = Path(path)
         if not mesh_path.is_file():
             raise FileNotFoundError(f"mesh file not found: {mesh_path}")
@@ -72,7 +72,7 @@ class MeshImporter:
 
 
 def mesh_id_for_import(imported: ImportedMesh) -> str:
-    """ stable mesh table name for an imported asset """
+    """stable mesh table name for an imported asset"""
     stem: str = Path(imported.source_path).stem
     safe_mesh: str = "".join(
         ch if ch.isalnum() or ch in "-_" else "_" for ch in imported.name

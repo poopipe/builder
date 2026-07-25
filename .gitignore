@@ -1,4 +1,5 @@
 __pycache__
-.git
+.git/
 .venv
 ufbx_bridge/build/
+*.scene

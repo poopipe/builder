@@ -1,4 +1,4 @@
-"""CPU scene: a collection of nodes and group selection."""
+"""CPU scene: a collection of nodes and group selection"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from builder.scene.scene_types import MeshId, Node
 
 @dataclass(frozen=True)
 class RemovedNode:
-    """ snapshot of a node removed from the scene, for cache invalidation """
+    """snapshot of a node removed from the scene, for cache invalidation"""
 
     id: str
     parent_id: str | None
@@ -19,7 +19,7 @@ class RemovedNode:
 
 @dataclass
 class Scene:
-    """Mutable node collection. Commands mutate this; the view only reads it."""
+    """mutable node collection. Commands mutate this; the view only reads it"""
 
     nodes: dict[str, Node] = field(default_factory=dict)
     selected_ids: set[str] = field(default_factory=set)
@@ -30,11 +30,11 @@ class Scene:
     removed: list[RemovedNode] = field(default_factory=list)
 
     def bump_revision(self) -> None:
-        """ invalidate cached draw state for this scene """
+        """invalidate cached draw state for this scene"""
         self.revision += 1
 
     def mark_structure_changed(self) -> None:
-        """ force a full draw-cache rebuild on the next sync """
+        """force a full draw-cache rebuild on the next sync"""
         self.structure_revision += 1
         self.dirty_ids.clear()
         self.added_ids.clear()
@@ -42,7 +42,7 @@ class Scene:
         self.bump_revision()
 
     def set_node(self, node: Node) -> None:
-        """ insert or replace one node; transform-only edits stay incremental """
+        """insert or replace one node; transform-only edits stay incremental"""
         old: Node | None = self.nodes.get(node.id)
         self.nodes[node.id] = node
         if old is None:
@@ -60,7 +60,7 @@ class Scene:
         self.bump_revision()
 
     def add_nodes(self, nodes: Sequence[Node]) -> None:
-        """Insert or replace nodes by id."""
+        """insert or replace nodes by id"""
         if not nodes:
             return
         node: Node
@@ -82,7 +82,7 @@ class Scene:
         self.bump_revision()
 
     def remove_nodes(self, node_ids: Iterable[str]) -> None:
-        """Remove nodes by id; missing ids are ignored."""
+        """remove nodes by id; missing ids are ignored"""
         removed_any: bool = False
         node_id: str
         for node_id in node_ids:
@@ -100,7 +100,7 @@ class Scene:
             self.bump_revision()
 
     def clear_nodes(self) -> None:
-        """Remove every node and clear selection."""
+        """remove every node and clear selection"""
         if not self.nodes and not self.selected_ids:
             return
         self.nodes.clear()
@@ -108,19 +108,19 @@ class Scene:
         self.mark_structure_changed()
 
     def all_nodes(self) -> list[Node]:
-        """Return nodes in insertion order (dict order)."""
+        """return nodes in insertion order (dict order)"""
         return list(self.nodes.values())
 
     def set_selection(self, group_ids: Iterable[str]) -> None:
-        """Replace the selection with the given group ids."""
+        """replace the selection with the given group ids"""
         self.selected_ids = {group_id for group_id in group_ids}
 
     def clear_selection(self) -> None:
-        """Clear the current selection."""
+        """clear the current selection"""
         self.selected_ids.clear()
 
     def toggle_selection(self, group_id: str) -> None:
-        """Add or remove a group id from the selection."""
+        """add or remove a group id from the selection"""
         if group_id in self.selected_ids:
             self.selected_ids.discard(group_id)
         else:

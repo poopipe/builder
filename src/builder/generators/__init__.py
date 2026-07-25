@@ -1,7 +1,7 @@
-"""Parametric group generators."""
+"""parametric group generators"""
 
 from builder.generators.generator_types import Generator, GeneratorSpec, ParamField
-from builder.generators.registry import GENERATOR_SPECS, default_params, get_spec
+from builder.generators.registry import generator_specs, default_params, get_spec
 from builder.generators.regenerate import (
     bake_group,
     regenerate_group,
@@ -11,7 +11,7 @@ from builder.generators.regenerate import (
 )
 
 __all__ = [
-    "GENERATOR_SPECS",
+    "generator_specs",
     "Generator",
     "GeneratorSpec",
     "ParamField",

@@ -1,4 +1,4 @@
-"""Load CaskaydiaCove Nerd Font as the application default."""
+"""load CaskaydiaCove Nerd Font as the application default"""
 
 from __future__ import annotations
 
@@ -13,17 +13,17 @@ from pyray import (
     unload_font,
 )
 
-FONT_NAME: str = "CaskaydiaCoveNerdFont-Regular.ttf"
+font_name: str = "CaskaydiaCoveNerdFont-Regular.ttf"
 
 
 def assets_fonts_dir() -> Path:
-    """Return the packaged fonts directory."""
+    """return the packaged fonts directory"""
     return Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 
 def load_app_font(size: int = 18) -> Font:
-    """Load CaskaydiaCove. Raises if the file is missing or fails to load."""
-    path: Path = assets_fonts_dir() / FONT_NAME
+    """load CaskaydiaCove. Raises if the file is missing or fails to load"""
+    path: Path = assets_fonts_dir() / font_name
     if not path.is_file():
         raise FileNotFoundError(f"application font not found: {path}")
 
@@ -37,7 +37,7 @@ def load_app_font(size: int = 18) -> Font:
 
 
 def unload_app_font(font: Font) -> None:
-    """Unload a font if it is not the built-in default."""
+    """unload a font if it is not the built-in default"""
     default: Font = get_font_default()
     if font.texture.id != default.texture.id:
         unload_font(font)

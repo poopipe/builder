@@ -1,4 +1,4 @@
-""" horizontal grid generator: meshes on a regular XZ lattice """
+"""horizontal grid generator: meshes on a regular XZ lattice"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from builder.generators.generator_types import (
 
 
 def horizontal_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
-    """ build horizontal grid transforms from a param map """
+    """build horizontal grid transforms from a param map"""
     return horizontal_grid_transforms(
         Vector3(0.0, 0.0, 0.0),
         count_x=int(params["count_x"]),
@@ -24,7 +24,7 @@ def horizontal_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transf
     )
 
 
-HORIZONTAL_GRID_SPEC: GeneratorSpec = GeneratorSpec(
+horizontal_grid_spec: GeneratorSpec = GeneratorSpec(
     kind="horizontal_grid",
     label="Horizontal grid",
     fields=(

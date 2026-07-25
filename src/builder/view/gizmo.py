@@ -1,4 +1,4 @@
-"""Transform gizmo: hit-test, drag, and draw."""
+"""transform gizmo: hit-test, drag, and draw"""
 
 from __future__ import annotations
 
@@ -40,22 +40,22 @@ from builder.scene.transform_ops import (
 from builder.scene.transforms import matrix_translation, world_matrix
 from builder.view.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
 
-_AXIS_COLOR: dict[GizmoAxis, Color] = {
+gizmo_axis_color: dict[GizmoAxis, Color] = {
     GizmoAxis.x: Color(220, 70, 70, 255),
     GizmoAxis.y: Color(70, 200, 70, 255),
     GizmoAxis.z: Color(70, 120, 220, 255),
     GizmoAxis.uniform: Color(220, 220, 80, 255),
 }
 
-_GIZMO_AXIS_RADIUS_FACTOR: float = 0.04
-_GIZMO_PICK_RADIUS_FACTOR: float = 0.08
-_GIZMO_CYLINDER_SIDES: int = 12
-_RING_SEGMENTS: int = 48
+gizmo_axis_radius_factor: float = 0.04
+gizmo_pick_radius_factor: float = 0.08
+gizmo_cylinder_sides: int = 12
+gizmo_ring_segments: int = 48
 
 
 @dataclass
 class GizmoDrag:
-    """In-progress gizmo manipulation."""
+    """in-progress gizmo manipulation"""
 
     axis: GizmoAxis
     start_transforms: dict[str, Transform]
@@ -68,7 +68,7 @@ class GizmoDrag:
 
 @dataclass
 class GizmoState:
-    """Active gizmo tool and optional drag."""
+    """active gizmo tool and optional drag"""
 
     mode: GizmoMode = GizmoMode.translate
     space: GizmoSpace = GizmoSpace.world
@@ -76,12 +76,12 @@ class GizmoState:
 
 
 def node_world_position(nodes: dict[str, Node], node_id: str) -> Vector3:
-    """ return world-space origin of a node """
+    """return world-space origin of a node"""
     return matrix_translation(world_matrix(nodes, node_id))
 
 
 def selection_pivot(scene: Scene, selected_ids: set[str]) -> Vector3 | None:
-    """ return average world origin of selected groups, or none """
+    """return average world origin of selected groups, or none"""
     if not selected_ids:
         return None
     total: Vector3 = Vector3(0.0, 0.0, 0.0)
@@ -98,7 +98,7 @@ def selection_pivot(scene: Scene, selected_ids: set[str]) -> Vector3 | None:
 
 
 def selection_rotation(scene: Scene, selected_ids: set[str]) -> Quaternion:
-    """ return local rotation of the first selected group (identity if none) """
+    """return local rotation of the first selected group (identity if none)"""
     group_id: str
     for group_id in selected_ids:
         node: Node | None = scene.nodes.get(group_id)
@@ -111,7 +111,7 @@ def gizmo_axis_directions(
     space: GizmoSpace,
     local_rotation: Quaternion,
 ) -> dict[GizmoAxis, Vector3]:
-    """ return world directions for x/y/z gizmo axes """
+    """return world directions for x/y/z gizmo axes"""
     local_axes: dict[GizmoAxis, Vector3] = {
         GizmoAxis.x: Vector3(1.0, 0.0, 0.0),
         GizmoAxis.y: Vector3(0.0, 1.0, 0.0),
@@ -119,18 +119,14 @@ def gizmo_axis_directions(
     }
     if space is GizmoSpace.world:
         return local_axes
-    axis: GizmoAxis
-    direction: Vector3
     return {
-        axis: vector3_normalize(
-            vector3_rotate_by_quaternion(direction, local_rotation)
-        )
+        axis: vector3_normalize(vector3_rotate_by_quaternion(direction, local_rotation))
         for axis, direction in local_axes.items()
     }
 
 
 def gizmo_size(camera: Camera3D, pivot: Vector3) -> float:
-    """ return gizmo length scaled by camera distance """
+    """return gizmo length scaled by camera distance"""
     distance: float = vector3_distance(camera.position, pivot)
     return max(0.5, distance * 0.12)
 
@@ -140,14 +136,17 @@ def plane_intersect(
     plane_point: Vector3,
     plane_normal: Vector3,
 ) -> Vector3 | None:
-    """ return ray-plane intersection or none """
+    """return ray-plane intersection or none"""
     denom: float = vector3_dot_product(ray.direction, plane_normal)
     if abs(denom) < 1e-8:
         return None
-    t: float = vector3_dot_product(
-        vector3_subtract(plane_point, ray.position),
-        plane_normal,
-    ) / denom
+    t: float = (
+        vector3_dot_product(
+            vector3_subtract(plane_point, ray.position),
+            plane_normal,
+        )
+        / denom
+    )
     if t < 0.0:
         return None
     return vector3_add(ray.position, vector3_scale(ray.direction, t))
@@ -158,7 +157,7 @@ def axis_drag_plane_normal(
     camera_position: Vector3,
     pivot: Vector3,
 ) -> Vector3:
-    """ return a plane normal containing axis_dir and facing the camera """
+    """return a plane normal containing axis_dir and facing the camera"""
     axis: Vector3 = vector3_normalize(axis_dir)
     to_camera: Vector3 = vector3_subtract(camera_position, pivot)
     helper: Vector3 = vector3_cross_product(axis, to_camera)
@@ -175,7 +174,7 @@ def project_ray_onto_axis(
     axis_dir: Vector3,
     camera_position: Vector3,
 ) -> Vector3 | None:
-    """ intersect ray with the axis drag plane, then project onto the axis """
+    """intersect ray with the axis drag plane, then project onto the axis"""
     axis: Vector3 = vector3_normalize(axis_dir)
     plane_normal: Vector3 = axis_drag_plane_normal(axis, camera_position, pivot)
     hit: Vector3 | None = plane_intersect(ray, pivot, plane_normal)
@@ -190,7 +189,7 @@ def closest_point_on_ray_to_segment(
     segment_start: Vector3,
     segment_end: Vector3,
 ) -> tuple[Vector3, Vector3, float]:
-    """ return (point on ray, point on segment, distance) """
+    """return (point on ray, point on segment, distance)"""
     ray_dir: Vector3 = vector3_normalize(ray.direction)
     seg_dir: Vector3 = vector3_subtract(segment_end, segment_start)
     seg_len: float = vector3_length(seg_dir)
@@ -219,13 +218,13 @@ def closest_point_on_ray_to_segment(
         seg_t = (a * e - b * d) / denom
     ray_t = max(0.0, ray_t)
     seg_t = max(0.0, min(seg_len, seg_t))
-    on_ray = vector3_add(ray.position, vector3_scale(ray_dir, ray_t))
-    on_seg = vector3_add(segment_start, vector3_scale(seg_unit, seg_t))
+    on_ray: Vector3 = vector3_add(ray.position, vector3_scale(ray_dir, ray_t))
+    on_seg: Vector3 = vector3_add(segment_start, vector3_scale(seg_unit, seg_t))
     return on_ray, on_seg, vector3_distance(on_ray, on_seg)
 
 
 def angle_about_axis(point: Vector3, pivot: Vector3, axis: Vector3) -> float:
-    """ return signed angle of point around axis using a stable basis """
+    """return signed angle of point around axis using a stable basis"""
     offset: Vector3 = vector3_subtract(point, pivot)
     axis_n: Vector3 = vector3_normalize(axis)
     projected: Vector3 = vector3_subtract(
@@ -250,7 +249,7 @@ def ring_points(
     radius: float,
     segments: int,
 ) -> list[Vector3]:
-    """ return world points around a rotation ring """
+    """return world points around a rotation ring"""
     axis_n: Vector3 = vector3_normalize(axis)
     helper: Vector3 = Vector3(0.0, 1.0, 0.0)
     if abs(vector3_dot_product(axis_n, helper)) > 0.9:
@@ -280,16 +279,15 @@ def hit_test_gizmo(
     axes: dict[GizmoAxis, Vector3],
     size: float,
 ) -> GizmoAxis | None:
-    """ return the nearest gizmo handle under the ray in world space """
-    pick_radius: float = max(0.05, size * _GIZMO_PICK_RADIUS_FACTOR)
+    """return the nearest gizmo handle under the ray in world space"""
+    pick_radius: float = max(0.05, size * gizmo_pick_radius_factor)
     tip_radius: float = max(0.08, size * 0.14)
     best_axis: GizmoAxis | None = None
     best_distance: float = float("inf")
+    ray_distance: float
 
     if state.mode is GizmoMode.scale:
-        center_hit: RayCollision = get_ray_collision_sphere(
-            ray, pivot, tip_radius
-        )
+        center_hit: RayCollision = get_ray_collision_sphere(ray, pivot, tip_radius)
         if center_hit.hit:
             return GizmoAxis.uniform
 
@@ -302,32 +300,26 @@ def hit_test_gizmo(
             tip_hit: RayCollision = get_ray_collision_sphere(ray, tip, tip_radius)
             if tip_hit.hit and tip_hit.distance < best_distance:
                 best_distance = tip_hit.distance
-                best_axis = (
-                    GizmoAxis.uniform
-                    if state.mode is GizmoMode.scale
-                    else axis
-                )
+                best_axis = GizmoAxis.uniform if state.mode is GizmoMode.scale else axis
 
-            on_ray, _on_seg, radial = closest_point_on_ray_to_segment(
-                ray, pivot, tip
-            )
+            on_ray: Vector3
+            radial: float
+            on_ray, _, radial = closest_point_on_ray_to_segment(ray, pivot, tip)
             if radial <= pick_radius:
-                ray_distance: float = vector3_distance(ray.position, on_ray)
+                ray_distance = vector3_distance(ray.position, on_ray)
                 if ray_distance < best_distance:
                     best_distance = ray_distance
                     best_axis = (
-                        GizmoAxis.uniform
-                        if state.mode is GizmoMode.scale
-                        else axis
+                        GizmoAxis.uniform if state.mode is GizmoMode.scale else axis
                     )
 
         elif state.mode is GizmoMode.rotate:
             points: list[Vector3] = ring_points(
-                pivot, direction, size, _RING_SEGMENTS
+                pivot, direction, size, gizmo_ring_segments
             )
             index: int
             for index in range(len(points)):
-                on_ray, _on_seg, radial = closest_point_on_ray_to_segment(
+                on_ray, _, radial = closest_point_on_ray_to_segment(
                     ray,
                     points[index],
                     points[(index + 1) % len(points)],
@@ -341,7 +333,7 @@ def hit_test_gizmo(
 
 
 def capture_transforms(scene: Scene, selected_ids: set[str]) -> dict[str, Transform]:
-    """ snapshot local transforms for selected groups """
+    """snapshot local transforms for selected groups"""
     result: dict[str, Transform] = {}
     group_id: str
     for group_id in selected_ids:
@@ -362,7 +354,7 @@ def begin_gizmo_drag(
     axes: dict[GizmoAxis, Vector3],
     camera_position: Vector3,
 ) -> None:
-    """ start a gizmo drag for the given handle """
+    """start a gizmo drag for the given handle"""
     axis_dir: Vector3
     if axis is GizmoAxis.uniform:
         axis_dir = Vector3(1.0, 0.0, 0.0)
@@ -385,9 +377,7 @@ def begin_gizmo_drag(
             start_point = point
             start_angle = angle_about_axis(point, pivot, axis_dir)
     elif state.mode is GizmoMode.scale:
-        plane_n: Vector3 = axis_drag_plane_normal(
-            axis_dir, camera_position, pivot
-        )
+        plane_n: Vector3 = axis_drag_plane_normal(axis_dir, camera_position, pivot)
         point = plane_intersect(ray, pivot, plane_n)
         if point is None:
             point = pivot
@@ -411,7 +401,7 @@ def apply_drag_to_scene(
     ray: Ray,
     camera_position: Vector3,
 ) -> None:
-    """ update selected group transforms from the current drag """
+    """update selected group transforms from the current drag"""
     drag: GizmoDrag | None = state.drag
     if drag is None:
         return
@@ -439,15 +429,14 @@ def apply_drag_to_scene(
         return
 
     if state.mode is GizmoMode.rotate and drag.axis is not GizmoAxis.uniform:
-        point = plane_intersect(ray, drag.pivot, drag.axis_dir)
+        point: Vector3 | None = plane_intersect(ray, drag.pivot, drag.axis_dir)
         if point is None:
             return
         angle: float = angle_about_axis(point, drag.pivot, drag.axis_dir)
         delta_angle: float = angle - drag.start_angle
-        rotation: Quaternion = quaternion_from_axis_angle(
-            drag.axis_dir, delta_angle
-        )
+        rotation: Quaternion = quaternion_from_axis_angle(drag.axis_dir, delta_angle)
         for group_id, start_transform in drag.start_transforms.items():
+            new_transform: Transform
             if state.space is GizmoSpace.world:
                 new_transform = rotate_transform_world(
                     start_transform,
@@ -473,7 +462,7 @@ def apply_drag_to_scene(
         return
 
     if state.mode is GizmoMode.scale:
-        plane_n = axis_drag_plane_normal(
+        plane_n: Vector3 = axis_drag_plane_normal(
             drag.axis_dir, camera_position, drag.pivot
         )
         point = plane_intersect(ray, drag.pivot, plane_n)
@@ -492,7 +481,7 @@ def apply_drag_to_scene(
 
 
 def end_gizmo_drag(state: GizmoState) -> None:
-    """ clear the active drag """
+    """clear the active drag"""
     state.drag = None
 
 
@@ -502,13 +491,13 @@ def draw_axis_cylinder(
     radius: float,
     color: Color,
 ) -> None:
-    """ draw a thick axis segment as a cylinder """
+    """draw a thick axis segment as a cylinder"""
     draw_cylinder_ex(
         start,
         end,
         radius,
         radius,
-        _GIZMO_CYLINDER_SIDES,
+        gizmo_cylinder_sides,
         color,
     )
 
@@ -520,8 +509,8 @@ def draw_ring(
     thickness: float,
     color: Color,
 ) -> None:
-    """ draw a thick circle in the plane perpendicular to axis """
-    points: list[Vector3] = ring_points(center, axis, radius, _RING_SEGMENTS)
+    """draw a thick circle in the plane perpendicular to axis"""
+    points: list[Vector3] = ring_points(center, axis, radius, gizmo_ring_segments)
     index: int
     for index in range(len(points)):
         draw_axis_cylinder(
@@ -538,13 +527,13 @@ def draw_gizmo(
     axes: dict[GizmoAxis, Vector3],
     size: float,
 ) -> None:
-    """ draw the active gizmo at pivot """
-    radius: float = max(0.025, size * _GIZMO_AXIS_RADIUS_FACTOR)
+    """draw the active gizmo at pivot"""
+    radius: float = max(0.025, size * gizmo_axis_radius_factor)
     tip_size: float = size * 0.16
     axis: GizmoAxis
     direction: Vector3
     for axis, direction in axes.items():
-        color: Color = _AXIS_COLOR[axis]
+        color: Color = gizmo_axis_color[axis]
         tip: Vector3 = vector3_add(pivot, vector3_scale(direction, size))
         if state.mode is GizmoMode.translate:
             draw_axis_cylinder(pivot, tip, radius, color)
@@ -561,5 +550,5 @@ def draw_gizmo(
             center_size,
             center_size,
             center_size,
-            _AXIS_COLOR[GizmoAxis.uniform],
+            gizmo_axis_color[GizmoAxis.uniform],
         )

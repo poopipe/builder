@@ -1,4 +1,4 @@
-"""ctypes loader for the ufbx_bridge DLL."""
+"""ctypes loader for the ufbx_bridge DLL"""
 
 from __future__ import annotations
 
@@ -28,13 +28,13 @@ class BridgeMesh(Structure):
 
 
 def default_dll_path() -> Path:
-    """ repo-relative path produced by ufbx_bridge/build.cmd """
+    """repo-relative path produced by ufbx_bridge/build.cmd"""
     repo_root: Path = Path(__file__).resolve().parents[3]
     return repo_root / "ufbx_bridge" / "build" / "ufbx_bridge.dll"
 
 
 def load_bridge_library(dll_path: Path | None = None) -> ctypes.CDLL:
-    """ load ufbx_bridge.dll; raises FileNotFoundError if missing """
+    """load ufbx_bridge.dll; raises FileNotFoundError if missing"""
     path: Path = dll_path if dll_path is not None else default_dll_path()
     if not path.is_file():
         raise FileNotFoundError(
@@ -55,7 +55,7 @@ def load_bridge_library(dll_path: Path | None = None) -> ctypes.CDLL:
 
 
 def floats_from_pointer(ptr: Any, count: int) -> tuple[float, ...]:
-    """ copy count floats from a C float* into a Python tuple """
+    """copy count floats from a C float* into a Python tuple"""
     if not ptr or count <= 0:
         return ()
     index: int
@@ -67,9 +67,9 @@ def load_fbx_via_bridge(
     lib: ctypes.CDLL | None = None,
 ) -> tuple[str, tuple[float, ...], tuple[float, ...], tuple[float, ...]]:
     """
-    load the densest mesh from an fbx via the ufbx bridge.
+    load the densest mesh from an fbx via the ufbx bridge
 
-    returns (name, positions, normals, texcoords) as flat float tuples.
+    returns (name, positions, normals, texcoords) as flat float tuples
     """
     bridge: ctypes.CDLL = lib if lib is not None else load_bridge_library()
     mesh: BridgeMesh = BridgeMesh()

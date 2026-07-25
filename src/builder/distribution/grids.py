@@ -1,4 +1,4 @@
-"""Grid distribution functions — each returns a list of transforms."""
+"""grid distribution functions — each returns a list of transforms"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def horizontal_grid_transforms(
     count_z: int = 3,
     spacing: float = 2.0,
 ) -> list[Transform]:
-    """ return transforms for grid in XZ centered at origin """
+    """return transforms for grid in XZ centered at origin"""
     step_x: Vector3 = Vector3(spacing, 0.0, 0.0)
     step_z: Vector3 = Vector3(0.0, 0.0, spacing)
     start: Vector3 = vector3_subtract(
@@ -54,7 +54,7 @@ def radial_grid_transforms(
     spacing: float,
     face_center: bool = False,
 ) -> list[Transform]:
-    """ return transforms for radial grid in XZ centered at origin
+    """return transforms for radial grid in XZ centered at origin
 
     when face_center is set each transform is yawed so its +Z axis points at origin
     """

@@ -1,4 +1,4 @@
-"""Generator recipe types attached to group nodes."""
+"""generator recipe types attached to group nodes"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ type BuildTransforms = Callable[[Mapping[str, ParamValue]], list[Transform]]
 
 @dataclass(frozen=True)
 class ParamField:
-    """ one editable parameter exposed by a generator kind """
+    """one editable parameter exposed by a generator kind"""
 
     key: str
     label: str
@@ -30,7 +30,7 @@ class ParamField:
 
 @dataclass(frozen=True)
 class GeneratorSpec:
-    """ registry entry: how to build and edit one generator kind """
+    """registry entry: how to build and edit one generator kind"""
 
     kind: str
     label: str
@@ -41,7 +41,7 @@ class GeneratorSpec:
 
 @dataclass(frozen=True)
 class Generator:
-    """ parametric recipe owned by a group node until baked """
+    """parametric recipe owned by a group node until baked"""
 
     kind: str
     mesh_id: MeshId

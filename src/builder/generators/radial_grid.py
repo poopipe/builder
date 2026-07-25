@@ -1,4 +1,4 @@
-""" radial grid generator: meshes evenly spaced around a circle in XZ """
+"""radial grid generator: meshes evenly spaced around a circle in XZ"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from builder.generators.generator_types import (
 
 
 def radial_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
-    """ build radial grid transforms from a param map """
+    """build radial grid transforms from a param map"""
     return radial_grid_transforms(
         Vector3(0.0, 0.0, 0.0),
         radius=float(params["radius"]),
@@ -24,7 +24,7 @@ def radial_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]
     )
 
 
-RADIAL_GRID_SPEC: GeneratorSpec = GeneratorSpec(
+radial_grid_spec: GeneratorSpec = GeneratorSpec(
     kind="radial_grid",
     label="Radial grid",
     fields=(

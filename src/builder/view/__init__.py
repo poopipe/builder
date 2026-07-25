@@ -1,1 +1,1 @@
-"""View subpackage."""
+"""view subpackage"""

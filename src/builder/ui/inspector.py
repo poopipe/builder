@@ -1,4 +1,4 @@
-"""Right-side inspector for parametric group recipes."""
+"""right-side inspector for parametric group recipes"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from pyray import (
+    Color,
     Font,
     KeyboardKey,
     MouseButton,
@@ -23,7 +24,12 @@ from pyray import (
     set_exit_key,
 )
 
-from builder.generators.generator_types import Generator, ParamField, ParamValue
+from builder.generators.generator_types import (
+    Generator,
+    GeneratorSpec,
+    ParamField,
+    ParamValue,
+)
 from builder.generators.registry import (
     field_for,
     format_param,
@@ -38,18 +44,18 @@ from builder.generators.regenerate import (
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
 from builder.ui.theme import (
-    BUTTON_GAP,
-    BUTTON_HEIGHT,
-    COLOUR_BORDER,
-    COLOUR_BUTTON,
-    COLOUR_INPUT,
-    COLOUR_INPUT_FOCUS,
-    COLOUR_PANEL,
-    COLOUR_SELECTION,
-    COLOUR_TEXT,
-    FONT_SIZE,
-    PAD,
-    STEPPER_WIDTH,
+    ui_button_gap,
+    ui_button_height,
+    ui_color_border,
+    ui_color_button,
+    ui_color_input,
+    ui_color_input_focus,
+    ui_color_panel,
+    ui_color_selection,
+    ui_color_text,
+    ui_font_size,
+    ui_pad,
+    ui_stepper_width,
 )
 from builder.ui.ui_state import UiState
 from builder.ui.widgets import (
@@ -62,7 +68,7 @@ from builder.ui.widgets import (
 
 @dataclass(frozen=True)
 class ParamRowRects:
-    """ hit targets for one inspector param row """
+    """hit targets for one inspector param row"""
 
     key: str
     label: Rectangle
@@ -72,7 +78,7 @@ class ParamRowRects:
 
 
 def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
-    """ clear draft editing when the inspected group changes """
+    """clear draft editing when the inspected group changes"""
     if group is None:
         ui.clear_inspector_focus()
         return
@@ -81,36 +87,41 @@ def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
 
 
 def apply_inspector_exit_key(ui: UiState) -> None:
-    """ disable window-close-on-escape while typing in the inspector """
-    if ui.inspector_focus_key is not None:
+    """disable window-close-on-escape while typing or a file dialog is open"""
+    if ui.inspector_focus_key is not None or ui.file_browser is not None:
         set_exit_key(0)
     else:
         set_exit_key(KeyboardKey.KEY_ESCAPE)
 
 
 def layout_param_rows(area: Rectangle, fields: tuple[ParamField, ...]) -> list[ParamRowRects]:
-    """ place label / stepper / value rows under the inspector title """
+    """place label / stepper / value rows under the inspector title"""
     rows: list[ParamRowRects] = []
-    y: float = area.y + PAD + float(FONT_SIZE) + PAD
-    x: float = area.x + PAD
-    inner_w: float = area.width - PAD * 2
+    y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
+    x: float = area.x + ui_pad
+    inner_w: float = area.width - ui_pad * 2
     field: ParamField
     for field in fields:
-        label: Rectangle = Rectangle(x, y, inner_w, float(FONT_SIZE))
-        y += float(FONT_SIZE) + 4.0
+        label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+        y += float(ui_font_size) + 4.0
         controls_y: float = y
-        minus: Rectangle = Rectangle(x, controls_y, float(STEPPER_WIDTH), float(BUTTON_HEIGHT))
-        plus: Rectangle = Rectangle(
-            x + inner_w - float(STEPPER_WIDTH),
+        minus: Rectangle = Rectangle(
+            x,
             controls_y,
-            float(STEPPER_WIDTH),
-            float(BUTTON_HEIGHT),
+            float(ui_stepper_width),
+            float(ui_button_height),
+        )
+        plus: Rectangle = Rectangle(
+            x + inner_w - float(ui_stepper_width),
+            controls_y,
+            float(ui_stepper_width),
+            float(ui_button_height),
         )
         value: Rectangle = Rectangle(
-            minus.x + minus.width + BUTTON_GAP,
+            minus.x + minus.width + ui_button_gap,
             controls_y,
-            plus.x - (minus.x + minus.width + BUTTON_GAP * 2),
-            float(BUTTON_HEIGHT),
+            plus.x - (minus.x + minus.width + ui_button_gap * 2),
+            float(ui_button_height),
         )
         rows.append(
             ParamRowRects(
@@ -121,26 +132,26 @@ def layout_param_rows(area: Rectangle, fields: tuple[ParamField, ...]) -> list[P
                 plus=plus,
             )
         )
-        y += float(BUTTON_HEIGHT) + PAD
+        y += float(ui_button_height) + ui_pad
     return rows
 
 
 def bake_button_rect(area: Rectangle, rows: list[ParamRowRects]) -> Rectangle:
-    """ place the Bake button below the last param row """
-    y: float = area.y + PAD + float(FONT_SIZE) + PAD
+    """place the Bake button below the last param row"""
+    y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
     if rows:
         last: ParamRowRects = rows[-1]
-        y = last.plus.y + last.plus.height + PAD
+        y = last.plus.y + last.plus.height + ui_pad
     return Rectangle(
-        area.x + PAD,
+        area.x + ui_pad,
         y,
-        area.width - PAD * 2,
-        float(BUTTON_HEIGHT),
+        area.width - ui_pad * 2,
+        float(ui_button_height),
     )
 
 
 def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
-    """ begin typed editing for one param """
+    """begin typed editing for one param"""
     generator: Generator | None = group.generator
     if generator is None:
         return
@@ -152,7 +163,7 @@ def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
 
 
 def commit_inspector_draft(scene: Scene, ui: UiState, group: Node) -> None:
-    """ apply typed draft on Enter; invalid text is discarded """
+    """apply typed draft on Enter; invalid text is discarded"""
     if ui.inspector_focus_key is None or ui.inspector_draft is None:
         ui.clear_inspector_focus()
         return
@@ -169,7 +180,7 @@ def commit_inspector_draft(scene: Scene, ui: UiState, group: Node) -> None:
 
 
 def handle_inspector_typing(scene: Scene, ui: UiState, group: Node) -> None:
-    """ typed-field keyboard: commit on Enter, cancel on Escape """
+    """typed-field keyboard: commit on Enter, cancel on Escape"""
     if ui.inspector_focus_key is None or ui.inspector_draft is None:
         return
     if is_key_pressed(KeyboardKey.KEY_ESCAPE):
@@ -204,7 +215,7 @@ def make_stepper_button(
     rect: Rectangle,
     on_click: Callable[[], None],
 ) -> Button:
-    """ build a +/- stepper button at a fixed rect """
+    """build a +/- stepper button at a fixed rect"""
     return Button(label=label, on_click=on_click, rect=rect)
 
 
@@ -214,11 +225,11 @@ def update_inspector(
     area: Rectangle,
     group: Node,
 ) -> tuple[list[Button], list[ParamRowRects]]:
-    """ handle inspector input; return stepper/bake buttons and row geometry """
+    """handle inspector input; return stepper/bake buttons and row geometry"""
     generator: Generator | None = group.generator
     if generator is None:
         return [], []
-    spec = get_spec(generator.kind)
+    spec: GeneratorSpec = get_spec(generator.kind)
     rows: list[ParamRowRects] = layout_param_rows(area, spec.fields)
     handle_inspector_typing(scene, ui, group)
 
@@ -279,14 +290,16 @@ def draw_value_field(
     focused: bool,
     select_all: bool,
 ) -> None:
-    """ draw the editable value box for one param """
-    draw_rectangle_rec(rect, COLOUR_INPUT if focused else COLOUR_BUTTON)
-    border = COLOUR_INPUT_FOCUS if focused else COLOUR_BORDER
+    """draw the editable value box for one param"""
+    draw_rectangle_rec(
+        rect, ui_color_input if focused else ui_color_button
+    )
+    border: Color = ui_color_input_focus if focused else ui_color_border
     draw_rectangle_lines_ex(rect, 2.0 if focused else 1.0, border)
 
     pad_x: float = 6.0
-    text_w: float = measure_text_ex(font, text, float(FONT_SIZE), 0).x
-    ty: float = rect.y + (rect.height - float(FONT_SIZE)) * 0.5
+    text_w: float = measure_text_ex(font, text, float(ui_font_size), 0).x
+    ty: float = rect.y + (rect.height - float(ui_font_size)) * 0.5
     tx: float
     if focused:
         tx = rect.x + pad_x
@@ -295,17 +308,24 @@ def draw_value_field(
 
     if focused and select_all and text != "":
         draw_rectangle_rec(
-            Rectangle(tx - 1.0, ty - 1.0, text_w + 2.0, float(FONT_SIZE) + 2.0),
-            COLOUR_SELECTION,
+            Rectangle(
+                tx - 1.0,
+                ty - 1.0,
+                text_w + 2.0,
+                float(ui_font_size) + 2.0,
+            ),
+            ui_color_selection,
         )
 
-    draw_text_ex(font, text, Vector2(tx, ty), float(FONT_SIZE), 0, COLOUR_TEXT)
+    draw_text_ex(
+        font, text, Vector2(tx, ty), float(ui_font_size), 0, ui_color_text
+    )
 
     if focused and not select_all and int(get_time() * 2.0) % 2 == 0:
         caret_x: float = tx + text_w + 1.0
         draw_rectangle_rec(
-            Rectangle(caret_x, ty, 1.0, float(FONT_SIZE)),
-            COLOUR_TEXT,
+            Rectangle(caret_x, ty, 1.0, float(ui_font_size)),
+            ui_color_text,
         )
 
 
@@ -317,24 +337,24 @@ def draw_inspector(
     buttons: list[Button],
     rows: list[ParamRowRects],
 ) -> None:
-    """ draw the right inspector panel for a parametric group """
+    """draw the right inspector panel for a parametric group"""
     generator: Generator | None = group.generator
     if generator is None:
         return
-    spec = get_spec(generator.kind)
-    draw_rectangle_rec(area, COLOUR_PANEL)
+    spec: GeneratorSpec = get_spec(generator.kind)
+    draw_rectangle_rec(area, ui_color_panel)
     draw_rectangle_lines_ex(
         Rectangle(area.x, area.y, 1, area.height),
         1,
-        COLOUR_BORDER,
+        ui_color_border,
     )
     draw_text_ex(
         font,
         spec.label,
-        Vector2(area.x + PAD, area.y + PAD),
-        float(FONT_SIZE),
+        Vector2(area.x + ui_pad, area.y + ui_pad),
+        float(ui_font_size),
         0,
-        COLOUR_TEXT,
+        ui_color_text,
     )
     row: ParamRowRects
     for row in rows:
@@ -343,9 +363,9 @@ def draw_inspector(
             font,
             field.label,
             Vector2(row.label.x, row.label.y),
-            float(FONT_SIZE),
+            float(ui_font_size),
             0,
-            COLOUR_TEXT,
+            ui_color_text,
         )
         display: str
         focused: bool

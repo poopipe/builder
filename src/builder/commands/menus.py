@@ -1,9 +1,16 @@
-"""Menu and panel command wiring."""
+"""menu and panel command wiring"""
 
 from __future__ import annotations
 
 from builder.commands.commands_types import CommandEntry, CommandItem
-from builder.commands.file import cmd_about, cmd_import_mesh, cmd_open, cmd_quit
+from builder.commands.file import (
+    cmd_about,
+    cmd_import_mesh,
+    cmd_open,
+    cmd_quit,
+    cmd_save,
+    cmd_save_as,
+)
 from builder.commands.scene import (
     cmd_place_horizontal_grid,
     cmd_place_mesh,
@@ -21,8 +28,10 @@ from builder.commands.view import (
 )
 from builder.view.gizmo_types import GizmoMode
 
-MENU_COMMANDS: tuple[CommandItem, ...] = (
+menu_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_open, None),
+    CommandEntry(cmd_save, None),
+    CommandEntry(cmd_save_as, None),
     CommandEntry(cmd_quit, None),
     CommandEntry(cmd_about, None),
     CommandEntry(cmd_toggle_side_panel, None),
@@ -32,7 +41,7 @@ MENU_COMMANDS: tuple[CommandItem, ...] = (
     CommandEntry(cmd_gizmo_scale, GizmoMode.scale),
     CommandEntry(cmd_toggle_gizmo_space, None),
 )
-PANEL_COMMANDS: tuple[CommandItem, ...] = (
+panel_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_import_mesh, None),
     CommandEntry(cmd_place_mesh, None),
     CommandEntry(cmd_toggle_grid, None),
@@ -43,5 +52,5 @@ PANEL_COMMANDS: tuple[CommandItem, ...] = (
 
 
 def all_commands() -> tuple[CommandItem, ...]:
-    """Return every command entry exposed by the default menus."""
-    return MENU_COMMANDS + PANEL_COMMANDS
+    """return every command entry exposed by the default menus"""
+    return menu_commands + panel_commands

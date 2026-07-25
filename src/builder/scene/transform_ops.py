@@ -1,4 +1,4 @@
-"""Pure transform operations for group editing."""
+"""pure transform operations for group editing"""
 
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ from builder.scene.scene_types import Node, Quaternion
 
 
 def with_transform(node: Node, transform: Transform) -> Node:
-    """ return a copy of node with a new transform """
+    """return a copy of node with a new transform"""
     return replace(node, transform=transform)
 
 
 def translate_transform(transform: Transform, delta_world: Vector3) -> Transform:
-    """ return transform with world-space translation applied """
+    """return transform with world-space translation applied"""
     return Transform(
         vector3_add(transform.translation, delta_world),
         transform.rotation,
@@ -36,7 +36,7 @@ def rotate_transform_world(
     rotation: Quaternion,
     pivot: Vector3,
 ) -> Transform:
-    """ return transform rotated in world space about pivot """
+    """return transform rotated in world space about pivot"""
     offset: Vector3 = vector3_subtract(transform.translation, pivot)
     rotated_offset: Vector3 = vector3_rotate_by_quaternion(offset, rotation)
     return Transform(
@@ -50,7 +50,7 @@ def rotate_transform_local(
     transform: Transform,
     rotation: Quaternion,
 ) -> Transform:
-    """ return transform with local-space rotation about its origin """
+    """return transform with local-space rotation about its origin"""
     return Transform(
         transform.translation,
         quaternion_multiply(transform.rotation, rotation),
@@ -63,7 +63,7 @@ def scale_transform_uniform(
     factor: float,
     pivot: Vector3,
 ) -> Transform:
-    """ return transform with uniform scale about pivot """
+    """return transform with uniform scale about pivot"""
     offset: Vector3 = vector3_subtract(transform.translation, pivot)
     scaled_offset: Vector3 = vector3_scale(offset, factor)
     scale: Vector3 = vector3_scale(transform.scale, factor)

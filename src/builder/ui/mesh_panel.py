@@ -1,4 +1,4 @@
-""" mesh catalog panel: list assets and set the active mesh """
+"""mesh catalog panel: list assets and set the active mesh"""
 
 from __future__ import annotations
 
@@ -27,17 +27,17 @@ from pyray import (
 from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog, catalog_assets
 from builder.scene.scene_types import MeshId
 from builder.ui.theme import (
-    BUTTON_GAP,
-    BUTTON_HEIGHT,
-    COLOUR_BORDER,
-    COLOUR_BUTTON,
-    COLOUR_BUTTON_HOVER,
-    COLOUR_BUTTON_PRESS,
-    COLOUR_PANEL,
-    COLOUR_SELECTION,
-    COLOUR_TEXT,
-    FONT_SIZE,
-    PAD,
+    ui_button_gap,
+    ui_button_height,
+    ui_color_border,
+    ui_color_button,
+    ui_color_button_hover,
+    ui_color_button_press,
+    ui_color_panel,
+    ui_color_selection,
+    ui_color_text,
+    ui_font_size,
+    ui_pad,
 )
 from builder.ui.ui_state import UiState
 from builder.ui.widgets import is_point_in_rect
@@ -45,7 +45,7 @@ from builder.ui.widgets import is_point_in_rect
 
 @dataclass
 class MeshRow:
-    """ one selectable mesh asset row """
+    """one selectable mesh asset row"""
 
     mesh_id: MeshId
     label: str
@@ -57,7 +57,7 @@ class MeshRow:
 
 
 def mesh_asset_detail(asset: MeshAsset) -> str:
-    """ short secondary line for a catalog asset """
+    """short secondary line for a catalog asset"""
     if asset.kind == "builtin":
         return "builtin"
     if asset.source_path is None:
@@ -72,15 +72,17 @@ def update_mesh_panel(
     area: Rectangle,
     on_select: Callable[[MeshId], None],
 ) -> list[MeshRow]:
-    """ layout rows, handle scroll/clicks, return rows for drawing """
+    """layout rows, handle scroll/clicks, return rows for drawing"""
     assets: list[MeshAsset] = catalog_assets(catalog)
-    title_h: float = float(FONT_SIZE + PAD)
-    list_top: float = area.y + PAD + title_h
-    list_h: float = max(0.0, area.height - PAD * 2.0 - title_h)
+    title_h: float = float(ui_font_size + ui_pad)
+    list_top: float = area.y + ui_pad + title_h
+    list_h: float = max(0.0, area.height - ui_pad * 2.0 - title_h)
     list_rect: Rectangle = Rectangle(area.x, list_top, area.width, list_h)
 
-    row_h: float = float(BUTTON_HEIGHT + 10)
-    content_h: float = max(0.0, len(assets) * (row_h + BUTTON_GAP) - BUTTON_GAP)
+    row_h: float = float(ui_button_height + 10)
+    content_h: float = max(
+        0.0, len(assets) * (row_h + ui_button_gap) - ui_button_gap
+    )
     max_scroll: float = max(0.0, content_h - list_h)
 
     mouse: Vector2 = get_mouse_position()
@@ -92,7 +94,7 @@ def update_mesh_panel(
 
     rows: list[MeshRow] = []
     y: float = list_top - ui.meshes_panel_scroll
-    bw: float = area.width - PAD * 2.0
+    bw: float = area.width - ui_pad * 2.0
     left_down: bool = is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT)
     left_released: bool = is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT)
     pointer_in_list: bool = is_point_in_rect(mouse.x, mouse.y, list_rect)
@@ -103,7 +105,7 @@ def update_mesh_panel(
             mesh_id=asset.mesh_id,
             label=asset.label,
             detail=mesh_asset_detail(asset),
-            rect=Rectangle(area.x + PAD, y, bw, row_h),
+            rect=Rectangle(area.x + ui_pad, y, bw, row_h),
             is_selected=asset.mesh_id == active_mesh_id,
         )
         row.is_hovered = is_point_in_rect(mouse.x, mouse.y, row.rect)
@@ -115,31 +117,31 @@ def update_mesh_panel(
         if pointer_in_list and visible and row.is_hovered and left_released:
             on_select(asset.mesh_id)
         rows.append(row)
-        y += row_h + BUTTON_GAP
+        y += row_h + ui_button_gap
     return rows
 
 
 def draw_mesh_row(font: Font, row: MeshRow) -> None:
-    """ draw one mesh catalog row """
-    colour: Color
+    """draw one mesh catalog row"""
+    color: Color
     if row.is_selected:
-        colour = COLOUR_SELECTION
+        color = ui_color_selection
     elif row.is_pressed:
-        colour = COLOUR_BUTTON_PRESS
+        color = ui_color_button_press
     elif row.is_hovered:
-        colour = COLOUR_BUTTON_HOVER
+        color = ui_color_button_hover
     else:
-        colour = COLOUR_BUTTON
-    draw_rectangle_rec(row.rect, colour)
-    draw_rectangle_lines_ex(row.rect, 1, COLOUR_BORDER)
+        color = ui_color_button
+    draw_rectangle_rec(row.rect, color)
+    draw_rectangle_lines_ex(row.rect, 1, ui_color_border)
 
     marker: str = "● " if row.is_selected else "  "
     label: str = marker + row.label
-    label_size: float = float(FONT_SIZE)
-    detail_size: float = float(FONT_SIZE - 4)
+    label_size: float = float(ui_font_size)
+    detail_size: float = float(ui_font_size - 4)
     tx: float = row.rect.x + 8.0
     ty: float = row.rect.y + 4.0
-    draw_text_ex(font, label, Vector2(tx, ty), label_size, 0, COLOUR_TEXT)
+    draw_text_ex(font, label, Vector2(tx, ty), label_size, 0, ui_color_text)
     detail_w: float = measure_text_ex(font, row.detail, detail_size, 0).x
     max_detail_w: float = max(0.0, row.rect.width - 16.0)
     detail: str = row.detail
@@ -156,7 +158,7 @@ def draw_mesh_row(font: Font, row: MeshRow) -> None:
         Vector2(tx + 14.0, ty + label_size),
         detail_size,
         0,
-        COLOUR_TEXT,
+        ui_color_text,
     )
 
 
@@ -165,24 +167,24 @@ def draw_mesh_panel(
     area: Rectangle,
     rows: list[MeshRow],
 ) -> None:
-    """ draw the meshes panel background, title, and clipped rows """
-    draw_rectangle_rec(area, COLOUR_PANEL)
+    """draw the meshes panel background, title, and clipped rows"""
+    draw_rectangle_rec(area, ui_color_panel)
     draw_rectangle_lines_ex(
         Rectangle(area.x, area.y, 1, area.height),
         1,
-        COLOUR_BORDER,
+        ui_color_border,
     )
     draw_text_ex(
         font,
         "Meshes",
-        Vector2(area.x + PAD, area.y + PAD),
-        float(FONT_SIZE),
+        Vector2(area.x + ui_pad, area.y + ui_pad),
+        float(ui_font_size),
         0,
-        COLOUR_TEXT,
+        ui_color_text,
     )
-    title_h: float = float(FONT_SIZE + PAD)
-    list_top: float = area.y + PAD + title_h
-    list_h: float = max(0.0, area.height - PAD * 2.0 - title_h)
+    title_h: float = float(ui_font_size + ui_pad)
+    list_top: float = area.y + ui_pad + title_h
+    list_h: float = max(0.0, area.height - ui_pad * 2.0 - title_h)
     begin_scissor_mode(int(area.x), int(list_top), int(area.width), int(list_h))
     row: MeshRow
     for row in rows:

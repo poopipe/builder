@@ -1,4 +1,4 @@
-"""Regenerate and bake parametric group children."""
+"""regenerate and bake parametric group children"""
 
 from __future__ import annotations
 
@@ -6,7 +6,13 @@ from dataclasses import replace
 
 from pyray import Transform
 
-from builder.generators.generator_types import Generator, ParamValue
+from builder.generators.generator_types import (
+    Generator,
+    GeneratorSpec,
+    ParamField,
+    ParamMap,
+    ParamValue,
+)
 from builder.generators.registry import clamp_param, field_for, get_spec
 from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
@@ -14,12 +20,12 @@ from builder.scene.scene_types import Node
 
 
 def child_ids(nodes: dict[str, Node], group_id: str) -> list[str]:
-    """ return ids of direct children of a group """
+    """return ids of direct children of a group"""
     return [node.id for node in nodes.values() if node.parent_id == group_id]
 
 
 def selected_parametric_group(scene: Scene) -> Node | None:
-    """ return the sole selected group if it still owns a generator """
+    """return the sole selected group if it still owns a generator"""
     if len(scene.selected_ids) != 1:
         return None
     group_id: str = next(iter(scene.selected_ids))
@@ -30,12 +36,12 @@ def selected_parametric_group(scene: Scene) -> Node | None:
 
 
 def regenerate_group(scene: Scene, group_id: str) -> None:
-    """ replace group children from the group's generator recipe """
+    """replace group children from the group's generator recipe"""
     group: Node = scene.nodes[group_id]
     generator: Generator | None = group.generator
     if generator is None:
         raise ValueError(f"group {group_id} has no generator")
-    spec = get_spec(generator.kind)
+    spec: GeneratorSpec = get_spec(generator.kind)
     locals_: list[Transform] = spec.build_transforms(generator.params)
     scene.remove_nodes(child_ids(scene.nodes, group_id))
     children: list[Node] = []
@@ -54,7 +60,7 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
 
 
 def bake_group(scene: Scene, group_id: str) -> None:
-    """ drop the generator recipe; children remain as a static group """
+    """drop the generator recipe; children remain as a static group"""
     group: Node = scene.nodes[group_id]
     if group.generator is None:
         return
@@ -67,15 +73,15 @@ def set_generator_param(
     key: str,
     value: ParamValue,
 ) -> None:
-    """ update one generator param and regenerate children """
+    """update one generator param and regenerate children"""
     group: Node = scene.nodes[group_id]
     generator: Generator | None = group.generator
     if generator is None:
         raise ValueError(f"group {group_id} has no generator")
-    spec = get_spec(generator.kind)
-    field = field_for(spec, key)
+    spec: GeneratorSpec = get_spec(generator.kind)
+    field: ParamField = field_for(spec, key)
     clamped: ParamValue = clamp_param(field, value)
-    params = dict(generator.params)
+    params: ParamMap = dict(generator.params)
     params[key] = clamped
     scene.add_nodes(
         [replace(group, generator=replace(generator, params=params))]
@@ -89,13 +95,13 @@ def step_generator_param(
     key: str,
     direction: int,
 ) -> None:
-    """ nudge one generator param by its field step and regenerate """
+    """nudge one generator param by its field step and regenerate"""
     group: Node = scene.nodes[group_id]
     generator: Generator | None = group.generator
     if generator is None:
         raise ValueError(f"group {group_id} has no generator")
-    spec = get_spec(generator.kind)
-    field = field_for(spec, key)
+    spec: GeneratorSpec = get_spec(generator.kind)
+    field: ParamField = field_for(spec, key)
     current: ParamValue = generator.params[key]
     stepped: float = float(current) + field.step * float(direction)
     set_generator_param(scene, group_id, key, stepped)

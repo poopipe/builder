@@ -1,4 +1,4 @@
-"""Application session and main window loop."""
+"""application session and main window loop"""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pyray import (
     FilePathList,
     Font,
     KeyboardKey,
+    Rectangle,
     Vector2,
     begin_drawing,
     clear_background,
@@ -33,12 +34,22 @@ from pyray import (
 
 from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandEntry, CommandItem
-from builder.commands.file import import_mesh_from_path
-from builder.commands.menus import MENU_COMMANDS, PANEL_COMMANDS, all_commands
-from builder.commands.registry import bind_entry, register_commands
+from builder.commands.file import (
+    apply_open_scene_path,
+    apply_save_scene_path,
+    import_mesh_from_path,
+)
+from builder.commands.menus import menu_commands, panel_commands, all_commands
+from builder.commands.registry import CommandRegistry, bind_entry, register_commands
 from builder.commands.scene import cmd_select_mesh
 from builder.generators.regenerate import selected_parametric_group
 from builder.scene.scene_types import MeshId, Node
+from builder.ui.file_browser import (
+    BrowserRow,
+    FileBrowserFrameResult,
+    draw_file_browser,
+    update_file_browser,
+)
 from builder.ui.font import load_app_font, unload_app_font
 from builder.ui.inspector import (
     ParamRowRects,
@@ -49,15 +60,15 @@ from builder.ui.inspector import (
 )
 from builder.ui.mesh_panel import MeshRow, draw_mesh_panel, update_mesh_panel
 from builder.ui.theme import (
-    BUTTON_GAP,
-    BUTTON_HEIGHT,
-    BUTTON_MIN_WIDTH,
-    COLOUR_BG,
-    FONT_SIZE,
-    INSPECTOR_PANEL_WIDTH,
-    MESHES_PANEL_WIDTH,
-    PAD,
-    SIDE_PANEL_WIDTH,
+    ui_button_gap,
+    ui_button_height,
+    ui_button_min_width,
+    ui_color_bg,
+    ui_font_size,
+    ui_inspector_panel_width,
+    ui_meshes_panel_width,
+    ui_pad,
+    ui_side_panel_width,
 )
 from builder.ui.ui_state import UiState
 from builder.ui.widgets import (
@@ -76,21 +87,24 @@ from builder.view.viewport import Viewport
 
 
 def dropped_path_string(raw: Any) -> str:
-    """ decode a FilePathList.paths entry (str, bytes, or cffi char*) """
+    """decode a FilePathList.paths entry (str, bytes, or cffi char*)"""
     if isinstance(raw, str):
         return raw
     if isinstance(raw, bytes):
         return raw.decode("utf-8", errors="surrogateescape")
     # cffi char* — str(cdata) is a pointer repr, not the path text
-    return ffi.string(raw).decode("utf-8", errors="surrogateescape")
+    text: bytes | str = ffi.string(raw)
+    if isinstance(text, bytes):
+        return text.decode("utf-8", errors="surrogateescape")
+    return text
 
 
 class Application:
-    """Owns session state and runs the main loop.
+    """owns session state and runs the main loop
 
-    Structurally satisfies ``CommandContext`` (application, scene, ui).
+    Structurally satisfies ``CommandContext`` (application, scene, ui)
     Construct only after the raylib window exists so ``scene`` and ``font``
-    can be created up front.
+    can be created up front
     """
 
     def __init__(self, scene: Viewport, font: Font) -> None:
@@ -98,7 +112,7 @@ class Application:
         self.scene: Viewport = scene
         self.ui: UiState = UiState(status=self.application.importer.status_message())
         self.font: Font = font
-        self.commands = register_commands(all_commands())
+        self.commands: CommandRegistry = register_commands(all_commands())
 
     def command_button_items(
         self, entries: tuple[CommandItem, ...]
@@ -110,7 +124,7 @@ class Application:
         return items
 
     def handle_dropped_files(self) -> None:
-        """ import the first dropped .fbx, or report why nothing was imported """
+        """import the first dropped .fbx, or report why nothing was imported"""
         if not is_file_dropped():
             return
         dropped: FilePathList = load_dropped_files()
@@ -132,8 +146,7 @@ class Application:
                 return
             sample: str = Path(seen[0]).name if seen else "?"
             self.ui.status = (
-                f"Dropped {count} file(s); none were .fbx "
-                f"(got '{sample}')"
+                f"Dropped {count} file(s); none were .fbx " f"(got '{sample}')"
             )
         finally:
             unload_dropped_files(dropped)
@@ -145,9 +158,9 @@ class Application:
         sync_inspector_focus(self.ui, group)
         apply_inspector_exit_key(self.ui)
 
-        panel_width: int = SIDE_PANEL_WIDTH if self.ui.side_panel_open else 0
-        meshes_width: int = MESHES_PANEL_WIDTH if self.ui.meshes_panel_open else 0
-        inspector_width: int = INSPECTOR_PANEL_WIDTH if group is not None else 0
+        panel_width: int = ui_side_panel_width if self.ui.side_panel_open else 0
+        meshes_width: int = ui_meshes_panel_width if self.ui.meshes_panel_open else 0
+        inspector_width: int = ui_inspector_panel_width if group is not None else 0
         layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
@@ -156,38 +169,41 @@ class Application:
             inspector_width=inspector_width,
         )
 
+        browser_open: bool = self.ui.file_browser is not None
         menu_buttons: list[Button] = layout_buttons_horizontal(
             self.font,
             layout.menu,
-            self.command_button_items(MENU_COMMANDS),
-            pad=float(PAD),
-            gap=float(BUTTON_GAP),
-            button_height=float(BUTTON_HEIGHT),
-            min_width=float(BUTTON_MIN_WIDTH),
-            font_size=float(FONT_SIZE),
+            self.command_button_items(menu_commands),
+            pad=float(ui_pad),
+            gap=float(ui_button_gap),
+            button_height=float(ui_button_height),
+            min_width=float(ui_button_min_width),
+            font_size=float(ui_font_size),
         )
-        update_buttons(menu_buttons, layout.menu)
-        """ 
-            buttons run commands 
-            commands are listed in consts (eg. PANEL_COMMANDS)
-            executable code for command lives in a file per context (eg. view.py)
-            CommandContext is used to give the command access to the app state 
-            (application, scene, ui) 
-        """
+        if not browser_open:
+            update_buttons(menu_buttons, layout.menu)
+
+        # buttons run commands
+        # commands are listed in consts (eg. panel_commands)
+        # executable code for command lives in a file per context (eg. view.py)
+        # CommandContext gives the command access to the app state
+        # (application, scene, ui)
 
         panel_buttons: list[Button] = []
         if self.ui.side_panel_open:
             panel_buttons = layout_buttons_vertical(
                 layout.panel,
-                self.command_button_items(PANEL_COMMANDS),
-                pad=float(PAD),
-                gap=float(BUTTON_GAP),
-                button_height=float(BUTTON_HEIGHT),
+                self.command_button_items(panel_commands),
+                pad=float(ui_pad),
+                gap=float(ui_button_gap),
+                button_height=float(ui_button_height),
             )
-            update_buttons(panel_buttons, layout.panel)
+            if not browser_open:
+                update_buttons(panel_buttons, layout.panel)
 
         mesh_rows: list[MeshRow] = []
-        if self.ui.meshes_panel_open:
+        if self.ui.meshes_panel_open and not browser_open:
+
             def select_active_mesh(mesh_id: MeshId) -> None:
                 bind_entry(self, CommandEntry(cmd_select_mesh, mesh_id))()
 
@@ -201,7 +217,7 @@ class Application:
 
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
-        if group is not None:
+        if group is not None and not browser_open:
             group_id: str = group.id
             inspector_buttons, inspector_rows = update_inspector(
                 self.scene.nodes,
@@ -212,10 +228,37 @@ class Application:
             # steppers/bake replace the group node; re-read the same id so the
             # drawn group stays consistent with rows even if selection changed
             refreshed: Node | None = self.scene.nodes.nodes.get(group_id)
-            group = refreshed if refreshed is not None and refreshed.generator is not None else None
+            group = (
+                refreshed
+                if refreshed is not None and refreshed.generator is not None
+                else None
+            )
+
+        browser_rows: list[BrowserRow] = []
+        browser_buttons: list[Button] = []
+        browser_window: Rectangle | None = None
+        if self.ui.file_browser is not None:
+            browser_result: FileBrowserFrameResult
+            browser_result, browser_rows, browser_buttons, browser_window = (
+                update_file_browser(
+                    self.ui.file_browser,
+                    get_screen_width(),
+                    get_screen_height(),
+                )
+            )
+            if browser_result == "cancelled":
+                self.ui.file_browser = None
+                self.ui.status = "Cancelled"
+            elif browser_result is not None:
+                mode: str = self.ui.file_browser.mode
+                self.ui.file_browser = None
+                if mode == "open":
+                    apply_open_scene_path(self, browser_result)
+                else:
+                    apply_save_scene_path(self, browser_result)
 
         mouse: Vector2 = get_mouse_position()
-        ui_over: bool = (
+        ui_over: bool = browser_open or (
             is_point_in_rect(mouse.x, mouse.y, layout.menu)
             or (
                 self.ui.side_panel_open
@@ -234,7 +277,7 @@ class Application:
         self.scene.handle_input(layout.viewport, ui_over)
 
         begin_drawing()
-        clear_background(COLOUR_BG)
+        clear_background(ui_color_bg)
         self.scene.draw(layout.viewport)
         draw_menu_bar(self.font, layout.menu, menu_buttons)
         if self.ui.side_panel_open:
@@ -251,6 +294,16 @@ class Application:
                 inspector_rows,
             )
         draw_status_bar(self.font, layout.status, self.ui.status)
+        if self.ui.file_browser is not None and browser_window is not None:
+            draw_file_browser(
+                self.font,
+                self.ui.file_browser,
+                browser_rows,
+                browser_buttons,
+                browser_window,
+                get_screen_width(),
+                get_screen_height(),
+            )
         end_drawing()
 
     def run(self) -> None:
@@ -258,13 +311,13 @@ class Application:
             self.frame()
 
     def shutdown(self) -> None:
-        """Release GPU resources owned by this session."""
+        """release GPU resources owned by this session"""
         self.scene.unload()
         unload_app_font(self.font)
 
 
 def open_window() -> None:
-    """Create the raylib window (required before GPU resources)."""
+    """create the raylib window (required before GPU resources)"""
     set_config_flags(ConfigFlags.FLAG_WINDOW_RESIZABLE | ConfigFlags.FLAG_MSAA_4X_HINT)
     init_window(1280, 720, "Builder")
     if not is_window_ready():
@@ -274,9 +327,9 @@ def open_window() -> None:
 
 
 def run_application() -> None:
-    """Open the window, build the application, run until quit, then tear down."""
+    """open the window, build the application, run until quit, then tear down"""
     open_window()
-    font: Font = load_app_font(FONT_SIZE)
+    font: Font = load_app_font(ui_font_size)
 
     scene: Viewport
     try:

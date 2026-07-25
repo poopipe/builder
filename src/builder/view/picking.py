@@ -1,4 +1,4 @@
-"""Ray picking against meshed scene nodes."""
+"""ray picking against meshed scene nodes"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def pick_nearest_mesh_node(
     ray: Ray,
     cache: DrawCache,
 ) -> str | None:
-    """ return id of the nearest meshed node hit by ray, or none """
+    """return id of the nearest meshed node hit by ray, or none"""
     sync_draw_cache(scene, cache)
     best_id: str | None = None
     best_distance: float = float("inf")

@@ -1,4 +1,4 @@
-"""Local and world transform matrices for scene nodes."""
+"""local and world transform matrices for scene nodes"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from builder.scene.scene_types import Node
 
 
 def transform_matrix(transform: Transform) -> Matrix:
-    """ build model matrix from raylib transform (scale then rotate then translate)
+    """build model matrix from raylib transform (scale then rotate then translate)
 
     pyray's matrix_multiply(a, b) composes as math b@a, so arguments are ordered
     scale, rotation, translation to yield column-vector T@R@S
@@ -34,7 +34,7 @@ def transform_matrix(transform: Transform) -> Matrix:
 
 
 def world_matrix(nodes: dict[str, Node], node_id: str) -> Matrix:
-    """ return world matrix for node by walking parent local transforms """
+    """return world matrix for node by walking parent local transforms"""
     node: Node = nodes[node_id]
     local: Matrix = transform_matrix(node.transform)
     if node.parent_id is None:
@@ -44,5 +44,5 @@ def world_matrix(nodes: dict[str, Node], node_id: str) -> Matrix:
 
 
 def matrix_translation(matrix: Matrix) -> Vector3:
-    """ return translation component of a raylib matrix """
+    """return translation component of a raylib matrix"""
     return Vector3(matrix.m12, matrix.m13, matrix.m14)

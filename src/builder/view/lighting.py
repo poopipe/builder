@@ -1,4 +1,4 @@
-"""Three-point lighting via a small GLSL shader (instanced meshes)."""
+"""three-point lighting via a small GLSL shader (instanced meshes)"""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ def set_matrix(shader: Shader, loc: int, value: Matrix) -> None:
 
 @dataclass
 class DirectionalLight:
-    """A directional light (parallel rays). ``direction`` is ray travel direction."""
+    """a directional light (parallel rays). ``direction`` is ray travel direction"""
 
     direction: Vector3
     color: Vector3
@@ -115,7 +115,7 @@ class DirectionalLight:
 
 
 class Lighting:
-    """Key / fill / rim directional lights bound to an instancing-capable shader."""
+    """key / fill / rim directional lights bound to an instancing-capable shader"""
 
     def __init__(self) -> None:
         self.shader: Shader = load_shader_from_memory(VS_SOURCE, FS_SOURCE)
@@ -155,7 +155,7 @@ class Lighting:
         self.upload_lights()
 
     def set_parent_transform(self, matrix: Matrix) -> None:
-        """ bind the parent world matrix for the next instanced draw """
+        """bind the parent world matrix for the next instanced draw"""
         set_matrix(self.shader, self.loc_parent, matrix)
 
     def upload_lights(self) -> None:
@@ -172,9 +172,9 @@ class Lighting:
             set_float(self.shader, loc_int, light.intensity)
 
     def update_view_position(self, position: Vector3) -> None:
-        """Push the camera position into the shader for specular highlights."""
+        """push the camera position into the shader for specular highlights"""
         set_vec3(self.shader, self.loc_view, position)
 
     def unload(self) -> None:
-        """Release GPU resources."""
+        """release GPU resources"""
         unload_shader(self.shader)

@@ -1,4 +1,4 @@
-"""Upload imported CPU meshes into raylib GPU meshes."""
+"""upload imported CPU meshes into raylib GPU meshes"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from builder.view.prepare_mesh import PreparedMesh, prepare_mesh
 
 
 def upload_imported_mesh(imported: ImportedMesh, shader: Shader) -> PreparedMesh:
-    """ build a GPU mesh from an imported triangle soup and bind the lighting shader """
+    """build a GPU mesh from an imported triangle soup and bind the lighting shader"""
     vertex_count: int = imported.vertex_count
     if vertex_count < 3 or vertex_count % 3 != 0:
         raise ValueError(

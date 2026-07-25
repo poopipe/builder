@@ -1,4 +1,4 @@
-"""Spatial distribution helpers — produce transforms only."""
+"""spatial distribution helpers — produce transforms only"""
 
 from builder.distribution.grids import horizontal_grid_transforms, radial_grid_transforms
 

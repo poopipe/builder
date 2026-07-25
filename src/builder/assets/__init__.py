@@ -1,1 +1,1 @@
-"""Application assets (fonts and other files on disk)."""
+"""application assets (fonts and other files on disk)"""

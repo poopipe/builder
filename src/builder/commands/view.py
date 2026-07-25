@@ -1,4 +1,4 @@
-"""View / UI shell commands."""
+"""view / UI shell commands"""
 
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ def focus_camera(context: CommandContext, _: None) -> None:
 
 def toggle_side_panel(context: CommandContext, _: None) -> None:
     context.ui.toggle_side_panel()
-    state = "shown" if context.ui.side_panel_open else "hidden"
+    state: str = "shown" if context.ui.side_panel_open else "hidden"
     context.ui.status = f"Side panel {state}"
 
 
 def toggle_meshes_panel(context: CommandContext, _: None) -> None:
     context.ui.toggle_meshes_panel()
-    state = "shown" if context.ui.meshes_panel_open else "hidden"
+    state: str = "shown" if context.ui.meshes_panel_open else "hidden"
     context.ui.status = f"Meshes panel {state}"
 
 

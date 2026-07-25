@@ -1,4 +1,4 @@
-"""Command type definitions."""
+"""command type definitions"""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from typing import Any
 
 from builder.commands.command_context import CommandContext
 
-""" being brave and using generics """
+"""being brave and using generics"""
 
 
 @dataclass(frozen=True)
 class Command[P]:
-    """generic. labelled action, run always receives context, params"""
+    """generic. labeled action, run always receives context, params"""
 
     label: str
     run: Callable[[CommandContext, P], None]

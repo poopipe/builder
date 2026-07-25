@@ -1,4 +1,4 @@
-"""Instanced draw helpers for scene nodes."""
+"""instanced draw helpers for scene nodes"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def draw_nodes_instanced(
     cache: DrawCache,
     lighting: Lighting,
 ) -> None:
-    """ draw meshed nodes: one call per (mesh, parent), parent world as a uniform """
+    """draw meshed nodes: one call per (mesh, parent), parent world as a uniform"""
     sync_draw_cache(scene, cache)
     identity: Matrix = matrix_identity()
     batch: MeshInstanceBatch

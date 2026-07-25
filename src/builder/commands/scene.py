@@ -1,4 +1,4 @@
-"""Scene mutation commands."""
+"""scene mutation commands"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from builder.generators.generator_types import Generator, GeneratorSpec, ParamMa
 from builder.generators.registry import default_params, get_spec
 from builder.meshes.mesh_catalog import MeshAsset
 from builder.scene.ids import new_node_id
-from builder.scene.scene_types import BUILTIN_CUBE, MeshId, Node, transform_at
+from builder.scene.scene_types import builtin_cube, MeshId, Node, transform_at
 
 
 def build_mesh_group(
@@ -21,7 +21,7 @@ def build_mesh_group(
     mesh_id: MeshId,
     generator: Generator | None = None,
 ) -> list[Node]:
-    """ return group node plus meshed children with local transforms """
+    """return group node plus meshed children with local transforms"""
     group_id: str = new_node_id()
     nodes: list[Node] = [
         Node(
@@ -47,7 +47,7 @@ def build_mesh_group(
 
 
 def place_mesh_group(context: CommandContext, mesh_id: MeshId) -> None:
-    """ place one instance of a registered mesh under a selected group """
+    """place one instance of a registered mesh under a selected group"""
     nodes: list[Node] = build_mesh_group(
         transform_at(Vector3(0.0, 0.0, 0.0)),
         [transform_at(Vector3(0.0, 0.0, 0.0))],
@@ -58,7 +58,7 @@ def place_mesh_group(context: CommandContext, mesh_id: MeshId) -> None:
 
 
 def place_active_mesh(context: CommandContext, _: None) -> None:
-    """ place the active mesh asset """
+    """place the active mesh asset"""
     mesh_id: MeshId = context.application.active_mesh_id
     asset: MeshAsset | None = context.application.mesh_catalog.entries.get(mesh_id)
     if asset is None:
@@ -69,7 +69,7 @@ def place_active_mesh(context: CommandContext, _: None) -> None:
 
 
 def select_mesh(context: CommandContext, mesh_id: MeshId) -> None:
-    """ set the active mesh used by place and generator commands """
+    """set the active mesh used by place and generator commands"""
     asset: MeshAsset | None = context.application.mesh_catalog.entries.get(mesh_id)
     if asset is None:
         context.ui.status = f"Mesh is not available: {mesh_id.name}"
@@ -79,7 +79,7 @@ def select_mesh(context: CommandContext, mesh_id: MeshId) -> None:
 
 
 def place_generator_group(context: CommandContext, kind: str) -> None:
-    """ place a parametric mesh group from a registry kind """
+    """place a parametric mesh group from a registry kind"""
     spec: GeneratorSpec = get_spec(kind)
     params: ParamMap = default_params(kind)
     mesh_id: MeshId = context.application.active_mesh_id
@@ -93,7 +93,7 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
         params=params,
     )
     locals_: list[Transform] = spec.build_transforms(params)
-    group_y: float = 0.75 if mesh_id == BUILTIN_CUBE else 0.0
+    group_y: float = 0.75 if mesh_id == builtin_cube else 0.0
     nodes: list[Node] = build_mesh_group(
         transform_at(Vector3(0.0, group_y, 0.0)),
         locals_,

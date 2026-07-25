@@ -1,4 +1,4 @@
-"""Scene value types: mesh ids and nodes."""
+"""scene value types: mesh ids and nodes"""
 
 from __future__ import annotations
 
@@ -16,14 +16,14 @@ type Quaternion = Vector4
 
 @dataclass(frozen=True)
 class MeshId:
-    """Stable handle into the mesh table."""
+    """stable handle into the mesh table"""
 
     name: str
 
 
 @dataclass(frozen=True)
 class Node:
-    """ a scene node; mesh_id none means transform-only group """
+    """a scene node; mesh_id none means transform-only group"""
 
     id: str
     parent_id: str | None
@@ -33,8 +33,8 @@ class Node:
 
 
 def transform_at(translation: Vector3) -> Transform:
-    """ return transform with identity rotation and unit scale """
+    """return transform with identity rotation and unit scale"""
     return Transform(translation, quaternion_identity(), Vector3(1.0, 1.0, 1.0))
 
 
-BUILTIN_CUBE: MeshId = MeshId("cube")
+builtin_cube: MeshId = MeshId("cube")

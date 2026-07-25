@@ -1,10 +1,10 @@
-""" template for a new generator - copy this file, rename it, then register the spec
+"""template for a new generator - copy this file, rename it, then register the spec
 
 to add a generator:
 1. copy this file to generators/<your_kind>.py
 2. write the transform builder - pure, one Transform per placed mesh
 3. describe the editable params in the spec - fields drive the inspector
-4. add the spec to GENERATOR_SPECS in generators/registry.py
+4. add the spec to generator_specs in generators/registry.py
 5. add a place command in commands/scene.py and a panel button in commands/menus.py
 
 simple shared math belongs in distribution/; complex generator-specific math
@@ -32,7 +32,7 @@ def template_spiral_transforms(
     turns: float,
     radius: float,
 ) -> list[Transform]:
-    """ return transforms spiralling outward in XZ from origin """
+    """return transforms spiralling outward in XZ from origin"""
     transforms: list[Transform] = []
     if count <= 0:
         return transforms
@@ -53,7 +53,7 @@ def template_spiral_transforms(
 
 
 def template_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
-    """ build template transforms from a param map """
+    """build template transforms from a param map"""
     return template_spiral_transforms(
         Vector3(0.0, 0.0, 0.0),
         count=int(params["count"]),
@@ -62,7 +62,7 @@ def template_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
     )
 
 
-TEMPLATE_SPEC: GeneratorSpec = GeneratorSpec(
+template_spec: GeneratorSpec = GeneratorSpec(
     kind="template_spiral",
     label="Spiral",
     fields=(

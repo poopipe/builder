@@ -1,1 +1,1 @@
-"""IO subpackage."""
+"""IO subpackage"""

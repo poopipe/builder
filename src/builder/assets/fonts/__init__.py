@@ -1,1 +1,1 @@
-"""Fonts package marker."""
+"""fonts package marker"""

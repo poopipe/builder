@@ -1,4 +1,4 @@
-"""UI widgets: layout, update, and draw as separate steps."""
+"""UI widgets: layout, update, and draw as separate steps"""
 
 from __future__ import annotations
 
@@ -24,19 +24,19 @@ from pyray import (
 )
 
 from builder.ui.theme import (
-    COLOUR_BORDER,
-    COLOUR_BUTTON,
-    COLOUR_BUTTON_HOVER,
-    COLOUR_BUTTON_PRESS,
-    COLOUR_MENU,
-    COLOUR_PANEL,
-    COLOUR_STATUS,
-    COLOUR_TEXT,
-    FONT_SIZE,
-    MENU_BAR_HEIGHT,
-    PAD,
-    SIDE_PANEL_WIDTH,
-    STATUS_BAR_HEIGHT,
+    ui_color_border,
+    ui_color_button,
+    ui_color_button_hover,
+    ui_color_button_press,
+    ui_color_menu,
+    ui_color_panel,
+    ui_color_status,
+    ui_color_text,
+    ui_font_size,
+    ui_menu_bar_height,
+    ui_pad,
+    ui_side_panel_width,
+    ui_status_bar_height,
 )
 
 
@@ -51,7 +51,7 @@ class Button:
 
 @dataclass
 class LayoutRects:
-    """Window regions for the current frame."""
+    """window regions for the current frame"""
 
     menu: Rectangle
     panel: Rectangle
@@ -64,13 +64,13 @@ class LayoutRects:
 def compute_layout(
     width: int,
     height: int,
-    panel_width: int = SIDE_PANEL_WIDTH,
+    panel_width: int = ui_side_panel_width,
     meshes_width: int = 0,
     inspector_width: int = 0,
 ) -> LayoutRects:
-    """Split the window into menu, side panels, viewport, and status bar."""
-    menu_h: int = MENU_BAR_HEIGHT
-    status_h: int = STATUS_BAR_HEIGHT
+    """split the window into menu, side panels, viewport, and status bar"""
+    menu_h: int = ui_menu_bar_height
+    status_h: int = ui_status_bar_height
     panel_w: int = max(0, panel_width)
     meshes_w: int = max(0, meshes_width)
     inspector_w: int = max(0, inspector_width)
@@ -105,12 +105,12 @@ def compute_layout(
 
 
 def is_point_in_rect(x: float, y: float, rect: Rectangle) -> bool:
-    """Return True if (x, y) lies inside rect."""
+    """return True if (x, y) lies inside rect"""
     return rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height
 
 
 def is_button_in_clip(button: Button, clip: Rectangle) -> bool:
-    """Return True if the button intersects the clip rectangle."""
+    """return True if the button intersects the clip rectangle"""
     return (
         button.rect.y + button.rect.height > clip.y
         and button.rect.y < clip.y + clip.height
@@ -125,7 +125,7 @@ def update_button(
     *,
     can_activate: bool = True,
 ) -> None:
-    """Refresh hover/press state and fire ``on_click`` on release."""
+    """refresh hover/press state and fire ``on_click`` on release"""
     button.is_hovered = is_point_in_rect(mouse.x, mouse.y, button.rect)
     button.is_pressed = button.is_hovered and left_down
     if can_activate and button.is_hovered and left_released:
@@ -151,19 +151,19 @@ def update_buttons(buttons: Sequence[Button], clip: Rectangle) -> None:
 
 
 def draw_button(button: Button, font: Font) -> None:
-    """Draw a button from its current interaction state."""
-    colour: Color
+    """draw a button from its current interaction state"""
+    color: Color
     if button.is_pressed:
-        colour = COLOUR_BUTTON_PRESS
+        color = ui_color_button_press
     elif button.is_hovered:
-        colour = COLOUR_BUTTON_HOVER
+        color = ui_color_button_hover
     else:
-        colour = COLOUR_BUTTON
+        color = ui_color_button
 
-    draw_rectangle_rec(button.rect, colour)
-    draw_rectangle_lines_ex(button.rect, 1, COLOUR_BORDER)
+    draw_rectangle_rec(button.rect, color)
+    draw_rectangle_lines_ex(button.rect, 1, ui_color_border)
 
-    text_size: int = FONT_SIZE
+    text_size: int = ui_font_size
     text_w: float = measure_text_ex(font, button.label, float(text_size), 0).x
     text_h: float = float(text_size)
     tx: float = button.rect.x + (button.rect.width - text_w) * 0.5
@@ -174,7 +174,7 @@ def draw_button(button: Button, font: Font) -> None:
         Vector2(tx, ty),
         float(text_size),
         0,
-        COLOUR_TEXT,
+        ui_color_text,
     )
 
 
@@ -189,7 +189,7 @@ def layout_buttons_horizontal(
     min_width: float,
     font_size: float,
 ) -> list[Button]:
-    """ place buttons left to right inside area """
+    """place buttons left to right inside area"""
     buttons: list[Button] = []
     x: float = area.x + pad
     y: float = area.y + (area.height - button_height) * 0.5
@@ -213,7 +213,7 @@ def layout_buttons_vertical(
     gap: float,
     button_height: float,
 ) -> list[Button]:
-    """ place buttons top to bottom inside area """
+    """place buttons top to bottom inside area"""
     buttons: list[Button] = []
     x: float = area.x + pad
     y: float = area.y + pad
@@ -229,14 +229,14 @@ def layout_buttons_vertical(
 
 
 def draw_menu_bar(font: Font, bar: Rectangle, buttons: Sequence[Button]) -> None:
-    """Draw the menu bar background and its buttons."""
-    draw_rectangle_rec(bar, COLOUR_MENU)
+    """draw the menu bar background and its buttons"""
+    draw_rectangle_rec(bar, ui_color_menu)
     draw_line(
         int(bar.x),
         int(bar.y + bar.height - 1),
         int(bar.x + bar.width),
         int(bar.y + bar.height - 1),
-        COLOUR_BORDER,
+        ui_color_border,
     )
     button: Button
     for button in buttons:
@@ -244,14 +244,14 @@ def draw_menu_bar(font: Font, bar: Rectangle, buttons: Sequence[Button]) -> None
 
 
 def draw_button_stack(font: Font, panel: Rectangle, buttons: Sequence[Button]) -> None:
-    """Draw the side panel background and its clipped buttons."""
-    draw_rectangle_rec(panel, COLOUR_PANEL)
+    """draw the side panel background and its clipped buttons"""
+    draw_rectangle_rec(panel, ui_color_panel)
     draw_line(
         int(panel.x + panel.width - 1),
         int(panel.y),
         int(panel.x + panel.width - 1),
         int(panel.y + panel.height),
-        COLOUR_BORDER,
+        ui_color_border,
     )
     begin_scissor_mode(
         int(panel.x),
@@ -267,13 +267,13 @@ def draw_button_stack(font: Font, panel: Rectangle, buttons: Sequence[Button]) -
 
 
 def draw_status_bar(font: Font, rect: Rectangle, text: str) -> None:
-    """Draw a single-line status bar."""
-    draw_rectangle_rec(rect, COLOUR_STATUS)
+    """draw a single-line status bar"""
+    draw_rectangle_rec(rect, ui_color_status)
     draw_text_ex(
         font,
         text,
-        Vector2(rect.x + PAD, rect.y + 4),
-        float(FONT_SIZE - 2),
+        Vector2(rect.x + ui_pad, rect.y + 4),
+        float(ui_font_size - 2),
         0,
-        COLOUR_TEXT,
+        ui_color_text,
     )

@@ -1,4 +1,4 @@
-"""Axis-aligned bounds helpers for picking."""
+"""axis-aligned bounds helpers for picking"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pyray import BoundingBox, Matrix, Vector3, vector3_transform
 
 
 def bounding_box_corners(bounds: BoundingBox) -> list[Vector3]:
-    """ return the eight corners of a local bounding box """
+    """return the eight corners of a local bounding box"""
     minimum: Vector3 = bounds.min
     maximum: Vector3 = bounds.max
     return [
@@ -22,7 +22,7 @@ def bounding_box_corners(bounds: BoundingBox) -> list[Vector3]:
 
 
 def transform_bounding_box(bounds: BoundingBox, matrix: Matrix) -> BoundingBox:
-    """ return a world aabb that contains the transformed local bounds """
+    """return a world aabb that contains the transformed local bounds"""
     corners: list[Vector3] = bounding_box_corners(bounds)
     first: Vector3 = vector3_transform(corners[0], matrix)
     min_x: float = first.x

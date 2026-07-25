@@ -1,4 +1,4 @@
-"""3D viewport: camera, grid, scene nodes, selection, and gizmo."""
+"""3D viewport: camera, grid, scene nodes, selection, and gizmo"""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ from pyray import (
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.meshes.builtins import make_cube
 from builder.scene.scene import Scene
-from builder.scene.scene_types import BUILTIN_CUBE, MeshId, Node, Quaternion
+from builder.scene.scene_types import builtin_cube, MeshId, Node, Quaternion
 from builder.scene.selection import root_group_id
 from builder.view.gizmo import (
     GizmoState,
@@ -69,7 +69,7 @@ from builder.view.world_axes import draw_world_axes
 
 @dataclass
 class OrbitState:
-    """Spherical orbit camera around a target (distances in metres)."""
+    """spherical orbit camera around a target (distances in meters)"""
 
     yaw: float = 45.0
     pitch: float = 30.0
@@ -82,7 +82,7 @@ class OrbitState:
 
 
 class Viewport:
-    """Owns the 3D camera, lighting, prepared meshes, and scene nodes."""
+    """owns the 3D camera, lighting, prepared meshes, and scene nodes"""
 
     def __init__(self) -> None:
         self.orbit: OrbitState = OrbitState()
@@ -99,7 +99,7 @@ class Viewport:
         self.gizmo: GizmoState = GizmoState()
         try:
             self.mesh_table.add(
-                BUILTIN_CUBE,
+                builtin_cube,
                 prepare_mesh(make_cube(1.5), self.lighting.shader),
             )
         except (RuntimeError, ValueError):
@@ -113,20 +113,20 @@ class Viewport:
         self.last_mouse: Vector2 = Vector2(0.0, 0.0)
 
     def apply_orbit(self) -> None:
-        pitch = max(-89.0, min(89.0, self.orbit.pitch))
+        pitch: float = max(-89.0, min(89.0, self.orbit.pitch))
         self.orbit.pitch = pitch
-        yaw_r = radians(self.orbit.yaw)
-        pitch_r = radians(pitch)
-        target = self.orbit.target
+        yaw_r: float = radians(self.orbit.yaw)
+        pitch_r: float = radians(pitch)
+        target: Vector3 | None = self.orbit.target
         assert target is not None
-        x = target.x + self.orbit.distance * cos(pitch_r) * sin(yaw_r)
-        y = target.y + self.orbit.distance * sin(pitch_r)
-        z = target.z + self.orbit.distance * cos(pitch_r) * cos(yaw_r)
+        x: float = target.x + self.orbit.distance * cos(pitch_r) * sin(yaw_r)
+        y: float = target.y + self.orbit.distance * sin(pitch_r)
+        z: float = target.z + self.orbit.distance * cos(pitch_r) * cos(yaw_r)
         self.camera.position = Vector3(x, y, z)
         self.camera.target = target
 
     def focus_origin(self) -> None:
-        """Reset the orbit target to the origin."""
+        """reset the orbit target to the origin"""
         self.orbit.target = Vector3(0.0, 0.0, 0.0)
         self.orbit.distance = 10.0
         self.orbit.yaw = 45.0
@@ -134,41 +134,54 @@ class Viewport:
         self.apply_orbit()
 
     def toggle_grid(self) -> None:
-        """Toggle ground grid visibility."""
+        """toggle ground grid visibility"""
         self.show_grid = not self.show_grid
 
     def add_nodes(self, nodes: Sequence[Node]) -> None:
-        """Insert or replace scene nodes."""
+        """insert or replace scene nodes"""
         self.nodes.add_nodes(nodes)
 
     def clear_nodes(self) -> None:
-        """Remove every scene node."""
+        """remove every scene node"""
         self.nodes.clear_nodes()
         end_gizmo_drag(self.gizmo)
 
     def set_selection(self, group_ids: Sequence[str]) -> None:
-        """Replace the active group selection."""
+        """replace the active group selection"""
         self.nodes.set_selection(group_ids)
         end_gizmo_drag(self.gizmo)
 
     def clear_selection(self) -> None:
-        """Clear the active group selection."""
+        """clear the active group selection"""
         self.nodes.clear_selection()
         end_gizmo_drag(self.gizmo)
 
     def register_mesh(self, mesh_id: MeshId, prepared: PreparedMesh) -> None:
-        """ insert or replace a prepared mesh in the mesh table """
+        """insert or replace a prepared mesh in the mesh table"""
         self.mesh_table.add_or_replace(mesh_id, prepared)
 
     def register_imported_mesh(self, imported: ImportedMesh) -> MeshId:
-        """ upload and register an imported mesh; return its mesh id """
+        """upload and register an imported mesh; return its mesh id"""
         mesh_id: MeshId = MeshId(mesh_id_for_import(imported))
         prepared: PreparedMesh = upload_imported_mesh(imported, self.lighting.shader)
         self.register_mesh(mesh_id, prepared)
         return mesh_id
 
+    def clear_non_builtin_meshes(self) -> None:
+        """unload every imported mesh; keep built-in cube GPU data"""
+        self.mesh_table.clear_except({builtin_cube})
+
+    def rebind_mesh_id(self, from_id: MeshId, to_id: MeshId) -> None:
+        """move a prepared mesh to a new id (for stable scene-file ids)"""
+        if from_id == to_id:
+            return
+        if not self.mesh_table.has_mesh(from_id):
+            raise KeyError(f"mesh not registered: {from_id.name}")
+        prepared: PreparedMesh = self.mesh_table.entries.pop(from_id)
+        self.mesh_table.add_or_replace(to_id, prepared)
+
     def handle_selection_click(self, ray: Ray) -> None:
-        """Select a group from a mesh hit, or clear on a miss."""
+        """select a group from a mesh hit, or clear on a miss"""
         hit_id: str | None = pick_nearest_mesh_node(
             self.nodes, self.mesh_table, ray, self.draw_cache
         )
@@ -186,9 +199,9 @@ class Viewport:
         end_gizmo_drag(self.gizmo)
 
     def handle_input(self, view_rect: Rectangle, ui_blocks_mouse: bool) -> None:
-        """Orbit / pan / zoom / select / gizmo when the mouse is over the viewport."""
-        mouse = get_mouse_position()
-        over = mouse_in_rect(mouse, view_rect)
+        """orbit / pan / zoom / select / gizmo when the mouse is over the viewport"""
+        mouse: Vector2 = get_mouse_position()
+        over: bool = mouse_in_rect(mouse, view_rect)
         if ui_blocks_mouse or not over:
             self.dragging_orbit = False
             self.dragging_pan = False
@@ -256,8 +269,8 @@ class Viewport:
             self.dragging_pan = False
 
         if self.dragging_orbit and is_mouse_button_down(MouseButton.MOUSE_BUTTON_RIGHT):
-            dx = mouse.x - self.last_mouse.x
-            dy = mouse.y - self.last_mouse.y
+            dx: float = mouse.x - self.last_mouse.x
+            dy: float = mouse.y - self.last_mouse.y
             self.orbit.yaw -= dx * 0.35
             self.orbit.pitch += dy * 0.35
             self.last_mouse = mouse
@@ -267,13 +280,15 @@ class Viewport:
             dx = mouse.x - self.last_mouse.x
             dy = mouse.y - self.last_mouse.y
             self.last_mouse = mouse
-            forward = vector3_normalize(
+            forward: Vector3 = vector3_normalize(
                 vector3_subtract(self.camera.target, self.camera.position)
             )
-            right = vector3_normalize(vector3_cross_product(forward, self.camera.up))
-            up = vector3_normalize(vector3_cross_product(right, forward))
-            scale = self.orbit.distance * 0.0025
-            delta = vector3_add(
+            right: Vector3 = vector3_normalize(
+                vector3_cross_product(forward, self.camera.up)
+            )
+            up: Vector3 = vector3_normalize(vector3_cross_product(right, forward))
+            scale: float = self.orbit.distance * 0.0025
+            delta: Vector3 = vector3_add(
                 vector3_scale(right, -dx * scale),
                 vector3_scale(up, dy * scale),
             )
@@ -281,13 +296,13 @@ class Viewport:
             self.orbit.target = vector3_add(self.orbit.target, delta)
             self.apply_orbit()
 
-        wheel = get_mouse_wheel_move()
+        wheel: float = get_mouse_wheel_move()
         if wheel != 0.0:
             self.orbit.distance = max(0.5, min(200.0, self.orbit.distance - wheel * 1.5))
             self.apply_orbit()
 
     def draw(self, view_rect: Rectangle) -> None:
-        """Render the 3D scene into the viewport rectangle using scissor."""
+        """render the 3D scene into the viewport rectangle using scissor"""
         begin_scissor_mode(
             int(view_rect.x),
             int(view_rect.y),
@@ -330,7 +345,7 @@ class Viewport:
         end_scissor_mode()
 
     def unload(self) -> None:
-        """Release GPU resources and drop large CPU caches before process exit."""
+        """release GPU resources and drop large CPU caches before process exit"""
         self.nodes.nodes.clear()
         self.nodes.selected_ids.clear()
         self.nodes.dirty_ids.clear()

@@ -1,4 +1,4 @@
-"""Package entry: ``python -m builder``."""
+"""package entry: ``python -m builder``"""
 
 from __future__ import annotations
 

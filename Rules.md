@@ -3,7 +3,7 @@ General:
 - comments should be concise and describe intent rather than behaviour
 - I will be editing the code manually outside of your cursor environment- it is essential that you ensure you are working off the most recently saved on-disk file at all times.
 - never edit from chat history or memory: before every change, re-read that file from disk in the same turn; base the edit only on what you just read; do not rewrite a whole file from an earlier version in the conversation
-- never use PowerShell for shell commands or file I/O; use cmd, git, python, or other direct tools instead
+- never use PowerShell. on this machine the Cursor Shell tool always wraps commands in PowerShell, so do not use the Shell tool at all — not even with `cmd /c`. use Read / Write / StrReplace / Grep / Glob / Delete instead. if a command must be run (pyright, app launch, build), ask me to run it and paste the output
 - no mutable module-level globals; pass state explicitly (immutable constants are fine)
 - do not obfuscate ownership with forwarding properties or thin wrappers that re-expose nested state under a flatter name (eg. `selected_ids` that only returns `self.nodes.selected_ids`). access the owning object directly so it is obvious what the data belongs to
 
@@ -11,7 +11,7 @@ Style:
 - the _method convention is stupid - it's not actually private so there is no point pretending it is.  just name the methods
 - do not name modules types.py (collides / confuses tooling); use modulename_types.py
 - US spelling
-- docstrings and comments: lowercase, no trailing period, leading and trailing space inside the quotes — eg. `""" return transforms for grid in XZ centered at origin """`
+- docstrings and comments: lowercase, no trailing period — eg. `"""return transforms for grid in XZ centered at origin"""`
 
 Imports:
 - do not shorten library names eg. pyray should be imported as pyray, not pr

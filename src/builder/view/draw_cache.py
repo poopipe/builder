@@ -1,11 +1,11 @@
-"""CPU-side matrix / instance-buffer cache for the draw path.
+"""CPU-side matrix / instance-buffer cache for the draw path
 
 Instance buffers hold LOCAL transforms. Each batch binds its parent's world
 matrix as a shader uniform, so moving a group costs one uniform upload instead
-of rewriting every child transform.
+of rewriting every child transform
 
 Structure edits (add/remove) update only the affected batches; existing groups
-keep their cached locals and buffers.
+keep their cached locals and buffers
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ type BatchKey = tuple[MeshId, str | None]
 
 @dataclass
 class MeshInstanceBatch:
-    """ local instance transforms for one (mesh, parent) draw call """
+    """local instance transforms for one (mesh, parent) draw call"""
 
     transforms: Any
     count: int
@@ -37,7 +37,7 @@ class MeshInstanceBatch:
 
 @dataclass
 class DrawCache:
-    """Cached local matrices, parent world matrices, and instance buffers."""
+    """cached local matrices, parent world matrices, and instance buffers"""
 
     revision: int = -1
     structure_revision: int = -1
@@ -50,7 +50,7 @@ class DrawCache:
 
 
 def clear_draw_cache(cache: DrawCache) -> None:
-    """ drop all cached GPU/CPU draw state (used on teardown) """
+    """drop all cached GPU/CPU draw state (used on teardown)"""
     cache.local.clear()
     cache.world.clear()
     cache.batches.clear()
@@ -61,7 +61,7 @@ def clear_draw_cache(cache: DrawCache) -> None:
 
 
 def world_matrix_for(scene: Scene, cache: DrawCache, node_id: str) -> Matrix:
-    """ return a node's world matrix, composing from the cached parent world """
+    """return a node's world matrix, composing from the cached parent world"""
     cached: Matrix | None = cache.world.get(node_id)
     if cached is not None:
         return cached
@@ -74,7 +74,7 @@ def world_matrix_for(scene: Scene, cache: DrawCache, node_id: str) -> Matrix:
 
 
 def sync_draw_cache(scene: Scene, cache: DrawCache) -> None:
-    """ rebuild or incrementally update caches when the scene revision changed """
+    """rebuild or incrementally update caches when the scene revision changed"""
     if cache.revision == scene.revision:
         return
     if cache.revision < 0 or cache.structure_revision != scene.structure_revision:
@@ -90,7 +90,7 @@ def sync_draw_cache(scene: Scene, cache: DrawCache) -> None:
 
 
 def rebuild_all(scene: Scene, cache: DrawCache) -> None:
-    """ recompute locals, child index, batches, and parent worlds from scratch """
+    """recompute locals, child index, batches, and parent worlds from scratch"""
     cache.local.clear()
     cache.world.clear()
     cache.children = defaultdict(set)
@@ -107,7 +107,7 @@ def rebuild_all(scene: Scene, cache: DrawCache) -> None:
 
 
 def refresh_batch_parent_ids(cache: DrawCache) -> None:
-    """ refresh the set of parents referenced by instance batches """
+    """refresh the set of parents referenced by instance batches"""
     cache.batch_parent_ids = {
         batch.parent_id
         for batch in cache.batches.values()
@@ -116,7 +116,7 @@ def refresh_batch_parent_ids(cache: DrawCache) -> None:
 
 
 def fill_world_matrix(scene: Scene, cache: DrawCache, node_id: str) -> Matrix:
-    """ memoized world matrix built from already-cached local matrices """
+    """memoized world matrix built from already-cached local matrices"""
     cached: Matrix | None = cache.world.get(node_id)
     if cached is not None:
         return cached
@@ -132,7 +132,7 @@ def fill_world_matrix(scene: Scene, cache: DrawCache, node_id: str) -> Matrix:
 
 
 def has_dirty_ancestor(scene: Scene, node_id: str, dirty: set[str]) -> bool:
-    """ true if the node or any ancestor has a changed transform """
+    """true if the node or any ancestor has a changed transform"""
     current_id: str | None = node_id
     while current_id is not None:
         if current_id in dirty:
@@ -145,7 +145,7 @@ def has_dirty_ancestor(scene: Scene, node_id: str, dirty: set[str]) -> bool:
 
 
 def apply_structure_delta(scene: Scene, cache: DrawCache) -> None:
-    """ apply pending add/remove without touching unrelated groups """
+    """apply pending add/remove without touching unrelated groups"""
     if not scene.added_ids and not scene.removed:
         return
     affected_keys: set[BatchKey] = set()
@@ -187,7 +187,7 @@ def rebuild_batches(
     cache: DrawCache,
     keys: Iterable[BatchKey],
 ) -> None:
-    """ rebuild only the named batches from the child index """
+    """rebuild only the named batches from the child index"""
     key: BatchKey
     for key in keys:
         mesh_id: MeshId
@@ -207,7 +207,7 @@ def rebuild_batches(
 
 
 def fill_batch(cache: DrawCache, key: BatchKey, members: list[Node]) -> None:
-    """ allocate/reuse a Matrix buffer and fill with member locals """
+    """allocate/reuse a Matrix buffer and fill with member locals"""
     count: int = len(members)
     existing: MeshInstanceBatch | None = cache.batches.get(key)
     transforms: Any
@@ -231,7 +231,7 @@ def fill_batch(cache: DrawCache, key: BatchKey, members: list[Node]) -> None:
 
 
 def apply_incremental_updates(scene: Scene, cache: DrawCache) -> None:
-    """ refresh only the transforms invalidated by this frame's edits """
+    """refresh only the transforms invalidated by this frame's edits"""
     dirty: set[str] = {
         node_id for node_id in scene.dirty_ids if node_id in scene.nodes
     }
@@ -259,7 +259,7 @@ def apply_incremental_updates(scene: Scene, cache: DrawCache) -> None:
 
 
 def write_local_instance_slot(scene: Scene, cache: DrawCache, node_id: str) -> None:
-    """ patch one node's local matrix into its instance buffer slot """
+    """patch one node's local matrix into its instance buffer slot"""
     node: Node | None = scene.nodes.get(node_id)
     if node is None or node.mesh_id is None:
         return
@@ -273,7 +273,7 @@ def write_local_instance_slot(scene: Scene, cache: DrawCache, node_id: str) -> N
 
 
 def rebuild_instance_batches(scene: Scene, cache: DrawCache) -> None:
-    """ rebuild every batch from the child index (full sync only) """
+    """rebuild every batch from the child index (full sync only)"""
     keys: set[BatchKey] = set()
     parent_id: str | None
     child_ids: set[str]

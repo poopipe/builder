@@ -1,4 +1,4 @@
-"""Builtin mesh constructors."""
+"""builtin mesh constructors"""
 
 from builder.meshes.builtins import make_cube, make_cylinder
 

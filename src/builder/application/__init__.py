@@ -1,4 +1,4 @@
-"""Application package: session state and main loop."""
+"""application package: session state and main loop"""
 
 from builder.application.app import Application, open_window, run_application
 from builder.application.application_state import ApplicationState

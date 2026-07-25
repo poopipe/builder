@@ -1,4 +1,4 @@
-"""Prepare meshes for GPU drawing (material + shader binding)."""
+"""prepare meshes for GPU drawing (material + shader binding)"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from pyray import (
 
 @dataclass(frozen=True)
 class PreparedMesh:
-    """A mesh ready for instanced draw with the bound material/shader."""
+    """a mesh ready for instanced draw with the bound material/shader"""
 
     mesh: Mesh
     material: Material
@@ -29,9 +29,9 @@ class PreparedMesh:
 
 
 def prepare_mesh(mesh: Mesh, shader: Shader) -> PreparedMesh:
-    """Bind ``mesh`` to a default material using ``shader``.
+    """bind ``mesh`` to a default material using ``shader``
 
-    Does not take ownership of ``shader``. Raises if the mesh has no vertices.
+    Does not take ownership of ``shader``. Raises if the mesh has no vertices
     """
     vertex_count: int = int(
         getattr(mesh, "vertexCount", getattr(mesh, "vertex_count", 0))
@@ -45,7 +45,7 @@ def prepare_mesh(mesh: Mesh, shader: Shader) -> PreparedMesh:
 
 
 def release_prepared_mesh(prepared: PreparedMesh) -> None:
-    """ unload GPU mesh without freeing cffi-owned CPU attribute buffers """
+    """unload GPU mesh without freeing cffi-owned CPU attribute buffers"""
     mesh: Mesh = prepared.mesh
     if prepared.keep_alive:
         # UnloadMesh would RL_FREE these; they belong to keep_alive
