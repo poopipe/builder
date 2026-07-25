@@ -35,6 +35,7 @@ from builder.generators.registry import (
     field_for,
     format_param,
     get_spec,
+    params_with_defaults,
     parse_param,
 )
 from builder.generators.mesh_pattern import next_mode, remove_slot, set_slot
@@ -159,7 +160,9 @@ def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
     generator: Generator | None = group.generator
     if generator is None:
         return
-    value: ParamValue = generator.params[field.key]
+    value: ParamValue = params_with_defaults(generator.kind, generator.params)[
+        field.key
+    ]
     ui.inspector_group_id = group.id
     ui.inspector_focus_key = field.key
     ui.inspector_draft = format_param(field, value)
@@ -532,7 +535,10 @@ def draw_inspector(
             focused = True
             select_all = ui.inspector_select_all
         else:
-            display = format_param(field, generator.params[row.key])
+            display = format_param(
+                field,
+                params_with_defaults(generator.kind, generator.params)[row.key],
+            )
             focused = False
         draw_value_field(
             font,

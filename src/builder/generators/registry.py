@@ -5,6 +5,8 @@ One module per generator kind; add new specs to ``generator_specs``
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from builder.generators.generator_types import (
     GeneratorSpec,
     ParamField,
@@ -32,6 +34,13 @@ def get_spec(kind: str) -> GeneratorSpec:
 def default_params(kind: str) -> ParamMap:
     """return a fresh copy of the default params for a kind"""
     return dict(get_spec(kind).defaults)
+
+
+def params_with_defaults(kind: str, params: Mapping[str, ParamValue]) -> ParamMap:
+    """return defaults overlaid with stored params (fills keys added later)"""
+    completed: ParamMap = default_params(kind)
+    completed.update(params)
+    return completed
 
 
 def field_for(spec: GeneratorSpec, key: str) -> ParamField:

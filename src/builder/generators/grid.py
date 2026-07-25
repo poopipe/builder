@@ -24,6 +24,7 @@ def grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
         spacing_x=float(params["spacing_x"]),
         spacing_y=float(params["spacing_y"]),
         spacing_z=float(params["spacing_z"]),
+        build_from=int(params.get("build_from", 1)),
     )
 
 
@@ -37,6 +38,9 @@ grid_spec: GeneratorSpec = GeneratorSpec(
         ParamField("spacing_x", "Spacing X", "float", 0.25, minimum=0.1, maximum=50.0),
         ParamField("spacing_y", "Spacing Y", "float", 0.25, minimum=0.1, maximum=50.0),
         ParamField("spacing_z", "Spacing Z", "float", 0.25, minimum=0.1, maximum=50.0),
+        ParamField(
+            "build_from", "Build from (0=X 1=Y 2=Z)", "int", 1.0, minimum=0.0, maximum=2.0
+        ),
     ),
     defaults={
         "count_x": 3,
@@ -45,6 +49,7 @@ grid_spec: GeneratorSpec = GeneratorSpec(
         "spacing_x": 2.0,
         "spacing_y": 2.0,
         "spacing_z": 2.0,
+        "build_from": 1,
     },
     build_transforms=grid_from_params,
 )

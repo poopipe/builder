@@ -15,7 +15,7 @@ from builder.generators.generator_types import (
     ParamValue,
 )
 from builder.generators.mesh_pattern import mesh_for_index
-from builder.generators.registry import clamp_param, field_for, get_spec
+from builder.generators.registry import clamp_param, field_for, get_spec, params_with_defaults
 from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
@@ -44,7 +44,15 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
     if generator is None:
         raise ValueError(f"group {group_id} has no generator")
     spec: GeneratorSpec = get_spec(generator.kind)
-    locals_: list[Transform] = spec.build_transforms(generator.params)
+    params: ParamMap = params_with_defaults(generator.kind, generator.params)
+    if params != generator.params:
+        scene.add_nodes(
+            [replace(group, generator=replace(generator, params=params))]
+        )
+        group = scene.nodes[group_id]
+        generator = group.generator
+        assert generator is not None
+    locals_: list[Transform] = spec.build_transforms(params)
     scene.remove_nodes(child_ids(scene.nodes, group_id))
     children: list[Node] = []
     index: int
@@ -84,7 +92,7 @@ def set_generator_param(
     spec: GeneratorSpec = get_spec(generator.kind)
     field: ParamField = field_for(spec, key)
     clamped: ParamValue = clamp_param(field, value)
-    params: ParamMap = dict(generator.params)
+    params: ParamMap = params_with_defaults(generator.kind, generator.params)
     params[key] = clamped
     scene.add_nodes(
         [replace(group, generator=replace(generator, params=params))]
@@ -105,7 +113,8 @@ def step_generator_param(
         raise ValueError(f"group {group_id} has no generator")
     spec: GeneratorSpec = get_spec(generator.kind)
     field: ParamField = field_for(spec, key)
-    current: ParamValue = generator.params[key]
+    params: ParamMap = params_with_defaults(generator.kind, generator.params)
+    current: ParamValue = params[key]
     stepped: float = float(current) + field.step * float(direction)
     set_generator_param(scene, group_id, key, stepped)
 
