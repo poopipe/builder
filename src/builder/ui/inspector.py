@@ -65,6 +65,8 @@ from builder.ui.ui_state import UiState
 from builder.ui.widgets import (
     Button,
     draw_button,
+    draw_checkbox_with_label,
+    draw_radio_option,
     is_point_in_rect,
     update_buttons,
 )
@@ -75,13 +77,19 @@ inspector_panel: str = "inspector"
 
 @dataclass(frozen=True)
 class ParamRowRects:
-    """hit targets for one inspector param row"""
+    """hit targets for one inspector param row
+
+    option_rects holds one hit target per enum option, in field.options order
+    """
 
     key: str
     label: Rectangle
     minus: Rectangle
     value: Rectangle
     plus: Rectangle
+    is_bool: bool = False
+    is_enum: bool = False
+    option_rects: tuple[Rectangle, ...] = ()
 
 
 def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
@@ -93,13 +101,60 @@ def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
 
 
 def layout_param_rows(area: Rectangle, fields: tuple[ParamField, ...]) -> list[ParamRowRects]:
-    """place label / stepper / value rows under the inspector title"""
+    """place label / stepper / value rows, or a checkbox row for bools"""
     rows: list[ParamRowRects] = []
     y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
     x: float = area.x + ui_pad
     inner_w: float = area.width - ui_pad * 2
+    empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
     field: ParamField
     for field in fields:
+        if field.value_type == "bool":
+            hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
+            rows.append(
+                ParamRowRects(
+                    key=field.key,
+                    label=hit,
+                    minus=empty,
+                    value=hit,
+                    plus=empty,
+                    is_bool=True,
+                )
+            )
+            y += float(ui_button_height) + ui_pad
+            continue
+        if field.value_type == "enum":
+            options: tuple[tuple[int, str], ...] = field.options or ()
+            enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+            y += float(ui_font_size) + 4.0
+            option_count: int = max(1, len(options))
+            option_w: float = (
+                inner_w - ui_button_gap * (option_count - 1)
+            ) / option_count
+            option_rects: list[Rectangle] = []
+            index: int
+            for index in range(len(options)):
+                option_rects.append(
+                    Rectangle(
+                        x + (option_w + ui_button_gap) * index,
+                        y,
+                        option_w,
+                        float(ui_button_height),
+                    )
+                )
+            rows.append(
+                ParamRowRects(
+                    key=field.key,
+                    label=enum_label,
+                    minus=empty,
+                    value=empty,
+                    plus=empty,
+                    is_enum=True,
+                    option_rects=tuple(option_rects),
+                )
+            )
+            y += float(ui_button_height) + ui_pad
+            continue
         label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
         y += float(ui_font_size) + 4.0
         controls_y: float = y
@@ -134,12 +189,18 @@ def layout_param_rows(area: Rectangle, fields: tuple[ParamField, ...]) -> list[P
     return rows
 
 
+def row_bottom(row: ParamRowRects) -> float:
+    """return the lowest edge of a row across all its hit targets"""
+    rects: list[Rectangle] = [row.label, row.minus, row.value, row.plus]
+    rects.extend(row.option_rects)
+    return max(rect.y + rect.height for rect in rects)
+
+
 def bake_button_rect(area: Rectangle, rows: list[ParamRowRects]) -> Rectangle:
     """place the Bake button below the last param row"""
     y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
     if rows:
-        last: ParamRowRects = rows[-1]
-        y = last.plus.y + last.plus.height + ui_pad
+        y = row_bottom(rows[-1]) + ui_pad
     return Rectangle(
         area.x + ui_pad,
         y,
@@ -150,6 +211,8 @@ def bake_button_rect(area: Rectangle, rows: list[ParamRowRects]) -> Rectangle:
 
 def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
     """begin typed editing for one param"""
+    if field.value_type in ("bool", "enum"):
+        return
     generator: Generator | None = group.generator
     if generator is None:
         return
@@ -364,15 +427,44 @@ def update_inspector(
         return [], []
     spec: GeneratorSpec = get_spec(generator.kind)
     rows: list[ParamRowRects] = layout_param_rows(area, spec.fields)
-    handle_inspector_typing(scene, ui, group, [row.key for row in rows])
+    text_keys: list[str] = [
+        row.key for row in rows if not row.is_bool and not row.is_enum
+    ]
+    handle_inspector_typing(scene, ui, group, text_keys)
 
     mouse: Vector2 = get_mouse_position()
     clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
     buttons: list[Button] = []
+    params: dict[str, ParamValue] = params_with_defaults(
+        generator.kind, generator.params
+    )
     row: ParamRowRects
     for row in rows:
         field: ParamField = field_for(spec, row.key)
         key: str = row.key
+        if row.is_bool:
+
+            def toggle_bool(k: str = key, current: ParamValue = params[key]) -> None:
+                ui.clear_focus()
+                set_generator_param(scene, group.id, k, 0 if int(current) else 1)
+
+            if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
+                toggle_bool()
+            continue
+
+        if row.is_enum:
+            if clicked:
+                options: tuple[tuple[int, str], ...] = field.options or ()
+                option_index: int
+                option_rect: Rectangle
+                for option_index, option_rect in enumerate(row.option_rects):
+                    if is_point_in_rect(mouse.x, mouse.y, option_rect):
+                        ui.clear_focus()
+                        set_generator_param(
+                            scene, group.id, key, options[option_index][0]
+                        )
+                        break
+            continue
 
         def step_minus(k: str = key) -> None:
             ui.clear_focus()
@@ -465,6 +557,17 @@ def draw_inspector(
     row: ParamRowRects
     for row in rows:
         field: ParamField = field_for(spec, row.key)
+        value: ParamValue = params_with_defaults(generator.kind, generator.params)[
+            row.key
+        ]
+        if row.is_bool:
+            draw_checkbox_with_label(
+                font,
+                row.value,
+                field.label,
+                checked=bool(int(value)),
+            )
+            continue
         draw_text_ex(
             font,
             field.label,
@@ -473,6 +576,21 @@ def draw_inspector(
             0,
             ui_color_text,
         )
+        if row.is_enum:
+            options: tuple[tuple[int, str], ...] = field.options or ()
+            option_index: int
+            option_rect: Rectangle
+            for option_index, option_rect in enumerate(row.option_rects):
+                option_value: int
+                option_label: str
+                option_value, option_label = options[option_index]
+                draw_radio_option(
+                    font,
+                    option_rect,
+                    option_label,
+                    selected=int(value) == option_value,
+                )
+            continue
         edit: TextEdit | None = ui.focused_edit(
             inspector_panel, row.key, group.id
         )
@@ -483,16 +601,13 @@ def draw_inspector(
                 edit.text,
                 focused=True,
                 caret=edit.caret,
-                select_all=edit.select_all,
+                mark=edit.mark,
             )
             continue
         draw_text_field(
             font,
             row.value,
-            format_param(
-                field,
-                params_with_defaults(generator.kind, generator.params)[row.key],
-            ),
+            format_param(field, value),
             focused=False,
             center_unfocused=True,
         )

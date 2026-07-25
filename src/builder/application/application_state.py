@@ -19,3 +19,5 @@ class ApplicationState:
     mesh_catalog: MeshCatalog = field(default_factory=default_mesh_catalog)
     active_mesh_id: MeshId = builtin_cube
     scene_path: Path | None = None
+    # last folder opened per file-browser purpose (open_scene, save_scene, …)
+    browser_directories: dict[str, Path] = field(default_factory=dict)

@@ -26,7 +26,6 @@ from pyray import (
     is_mouse_button_down,
     is_mouse_button_pressed,
     is_mouse_button_released,
-    measure_text_ex,
 )
 
 from builder.ui.text_field import (
@@ -56,6 +55,7 @@ from builder.ui.theme import (
 from builder.ui.widgets import Button, draw_button, is_point_in_rect, update_button
 
 FileBrowserMode = Literal["open", "save"]
+FileBrowserPurpose = Literal["open_scene", "save_scene", "import_mesh"]
 FileBrowserFrameResult = Path | Literal["cancelled"] | None
 filename_blocked_chars: str = '"*?<>|'
 
@@ -74,8 +74,10 @@ class FileBrowserState:
     """mutable modal file browser session"""
 
     mode: FileBrowserMode
+    purpose: FileBrowserPurpose
     directory: Path
     filter_suffix: str
+    path_edit: TextEdit | None = None
     filename: str = ""
     filename_edit: TextEdit | None = None
     scroll: float = 0.0
@@ -103,13 +105,33 @@ def starting_directory(scene_path: Path | None) -> Path:
     return Path.cwd().resolve()
 
 
+def browser_title(purpose: FileBrowserPurpose) -> str:
+    """dialog title for a browser purpose"""
+    if purpose == "open_scene":
+        return "Open scene"
+    if purpose == "save_scene":
+        return "Save scene"
+    return "Import mesh"
+
+
+def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
+    """confirm button label for a browser purpose"""
+    if purpose == "open_scene":
+        return "Open"
+    if purpose == "save_scene":
+        return "Save"
+    return "Import"
+
+
 def make_open_browser(
     directory: Path,
     filter_suffix: str,
+    purpose: FileBrowserPurpose = "open_scene",
 ) -> FileBrowserState:
     """open-mode browser rooted at directory"""
     return FileBrowserState(
         mode="open",
+        purpose=purpose,
         directory=directory.resolve(),
         filter_suffix=filter_suffix.lower(),
     )
@@ -119,15 +141,22 @@ def make_save_browser(
     directory: Path,
     filter_suffix: str,
     initial_name: str,
+    purpose: FileBrowserPurpose = "save_scene",
 ) -> FileBrowserState:
     """save-mode browser with a suggested filename"""
     return FileBrowserState(
         mode="save",
+        purpose=purpose,
         directory=directory.resolve(),
         filter_suffix=filter_suffix.lower(),
         filename=initial_name,
         filename_edit=begin_edit(initial_name),
     )
+
+
+def make_import_browser(directory: Path, filter_suffix: str) -> FileBrowserState:
+    """open-mode browser for importing a mesh file"""
+    return make_open_browser(directory, filter_suffix, purpose="import_mesh")
 
 
 def parent_directory(path: Path) -> Path | None:
@@ -183,6 +212,7 @@ def browser_window_rect(screen_w: int, screen_h: int) -> Rectangle:
 def navigate_to(state: FileBrowserState, directory: Path) -> None:
     """enter a directory and reset list selection"""
     state.directory = directory.resolve()
+    state.path_edit = None
     state.scroll = 0.0
     state.selected_name = None
     state.last_click_name = None
@@ -210,6 +240,32 @@ def resolve_confirm_path(state: FileBrowserState) -> Path | None:
     return ensure_suffix(state.directory / name, state.filter_suffix).resolve()
 
 
+def handle_path_typing(state: FileBrowserState) -> None:
+    """edit the current directory and navigate on Enter"""
+    edit: TextEdit | None = state.path_edit
+    if edit is None:
+        return
+    action: TextAction = handle_text_keys(edit)
+    if action is TextAction.cancel:
+        state.path_edit = None
+        return
+    if action in (TextAction.focus_next, TextAction.focus_prev):
+        state.path_edit = None
+        if state.mode == "save":
+            state.filename_edit = begin_edit(state.filename)
+        return
+    if action is not TextAction.commit:
+        return
+    typed: Path = Path(edit.text).expanduser()
+    candidate: Path = (
+        typed if typed.is_absolute() else state.directory / typed
+    ).resolve()
+    if not candidate.is_dir():
+        state.error = f"not a directory: {candidate}"
+        return
+    navigate_to(state, candidate)
+
+
 def handle_filename_typing(state: FileBrowserState) -> bool:
     """edit save filename while focused; true when Enter asks to confirm"""
     edit: TextEdit | None = state.filename_edit
@@ -221,6 +277,10 @@ def handle_filename_typing(state: FileBrowserState) -> bool:
     state.filename = edit.text
     if action is TextAction.cancel:
         state.filename_edit = None
+        return False
+    if action in (TextAction.focus_next, TextAction.focus_prev):
+        state.filename_edit = None
+        state.path_edit = begin_edit(str(state.directory))
         return False
     return action is TextAction.commit
 
@@ -257,12 +317,18 @@ def update_file_browser(
     """handle input; return (result, rows, buttons, window)"""
     window: Rectangle = browser_window_rect(screen_w, screen_h)
     title_h: float = float(ui_font_size + ui_pad)
-    path_h: float = float(ui_font_size)
+    path_h: float = float(ui_button_height)
     footer_h: float = float(ui_button_height + ui_pad * 2)
     name_h: float = (
         float(ui_button_height + ui_pad) if state.mode == "save" else 0.0
     )
     list_top: float = window.y + ui_pad + title_h + path_h + ui_pad
+    path_rect: Rectangle = Rectangle(
+        window.x + ui_pad,
+        window.y + ui_pad + title_h,
+        window.width - ui_pad * 2.0,
+        path_h,
+    )
     list_h: float = max(
         0.0,
         window.height
@@ -309,10 +375,18 @@ def update_file_browser(
     )
 
     result: FileBrowserFrameResult = None
-    if is_key_pressed(KeyboardKey.KEY_ESCAPE) and state.filename_edit is None:
+    if (
+        is_key_pressed(KeyboardKey.KEY_ESCAPE)
+        and state.path_edit is None
+        and state.filename_edit is None
+    ):
         return "cancelled", [], [], window
 
-    name_confirmed: bool = handle_filename_typing(state)
+    name_confirmed: bool = False
+    if state.path_edit is not None:
+        handle_path_typing(state)
+    elif state.filename_edit is not None:
+        name_confirmed = handle_filename_typing(state)
 
     entries: list[BrowserEntry] = []
     try:
@@ -359,10 +433,17 @@ def update_file_browser(
         rows.append(row)
         y += row_h + ui_button_gap
 
-    if state.mode == "save" and left_pressed:
-        if is_point_in_rect(mouse.x, mouse.y, name_rect):
+    if left_pressed:
+        if is_point_in_rect(mouse.x, mouse.y, path_rect):
+            state.path_edit = begin_edit(str(state.directory))
+            state.filename_edit = None
+        elif state.mode == "save" and is_point_in_rect(
+            mouse.x, mouse.y, name_rect
+        ):
             state.filename_edit = begin_edit(state.filename)
+            state.path_edit = None
         elif not is_point_in_rect(mouse.x, mouse.y, confirm_rect):
+            state.path_edit = None
             state.filename_edit = None
 
     def confirm() -> None:
@@ -382,7 +463,7 @@ def update_file_browser(
             return
         navigate_to(state, parent)
 
-    confirm_label: str = "Open" if state.mode == "open" else "Save"
+    confirm_label: str = browser_confirm_label(state.purpose)
     buttons: list[Button] = [
         Button("Up", go_up, up_rect),
         Button(confirm_label, confirm, confirm_rect),
@@ -437,7 +518,7 @@ def draw_file_browser(
     draw_rectangle_rec(window, ui_color_panel)
     draw_rectangle_lines_ex(window, 1, ui_color_border)
 
-    title: str = "Open scene" if state.mode == "open" else "Save scene"
+    title: str = browser_title(state.purpose)
     draw_text_ex(
         font,
         title,
@@ -446,29 +527,24 @@ def draw_file_browser(
         0,
         ui_color_text,
     )
-    path_text: str = str(state.directory)
-    path_size: float = float(ui_font_size - 2)
-    max_path_w: float = window.width - ui_pad * 2.0
-    if measure_text_ex(font, path_text, path_size, 0).x > max_path_w:
-        while len(path_text) > 4 and measure_text_ex(
-            font, "..." + path_text, path_size, 0
-        ).x > max_path_w:
-            path_text = path_text[1:]
-        path_text = "..." + path_text
-    draw_text_ex(
+    title_h: float = float(ui_font_size + ui_pad)
+    path_h: float = float(ui_button_height)
+    path_rect: Rectangle = Rectangle(
+        window.x + ui_pad,
+        window.y + ui_pad + title_h,
+        window.width - ui_pad * 2.0,
+        path_h,
+    )
+    path_edit: TextEdit | None = state.path_edit
+    draw_text_field(
         font,
-        path_text,
-        Vector2(
-            window.x + ui_pad,
-            window.y + ui_pad + float(ui_font_size),
-        ),
-        path_size,
-        0,
-        ui_color_text,
+        path_rect,
+        path_edit.text if path_edit is not None else str(state.directory),
+        focused=path_edit is not None,
+        caret=path_edit.caret if path_edit is not None else 0,
+        mark=path_edit.mark if path_edit is not None else None,
     )
 
-    title_h: float = float(ui_font_size + ui_pad)
-    path_h: float = float(ui_font_size)
     footer_h: float = float(ui_button_height + ui_pad * 2)
     name_h: float = (
         float(ui_button_height + ui_pad) if state.mode == "save" else 0.0
@@ -516,7 +592,7 @@ def draw_file_browser(
             edit.text if edit is not None else state.filename,
             focused=edit is not None,
             caret=edit.caret if edit is not None else 0,
-            select_all=edit.select_all if edit is not None else False,
+            mark=edit.mark if edit is not None else None,
         )
 
     if state.error != "":

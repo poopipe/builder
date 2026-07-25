@@ -46,7 +46,7 @@ def toggle_gizmo_space(context: CommandContext, _: None) -> None:
         set_gizmo_space(context, GizmoSpace.world)
 
 
-cmd_toggle_grid: Command[None] = Command("Grid", toggle_grid)
+cmd_toggle_grid: Command[None] = Command("Toggle Grid", toggle_grid)
 cmd_focus_camera: Command[None] = Command("Focus camera", focus_camera)
 cmd_toggle_side_panel: Command[None] = Command("Panel", toggle_side_panel)
 cmd_toggle_meshes_panel: Command[None] = Command("Meshes", toggle_meshes_panel)

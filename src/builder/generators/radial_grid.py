@@ -11,6 +11,7 @@ from builder.generators.generator_types import (
     GeneratorSpec,
     ParamField,
     ParamValue,
+    axis_choices,
 )
 
 
@@ -34,9 +35,7 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
     kind="radial_grid",
     label="Radial grid",
     fields=(
-        ParamField(
-            "axis", "Axis (0=X 1=Y 2=Z)", "int", 1.0, minimum=0.0, maximum=2.0
-        ),
+        ParamField("axis", "Axis", "enum", 1.0, options=axis_choices),
         ParamField("radius", "Outer radius", "float", 0.5, minimum=0.1, maximum=50.0),
         ParamField("spacing", "Spacing deg", "float", 5.0, minimum=1.0, maximum=180.0),
         ParamField(
@@ -61,10 +60,8 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
             minimum=0.1,
             maximum=50.0,
         ),
-        ParamField("face_center", "Face center", "int", 1.0, minimum=0.0, maximum=1.0),
-        ParamField(
-            "build_from", "Build from (0=X 1=Y 2=Z)", "int", 1.0, minimum=0.0, maximum=2.0
-        ),
+        ParamField("face_center", "Face center", "bool", 1.0),
+        ParamField("build_from", "Build from", "enum", 1.0, options=axis_choices),
     ),
     defaults={
         "axis": 1,

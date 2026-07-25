@@ -18,14 +18,21 @@ type BuildTransforms = Callable[[Mapping[str, ParamValue]], list[Transform]]
 
 @dataclass(frozen=True)
 class ParamField:
-    """one editable parameter exposed by a generator kind"""
+    """one editable parameter exposed by a generator kind
+
+    an enum field carries ordered (value, label) options shown as radio buttons
+    """
 
     key: str
     label: str
-    value_type: Literal["int", "float"]
+    value_type: Literal["int", "float", "bool", "enum"]
     step: float
     minimum: float | None = None
     maximum: float | None = None
+    options: tuple[tuple[int, str], ...] | None = None
+
+
+axis_choices: tuple[tuple[int, str], ...] = ((0, "X"), (1, "Y"), (2, "Z"))
 
 
 @dataclass(frozen=True)

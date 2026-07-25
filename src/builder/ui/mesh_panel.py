@@ -40,7 +40,7 @@ from builder.ui.theme import (
     ui_pad,
 )
 from builder.ui.ui_state import UiState
-from builder.ui.widgets import is_point_in_rect
+from builder.ui.widgets import Button, draw_button, is_point_in_rect, update_buttons
 
 
 @dataclass
@@ -71,12 +71,23 @@ def update_mesh_panel(
     ui: UiState,
     area: Rectangle,
     on_select: Callable[[MeshId], None],
-) -> list[MeshRow]:
-    """layout rows, handle scroll/clicks, return rows for drawing"""
+    on_import: Callable[[], None],
+) -> tuple[list[MeshRow], list[Button]]:
+    """layout rows and import button; handle scroll/clicks"""
     assets: list[MeshAsset] = list(catalog.entries.values())
     title_h: float = float(ui_font_size + ui_pad)
-    list_top: float = area.y + ui_pad + title_h
-    list_h: float = max(0.0, area.height - ui_pad * 2.0 - title_h)
+    import_rect: Rectangle = Rectangle(
+        area.x + ui_pad,
+        area.y + ui_pad + title_h,
+        area.width - ui_pad * 2.0,
+        float(ui_button_height),
+    )
+    list_top: float = (
+        import_rect.y + import_rect.height + ui_button_gap
+    )
+    list_h: float = max(
+        0.0, area.y + area.height - ui_pad - list_top
+    )
     list_rect: Rectangle = Rectangle(area.x, list_top, area.width, list_h)
 
     row_h: float = float(ui_button_height + 10)
@@ -118,7 +129,12 @@ def update_mesh_panel(
             on_select(asset.mesh_id)
         rows.append(row)
         y += row_h + ui_button_gap
-    return rows
+
+    buttons: list[Button] = [
+        Button(label="Import mesh", on_click=on_import, rect=import_rect)
+    ]
+    update_buttons(buttons, area)
+    return rows, buttons
 
 
 def draw_mesh_row(font: Font, row: MeshRow) -> None:
@@ -166,8 +182,9 @@ def draw_mesh_panel(
     font: Font,
     area: Rectangle,
     rows: list[MeshRow],
+    buttons: list[Button],
 ) -> None:
-    """draw the meshes panel background, title, and clipped rows"""
+    """draw the meshes panel background, title, import button, and clipped rows"""
     draw_rectangle_rec(area, ui_color_panel)
     draw_rectangle_lines_ex(
         Rectangle(area.x, area.y, 1, area.height),
@@ -182,9 +199,18 @@ def draw_mesh_panel(
         0,
         ui_color_text,
     )
+    button: Button
+    for button in buttons:
+        draw_button(button, font)
     title_h: float = float(ui_font_size + ui_pad)
-    list_top: float = area.y + ui_pad + title_h
-    list_h: float = max(0.0, area.height - ui_pad * 2.0 - title_h)
+    list_top: float = (
+        area.y
+        + ui_pad
+        + title_h
+        + float(ui_button_height)
+        + ui_button_gap
+    )
+    list_h: float = max(0.0, area.y + area.height - ui_pad - list_top)
     begin_scissor_mode(int(area.x), int(list_top), int(area.width), int(list_h))
     row: MeshRow
     for row in rows:

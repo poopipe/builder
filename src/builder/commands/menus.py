@@ -43,7 +43,6 @@ menu_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_toggle_gizmo_space, None),
 )
 panel_commands: tuple[CommandItem, ...] = (
-    CommandEntry(cmd_import_mesh, None),
     CommandEntry(cmd_place_mesh, None),
     CommandEntry(cmd_delete, None),
     CommandEntry(cmd_toggle_grid, None),
@@ -55,4 +54,8 @@ panel_commands: tuple[CommandItem, ...] = (
 
 def all_commands() -> tuple[CommandItem, ...]:
     """return every command entry exposed by the default menus"""
-    return menu_commands + panel_commands
+    return (
+        menu_commands
+        + panel_commands
+        + (CommandEntry(cmd_import_mesh, None),)
+    )

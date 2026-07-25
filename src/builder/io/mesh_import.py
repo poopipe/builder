@@ -46,7 +46,7 @@ class MeshImporter:
                 "Mesh import: build ufbx_bridge\\build\\ufbx_bridge.dll "
                 "(run ufbx_bridge\\build.cmd), then drop an .fbx"
             )
-        return "Mesh import: drop an .fbx file onto the window"
+        return "Mesh import: use Import mesh, or drop an .fbx onto the window"
 
     def import_path(self, path: str | Path) -> ImportedMesh:
         """load the largest mesh from an fbx file"""

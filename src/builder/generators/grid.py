@@ -11,6 +11,7 @@ from builder.generators.generator_types import (
     GeneratorSpec,
     ParamField,
     ParamValue,
+    axis_choices,
 )
 
 
@@ -38,9 +39,7 @@ grid_spec: GeneratorSpec = GeneratorSpec(
         ParamField("spacing_x", "Spacing X", "float", 0.25, minimum=0.1, maximum=50.0),
         ParamField("spacing_y", "Spacing Y", "float", 0.25, minimum=0.1, maximum=50.0),
         ParamField("spacing_z", "Spacing Z", "float", 0.25, minimum=0.1, maximum=50.0),
-        ParamField(
-            "build_from", "Build from (0=X 1=Y 2=Z)", "int", 1.0, minimum=0.0, maximum=2.0
-        ),
+        ParamField("build_from", "Build from", "enum", 1.0, options=axis_choices),
     ),
     defaults={
         "count_x": 3,

@@ -269,7 +269,7 @@ def draw_transform_bar(
                 edit.text,
                 focused=True,
                 caret=edit.caret,
-                select_all=edit.select_all,
+                mark=edit.mark,
             )
             continue
         draw_text_field(

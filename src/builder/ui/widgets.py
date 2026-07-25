@@ -12,6 +12,8 @@ from pyray import (
     Rectangle,
     Vector2,
     begin_scissor_mode,
+    draw_circle,
+    draw_circle_lines,
     draw_line,
     draw_rectangle_lines_ex,
     draw_rectangle_rec,
@@ -24,10 +26,13 @@ from pyray import (
 )
 
 from builder.ui.theme import (
+    ui_checkbox_size,
     ui_color_border,
     ui_color_button,
     ui_color_button_hover,
     ui_color_button_press,
+    ui_color_checkbox_on,
+    ui_color_input,
     ui_color_menu,
     ui_color_panel,
     ui_color_status,
@@ -173,6 +178,70 @@ def draw_button(button: Button, font: Font) -> None:
         button.label,
         Vector2(tx, ty),
         float(text_size),
+        0,
+        ui_color_text,
+    )
+
+
+def checkbox_box_rect(hit: Rectangle) -> Rectangle:
+    """place the indicator square on the left of a checkbox hit area"""
+    size: float = float(ui_checkbox_size)
+    return Rectangle(
+        hit.x,
+        hit.y + (hit.height - size) * 0.5,
+        size,
+        size,
+    )
+
+
+def draw_checkbox_with_label(
+    font: Font,
+    hit: Rectangle,
+    label: str,
+    *,
+    checked: bool,
+) -> None:
+    """draw a labeled checkbox: filled square when on, empty when off"""
+    box: Rectangle = checkbox_box_rect(hit)
+    draw_rectangle_rec(box, ui_color_checkbox_on if checked else ui_color_input)
+    draw_rectangle_lines_ex(box, 1.0, ui_color_border)
+    size: float = float(ui_font_size)
+    draw_text_ex(
+        font,
+        label,
+        Vector2(
+            box.x + box.width + ui_pad,
+            hit.y + (hit.height - size) * 0.5,
+        ),
+        size,
+        0,
+        ui_color_text,
+    )
+
+
+def draw_radio_option(
+    font: Font,
+    hit: Rectangle,
+    label: str,
+    *,
+    selected: bool,
+) -> None:
+    """draw one labeled radio option: filled dot when selected, ring when not"""
+    radius: float = float(ui_checkbox_size) * 0.5
+    cx: int = int(hit.x + radius)
+    cy: int = int(hit.y + hit.height * 0.5)
+    draw_circle_lines(cx, cy, radius, ui_color_border)
+    if selected:
+        draw_circle(cx, cy, radius - 3.0, ui_color_checkbox_on)
+    size: float = float(ui_font_size)
+    draw_text_ex(
+        font,
+        label,
+        Vector2(
+            hit.x + radius * 2.0 + 6.0,
+            hit.y + (hit.height - size) * 0.5,
+        ),
+        size,
         0,
         ui_color_text,
     )

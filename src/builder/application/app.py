@@ -35,9 +35,12 @@ from pyray import (
 from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandEntry, CommandItem
 from builder.commands.file import (
+    apply_import_mesh_path,
     apply_open_scene_path,
     apply_save_scene_path,
+    cmd_import_mesh,
     import_mesh_from_path,
+    remember_browser_directory,
 )
 from builder.commands.menus import menu_commands, panel_commands, all_commands
 from builder.commands.registry import CommandRegistry, bind_entry, register_commands
@@ -242,17 +245,19 @@ class Application:
                 update_buttons(panel_buttons, layout.panel)
 
         mesh_rows: list[MeshRow] = []
+        mesh_buttons: list[Button] = []
         if self.ui.meshes_panel_open and not browser_open:
 
             def select_active_mesh(mesh_id: MeshId) -> None:
                 bind_entry(self, CommandEntry(cmd_select_mesh, mesh_id))()
 
-            mesh_rows = update_mesh_panel(
+            mesh_rows, mesh_buttons = update_mesh_panel(
                 self.application.mesh_catalog,
                 self.application.active_mesh_id,
                 self.ui,
                 layout.meshes,
                 select_active_mesh,
+                bind_entry(self, CommandEntry(cmd_import_mesh, None)),
             )
 
         inspector_buttons: list[Button] = []
@@ -289,15 +294,19 @@ class Application:
                 )
             )
             if browser_result == "cancelled":
+                remember_browser_directory(self, self.ui.file_browser)
                 self.ui.file_browser = None
                 self.ui.status = "Cancelled"
             elif browser_result is not None:
-                mode: str = self.ui.file_browser.mode
+                purpose: str = self.ui.file_browser.purpose
+                remember_browser_directory(self, self.ui.file_browser)
                 self.ui.file_browser = None
-                if mode == "open":
+                if purpose == "open_scene":
                     apply_open_scene_path(self, browser_result)
-                else:
+                elif purpose == "save_scene":
                     apply_save_scene_path(self, browser_result)
+                else:
+                    apply_import_mesh_path(self, browser_result)
 
         mouse: Vector2 = get_mouse_position()
         ui_over: bool = browser_open or (
@@ -334,7 +343,7 @@ class Application:
         if self.ui.side_panel_open:
             draw_button_stack(self.font, layout.panel, panel_buttons)
         if self.ui.meshes_panel_open:
-            draw_mesh_panel(self.font, layout.meshes, mesh_rows)
+            draw_mesh_panel(self.font, layout.meshes, mesh_rows, mesh_buttons)
         if group is not None:
             draw_inspector(
                 self.font,

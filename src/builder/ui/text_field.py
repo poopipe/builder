@@ -18,10 +18,12 @@ from pyray import (
     draw_text_ex,
     end_scissor_mode,
     get_char_pressed,
+    get_clipboard_text,
     get_time,
     is_key_down,
     is_key_pressed,
     measure_text_ex,
+    set_clipboard_text,
 )
 
 from builder.ui.theme import (
@@ -59,18 +61,19 @@ class TextAction(Enum):
 
 @dataclass
 class TextEdit:
-    """text being typed, with caret position and held-key repeat timing"""
+    """text being typed, with caret, optional selection mark, and key repeat"""
 
     text: str
     caret: int
-    select_all: bool = False
+    # selection spans mark..caret when mark is set; none means caret only
+    mark: int | None = None
     repeat_key: int = 0
     repeat_at: float = 0.0
 
 
 def begin_edit(text: str) -> TextEdit:
     """start editing with the whole value selected, so typing replaces it"""
-    return TextEdit(text=text, caret=len(text), select_all=True)
+    return TextEdit(text=text, caret=len(text), mark=0)
 
 
 def key_active(edit: TextEdit, key: int, now: float) -> bool:
@@ -87,28 +90,62 @@ def key_active(edit: TextEdit, key: int, now: float) -> bool:
     return True
 
 
+def selection_bounds(edit: TextEdit) -> tuple[int, int] | None:
+    """return (start, end) of the selection, or none when the caret is alone"""
+    if edit.mark is None or edit.mark == edit.caret:
+        return None
+    start: int = min(edit.mark, edit.caret)
+    end: int = max(edit.mark, edit.caret)
+    return start, end
+
+
+def selected_text(edit: TextEdit) -> str:
+    """return the selected substring, or empty when nothing is selected"""
+    bounds: tuple[int, int] | None = selection_bounds(edit)
+    if bounds is None:
+        return ""
+    start: int
+    end: int
+    start, end = bounds
+    return edit.text[start:end]
+
+
+def clear_mark(edit: TextEdit) -> None:
+    """drop the selection, leaving the caret where it is"""
+    edit.mark = None
+
+
+def select_all(edit: TextEdit) -> None:
+    """select the entire field"""
+    edit.mark = 0
+    edit.caret = len(edit.text)
+
+
+def delete_selection(edit: TextEdit) -> bool:
+    """remove the selected span; true if anything was deleted"""
+    bounds: tuple[int, int] | None = selection_bounds(edit)
+    if bounds is None:
+        return False
+    start: int
+    end: int
+    start, end = bounds
+    edit.text = edit.text[:start] + edit.text[end:]
+    edit.caret = start
+    edit.mark = None
+    return True
+
+
 def insert_text(edit: TextEdit, inserted: str) -> None:
     """replace the selection or insert at the caret"""
-    if edit.select_all:
-        edit.text = inserted
-        edit.caret = len(inserted)
-        edit.select_all = False
-        return
+    delete_selection(edit)
     edit.text = edit.text[: edit.caret] + inserted + edit.text[edit.caret :]
     edit.caret += len(inserted)
-
-
-def clear_selection(edit: TextEdit) -> None:
-    """empty the field when its contents are selected"""
-    edit.text = ""
-    edit.caret = 0
-    edit.select_all = False
+    edit.mark = None
 
 
 def delete_before_caret(edit: TextEdit) -> None:
     """backspace"""
-    if edit.select_all:
-        clear_selection(edit)
+    if delete_selection(edit):
         return
     if edit.caret == 0:
         return
@@ -118,27 +155,36 @@ def delete_before_caret(edit: TextEdit) -> None:
 
 def delete_at_caret(edit: TextEdit) -> None:
     """forward delete"""
-    if edit.select_all:
-        clear_selection(edit)
+    if delete_selection(edit):
         return
     if edit.caret >= len(edit.text):
         return
     edit.text = edit.text[: edit.caret] + edit.text[edit.caret + 1 :]
 
 
-def move_caret(edit: TextEdit, delta: int) -> None:
-    """step the caret, collapsing a selection toward the direction of travel"""
-    if edit.select_all:
-        edit.select_all = False
-        edit.caret = 0 if delta < 0 else len(edit.text)
+def move_caret(edit: TextEdit, delta: int, *, extend: bool) -> None:
+    """step the caret; extend keeps or starts a selection, otherwise clears it"""
+    if not extend and selection_bounds(edit) is not None:
+        start: int
+        end: int
+        start, end = selection_bounds(edit) or (edit.caret, edit.caret)
+        edit.caret = start if delta < 0 else end
+        edit.mark = None
         return
+    if extend and edit.mark is None:
+        edit.mark = edit.caret
     edit.caret = max(0, min(len(edit.text), edit.caret + delta))
+    if not extend:
+        edit.mark = None
 
 
-def set_caret(edit: TextEdit, caret: int) -> None:
-    """place the caret and drop any selection"""
-    edit.select_all = False
+def set_caret(edit: TextEdit, caret: int, *, extend: bool) -> None:
+    """place the caret; extend keeps or starts a selection"""
+    if extend and edit.mark is None:
+        edit.mark = edit.caret
     edit.caret = max(0, min(len(edit.text), caret))
+    if not extend:
+        edit.mark = None
 
 
 def shift_held() -> bool:
@@ -146,6 +192,45 @@ def shift_held() -> bool:
     return is_key_down(KeyboardKey.KEY_LEFT_SHIFT) or is_key_down(
         KeyboardKey.KEY_RIGHT_SHIFT
     )
+
+
+def ctrl_held() -> bool:
+    """true while either control key is down"""
+    return is_key_down(KeyboardKey.KEY_LEFT_CONTROL) or is_key_down(
+        KeyboardKey.KEY_RIGHT_CONTROL
+    )
+
+
+def paste_clipboard(edit: TextEdit, blocked_chars: str) -> None:
+    """insert clipboard text at the caret, skipping blocked characters"""
+    raw: str | None = get_clipboard_text()
+    if raw is None or raw == "":
+        return
+    cleaned: str = "".join(
+        char
+        for char in raw
+        if char.isprintable() and char not in blocked_chars
+    )
+    if cleaned == "":
+        return
+    insert_text(edit, cleaned)
+
+
+def copy_selection(edit: TextEdit) -> None:
+    """copy the selection to the clipboard; no-op when nothing is selected"""
+    text: str = selected_text(edit)
+    if text == "":
+        return
+    set_clipboard_text(text)
+
+
+def cut_selection(edit: TextEdit) -> None:
+    """copy then delete the selection"""
+    text: str = selected_text(edit)
+    if text == "":
+        return
+    set_clipboard_text(text)
+    delete_selection(edit)
 
 
 def handle_text_keys(edit: TextEdit, *, blocked_chars: str = "") -> TextAction:
@@ -159,21 +244,41 @@ def handle_text_keys(edit: TextEdit, *, blocked_chars: str = "") -> TextAction:
     if is_key_pressed(KeyboardKey.KEY_TAB):
         return TextAction.focus_prev if shift_held() else TextAction.focus_next
 
+    if ctrl_held():
+        if is_key_pressed(KeyboardKey.KEY_A):
+            select_all(edit)
+            return TextAction.editing
+        if is_key_pressed(KeyboardKey.KEY_C):
+            copy_selection(edit)
+            return TextAction.editing
+        if is_key_pressed(KeyboardKey.KEY_X):
+            cut_selection(edit)
+            return TextAction.editing
+        if is_key_pressed(KeyboardKey.KEY_V):
+            paste_clipboard(edit, blocked_chars)
+            return TextAction.editing
+        # swallow other ctrl+letter keystrokes so they do not insert chars
+        code: int = get_char_pressed()
+        while code > 0:
+            code = get_char_pressed()
+        return TextAction.editing
+
     now: float = get_time()
+    extend: bool = shift_held()
     if key_active(edit, KeyboardKey.KEY_LEFT, now):
-        move_caret(edit, -1)
+        move_caret(edit, -1, extend=extend)
     if key_active(edit, KeyboardKey.KEY_RIGHT, now):
-        move_caret(edit, 1)
+        move_caret(edit, 1, extend=extend)
     if is_key_pressed(KeyboardKey.KEY_HOME):
-        set_caret(edit, 0)
+        set_caret(edit, 0, extend=extend)
     if is_key_pressed(KeyboardKey.KEY_END):
-        set_caret(edit, len(edit.text))
+        set_caret(edit, len(edit.text), extend=extend)
     if key_active(edit, KeyboardKey.KEY_BACKSPACE, now):
         delete_before_caret(edit)
     if key_active(edit, KeyboardKey.KEY_DELETE, now):
         delete_at_caret(edit)
 
-    code: int = get_char_pressed()
+    code = get_char_pressed()
     while code > 0:
         char: str = chr(code)
         if char.isprintable() and char not in blocked_chars:
@@ -198,7 +303,7 @@ def draw_text_field(
     *,
     focused: bool,
     caret: int = 0,
-    select_all: bool = False,
+    mark: int | None = None,
     center_unfocused: bool = False,
 ) -> None:
     """draw an editable text box, scrolled so the caret stays visible"""
@@ -222,19 +327,28 @@ def draw_text_field(
     if focused and caret_w > inner_w:
         tx -= caret_w - inner_w
 
+    has_selection: bool = (
+        focused and mark is not None and mark != caret and text != ""
+    )
+
     begin_scissor_mode(
         int(rect.x + 1.0),
         int(rect.y + 1.0),
         int(max(0.0, rect.width - 2.0)),
         int(max(0.0, rect.height - 2.0)),
     )
-    if focused and select_all and text != "":
+    if has_selection:
+        mark_index: int = max(0, min(len(text), mark if mark is not None else 0))
+        sel_start: int = min(mark_index, caret_index)
+        sel_end: int = max(mark_index, caret_index)
+        sel_x0: float = tx + measure_text_ex(font, text[:sel_start], size, 0).x
+        sel_x1: float = tx + measure_text_ex(font, text[:sel_end], size, 0).x
         draw_rectangle_rec(
-            Rectangle(tx - 1.0, ty - 1.0, text_w + 2.0, size + 2.0),
+            Rectangle(sel_x0, ty - 1.0, max(1.0, sel_x1 - sel_x0), size + 2.0),
             ui_color_selection,
         )
     draw_text_ex(font, text, Vector2(tx, ty), size, 0, ui_color_text)
-    if focused and not select_all and int(get_time() * 2.0) % 2 == 0:
+    if focused and not has_selection and int(get_time() * 2.0) % 2 == 0:
         draw_rectangle_rec(
             Rectangle(tx + caret_w, ty, 1.0, size),
             ui_color_text,
