@@ -14,9 +14,12 @@ from builder.commands.file import (
 from builder.commands.scene import (
     cmd_delete,
     cmd_duplicate,
+    cmd_group,
+    cmd_parent,
     cmd_place_grid,
     cmd_place_mesh,
     cmd_place_radial_grid,
+    cmd_unparent,
 )
 from builder.commands.view import (
     cmd_focus_camera,
@@ -26,6 +29,7 @@ from builder.commands.view import (
     cmd_toggle_gizmo_space,
     cmd_toggle_grid,
     cmd_toggle_meshes_panel,
+    cmd_toggle_outliner,
     cmd_toggle_side_panel,
 )
 from builder.view.gizmo_types import GizmoMode
@@ -38,6 +42,7 @@ menu_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_about, None),
     CommandEntry(cmd_toggle_side_panel, None),
     CommandEntry(cmd_toggle_meshes_panel, None),
+    CommandEntry(cmd_toggle_outliner, None),
     CommandEntry(cmd_gizmo_translate, GizmoMode.translate),
     CommandEntry(cmd_gizmo_rotate, GizmoMode.rotate),
     CommandEntry(cmd_gizmo_scale, GizmoMode.scale),
@@ -54,10 +59,18 @@ panel_commands: tuple[CommandItem, ...] = (
 )
 
 
+outliner_commands: tuple[CommandItem, ...] = (
+    CommandEntry(cmd_group, None),
+    CommandEntry(cmd_parent, None),
+    CommandEntry(cmd_unparent, None),
+)
+
+
 def all_commands() -> tuple[CommandItem, ...]:
     """return every command entry exposed by the default menus"""
     return (
         menu_commands
         + panel_commands
+        + outliner_commands
         + (CommandEntry(cmd_import_mesh, None),)
     )

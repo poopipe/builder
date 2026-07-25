@@ -64,6 +64,7 @@ class UiContext(Protocol):
     status: str
     side_panel_open: bool
     meshes_panel_open: bool
+    outliner_open: bool
     meshes_panel_scroll: float
     file_browser: FileBrowserState | None
 
@@ -73,6 +74,10 @@ class UiContext(Protocol):
 
     def toggle_meshes_panel(self) -> None:
         """show or hide the mesh catalog panel"""
+        ...
+
+    def toggle_outliner(self) -> None:
+        """show or hide the scene outliner panel"""
         ...
 
 

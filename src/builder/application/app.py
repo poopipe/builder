@@ -44,7 +44,12 @@ from builder.commands.file import (
 )
 from builder.commands.menus import menu_commands, panel_commands, all_commands
 from builder.commands.registry import CommandRegistry, bind_entry, register_commands
-from builder.commands.scene import cmd_select_mesh
+from builder.commands.scene import (
+    cmd_group,
+    cmd_parent,
+    cmd_select_mesh,
+    cmd_unparent,
+)
 from builder.generators.regenerate import selected_parametric_group
 from builder.scene.scene_types import MeshId, Node
 from builder.ui.file_browser import (
@@ -61,6 +66,12 @@ from builder.ui.inspector import (
     update_inspector,
 )
 from builder.ui.mesh_panel import MeshRow, draw_mesh_panel, update_mesh_panel
+from builder.ui.outliner import (
+    OutlinerRow,
+    draw_outliner,
+    sync_outliner_focus,
+    update_outliner,
+)
 from builder.ui.theme import (
     ui_button_gap,
     ui_button_height,
@@ -69,6 +80,7 @@ from builder.ui.theme import (
     ui_font_size,
     ui_inspector_panel_width,
     ui_meshes_panel_width,
+    ui_outliner_panel_width,
     ui_pad,
     ui_side_panel_width,
 )
@@ -176,12 +188,14 @@ class Application:
         apply_text_exit_key(self.ui)
 
         panel_width: int = ui_side_panel_width if self.ui.side_panel_open else 0
+        outliner_width: int = ui_outliner_panel_width if self.ui.outliner_open else 0
         meshes_width: int = ui_meshes_panel_width if self.ui.meshes_panel_open else 0
         inspector_width: int = ui_inspector_panel_width if group is not None else 0
         layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
             panel_width=panel_width,
+            outliner_width=outliner_width,
             meshes_width=meshes_width,
             inspector_width=inspector_width,
         )
@@ -243,6 +257,20 @@ class Application:
             )
             if not browser_open:
                 update_buttons(panel_buttons, layout.panel)
+
+        outliner_rows: list[OutlinerRow] = []
+        outliner_buttons: list[Button] = []
+        if self.ui.outliner_open and not browser_open:
+            sync_outliner_focus(self.scene.nodes, self.ui)
+            outliner_rows, outliner_buttons = update_outliner(
+                self.scene.nodes,
+                self.ui,
+                layout.outliner,
+                self.application.mesh_catalog,
+                bind_entry(self, CommandEntry(cmd_group, None)),
+                bind_entry(self, CommandEntry(cmd_parent, None)),
+                bind_entry(self, CommandEntry(cmd_unparent, None)),
+            )
 
         mesh_rows: list[MeshRow] = []
         mesh_buttons: list[Button] = []
@@ -316,6 +344,10 @@ class Application:
                 and is_point_in_rect(mouse.x, mouse.y, layout.panel)
             )
             or (
+                self.ui.outliner_open
+                and is_point_in_rect(mouse.x, mouse.y, layout.outliner)
+            )
+            or (
                 self.ui.meshes_panel_open
                 and is_point_in_rect(mouse.x, mouse.y, layout.meshes)
             )
@@ -342,6 +374,10 @@ class Application:
             )
         if self.ui.side_panel_open:
             draw_button_stack(self.font, layout.panel, panel_buttons)
+        if self.ui.outliner_open:
+            draw_outliner(
+                self.font, layout.outliner, self.ui, outliner_rows, outliner_buttons
+            )
         if self.ui.meshes_panel_open:
             draw_mesh_panel(self.font, layout.meshes, mesh_rows, mesh_buttons)
         if group is not None:

@@ -50,6 +50,7 @@ def build_document(context: CommandContext) -> SceneDocument:
         ui=SceneUiState(
             side_panel_open=context.ui.side_panel_open,
             meshes_panel_open=context.ui.meshes_panel_open,
+            outliner_open=context.ui.outliner_open,
         ),
         meshes=tuple(context.application.mesh_catalog.entries.values()),
         nodes=tuple(nodes_for_save(context.scene.nodes.nodes)),
@@ -192,5 +193,6 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     context.application.active_mesh_id = active
     context.ui.side_panel_open = document.ui.side_panel_open
     context.ui.meshes_panel_open = document.ui.meshes_panel_open
+    context.ui.outliner_open = document.ui.outliner_open
     context.application.scene_path = path
     return warnings

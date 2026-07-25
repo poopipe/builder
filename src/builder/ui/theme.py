@@ -8,6 +8,7 @@ ui_menu_bar_height = 36
 ui_side_panel_width = 180
 ui_meshes_panel_width = 200
 ui_inspector_panel_width = 220
+ui_outliner_panel_width = 220
 ui_button_height = 28
 ui_button_gap = 4
 ui_button_min_width = 64

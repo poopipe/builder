@@ -15,10 +15,13 @@ from pyray import (
 from builder.scene.scene_types import Quaternion
 
 
-def translate_transform(transform: Transform, delta_world: Vector3) -> Transform:
-    """return transform with world-space translation applied"""
+def translate_transform(transform: Transform, delta: Vector3) -> Transform:
+    """return transform with delta added to its translation
+
+    delta must already be in the same space as transform.translation
+    """
     return Transform(
-        vector3_add(transform.translation, delta_world),
+        vector3_add(transform.translation, delta),
         transform.rotation,
         transform.scale,
     )

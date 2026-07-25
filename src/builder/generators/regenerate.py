@@ -26,11 +26,20 @@ def child_ids(nodes: dict[str, Node], group_id: str) -> list[str]:
     return [node.id for node in nodes.values() if node.parent_id == group_id]
 
 
+def mesh_child_ids(nodes: dict[str, Node], group_id: str) -> list[str]:
+    """return ids of direct meshed children; nested groups are left alone"""
+    return [
+        node.id
+        for node in nodes.values()
+        if node.parent_id == group_id and node.mesh_id is not None
+    ]
+
+
 def selected_parametric_group(scene: Scene) -> Node | None:
     """return the sole selected group if it still owns a generator"""
     if len(scene.selected_ids) != 1:
         return None
-    group_id: str = next(iter(scene.selected_ids))
+    group_id: str = scene.selected_ids[0]
     node: Node | None = scene.nodes.get(group_id)
     if node is None or node.generator is None:
         return None
@@ -38,7 +47,10 @@ def selected_parametric_group(scene: Scene) -> Node | None:
 
 
 def regenerate_group(scene: Scene, group_id: str) -> None:
-    """replace group children from the group's generator recipe"""
+    """replace meshed children from the group's generator recipe
+
+    nested group children are preserved so hierarchy survives regenerate/load
+    """
     group: Node = scene.nodes[group_id]
     generator: Generator | None = group.generator
     if generator is None:
@@ -53,7 +65,7 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
         generator = group.generator
         assert generator is not None
     locals_: list[Transform] = spec.build_transforms(params)
-    scene.remove_nodes(child_ids(scene.nodes, group_id))
+    scene.remove_nodes(mesh_child_ids(scene.nodes, group_id))
     children: list[Node] = []
     index: int
     local: Transform

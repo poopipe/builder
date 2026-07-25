@@ -26,6 +26,7 @@ class SceneUiState:
 
     side_panel_open: bool
     meshes_panel_open: bool
+    outliner_open: bool = True
 
 
 @dataclass(frozen=True)
@@ -210,6 +211,8 @@ def node_to_json(node: Node) -> dict[str, Any]:
         "transform": transform_to_json(node.transform),
         "mesh_id": None if node.mesh_id is None else node.mesh_id.name,
     }
+    if node.name != "":
+        payload["name"] = node.name
     if node.generator is not None:
         payload["generator"] = generator_to_json(node.generator)
     return payload
@@ -226,6 +229,9 @@ def node_from_json(data: Any) -> Node:
         raise ValueError("node.id must be a non-empty string")
     if parent_id is not None and not isinstance(parent_id, str):
         raise ValueError("node.parent_id must be a string or null")
+    name_raw: Any = data.get("name", "")
+    if not isinstance(name_raw, str):
+        raise ValueError("node.name must be a string")
     mesh_id: MeshId | None
     if mesh_name is None:
         mesh_id = None
@@ -242,15 +248,19 @@ def node_from_json(data: Any) -> Node:
         transform=transform_from_json(data.get("transform")),
         mesh_id=mesh_id,
         generator=generator,
+        name=name_raw,
     )
 
 
 def nodes_for_save(nodes: dict[str, Node]) -> list[Node]:
-    """omit children of live generator groups; those are rebuilt on load"""
+    """omit meshed children of live generator groups; those are rebuilt on load
+
+    nested group nodes are always kept, even when parented under a generator
+    """
     saved: list[Node] = []
     node: Node
     for node in nodes.values():
-        if node.parent_id is not None:
+        if node.parent_id is not None and node.mesh_id is not None:
             parent: Node | None = nodes.get(node.parent_id)
             if parent is not None and parent.generator is not None:
                 continue
@@ -275,6 +285,7 @@ def document_to_json(
         "ui": {
             "side_panel_open": document.ui.side_panel_open,
             "meshes_panel_open": document.ui.meshes_panel_open,
+            "outliner_open": document.ui.outliner_open,
         },
         "meshes": meshes_json,
         "nodes": nodes_json,
@@ -303,7 +314,12 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
         raise ValueError("ui must be an object")
     side_open: Any = ui_raw.get("side_panel_open", True)
     meshes_open: Any = ui_raw.get("meshes_panel_open", True)
-    if not isinstance(side_open, bool) or not isinstance(meshes_open, bool):
+    outliner_open: Any = ui_raw.get("outliner_open", True)
+    if (
+        not isinstance(side_open, bool)
+        or not isinstance(meshes_open, bool)
+        or not isinstance(outliner_open, bool)
+    ):
         raise ValueError("ui panel flags must be booleans")
     meshes_raw: Any = data.get("meshes", [])
     nodes_raw: Any = data.get("nodes", [])
@@ -317,6 +333,7 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
         ui=SceneUiState(
             side_panel_open=side_open,
             meshes_panel_open=meshes_open,
+            outliner_open=outliner_open,
         ),
         meshes=tuple(meshes),
         nodes=tuple(nodes),

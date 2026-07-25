@@ -22,7 +22,8 @@ class Scene:
     """mutable node collection. Commands mutate this; the view only reads it"""
 
     nodes: dict[str, Node] = field(default_factory=dict)
-    selected_ids: set[str] = field(default_factory=set)
+    # ordered: the first entry is the target of the parent command
+    selected_ids: list[str] = field(default_factory=list)
     revision: int = 0
     structure_revision: int = 0
     dirty_ids: set[str] = field(default_factory=set)
@@ -89,7 +90,8 @@ class Scene:
             node: Node | None = self.nodes.pop(node_id, None)
             if node is None:
                 continue
-            self.selected_ids.discard(node_id)
+            if node_id in self.selected_ids:
+                self.selected_ids.remove(node_id)
             self.added_ids.discard(node_id)
             self.dirty_ids.discard(node_id)
             self.removed.append(
@@ -112,16 +114,25 @@ class Scene:
         return list(self.nodes.values())
 
     def set_selection(self, group_ids: Iterable[str]) -> None:
-        """replace the selection with the given group ids"""
-        self.selected_ids = {group_id for group_id in group_ids}
+        """replace the selection, preserving order and dropping duplicates"""
+        ordered: list[str] = []
+        group_id: str
+        for group_id in group_ids:
+            if group_id not in ordered:
+                ordered.append(group_id)
+        self.selected_ids = ordered
 
     def clear_selection(self) -> None:
         """clear the current selection"""
         self.selected_ids.clear()
 
     def toggle_selection(self, group_id: str) -> None:
-        """add or remove a group id from the selection"""
+        """add a group id to the end of the selection, or remove it"""
         if group_id in self.selected_ids:
-            self.selected_ids.discard(group_id)
+            self.selected_ids.remove(group_id)
         else:
-            self.selected_ids.add(group_id)
+            self.selected_ids.append(group_id)
+
+    def first_selected(self) -> str | None:
+        """return the id that parenting treats as the target, or none"""
+        return self.selected_ids[0] if self.selected_ids else None

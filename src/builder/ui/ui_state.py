@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from builder.ui.file_browser import FileBrowserState
 from builder.ui.text_field import FieldId, TextEdit
@@ -15,7 +15,14 @@ class UiState:
     status: str = "Ready"
     side_panel_open: bool = True
     meshes_panel_open: bool = True
+    outliner_open: bool = True
     meshes_panel_scroll: float = 0.0
+    outliner_scroll: float = 0.0
+    # ids of collapsed outliner groups; not persisted with the scene
+    outliner_collapsed: set[str] = field(default_factory=set)
+    # last outliner row clicked and when, for double-click-to-rename detection
+    outliner_click_id: str = ""
+    outliner_click_time: float = 0.0
     focus: FieldId | None = None
     edit: TextEdit | None = None
     file_browser: FileBrowserState | None = None
@@ -27,6 +34,10 @@ class UiState:
     def toggle_meshes_panel(self) -> None:
         """show or hide the mesh catalog panel"""
         self.meshes_panel_open = not self.meshes_panel_open
+
+    def toggle_outliner(self) -> None:
+        """show or hide the scene outliner panel"""
+        self.outliner_open = not self.outliner_open
 
     def clear_focus(self) -> None:
         """discard in-progress text editing"""

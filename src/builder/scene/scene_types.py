@@ -23,13 +23,17 @@ class MeshId:
 
 @dataclass(frozen=True)
 class Node:
-    """a scene node; mesh_id none means transform-only group"""
+    """a scene node; mesh_id none means transform-only group
+
+    name is a display label shown in the outliner; empty means derive one
+    """
 
     id: str
     parent_id: str | None
     transform: Transform
     mesh_id: MeshId | None
     generator: Generator | None = None
+    name: str = ""
 
 
 def transform_at(translation: Vector3) -> Transform:

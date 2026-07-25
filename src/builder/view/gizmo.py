@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from math import atan2, cos, pi, sin
 
@@ -36,7 +37,12 @@ from builder.scene.transform_ops import (
     scale_transform_uniform,
     translate_transform,
 )
-from builder.scene.transforms import matrix_translation, world_matrix
+from builder.scene.transforms import (
+    matrix_translation,
+    world_delta_to_local,
+    world_matrix,
+    world_rotation,
+)
 from builder.view.gizmo_types import GizmoAxis, GizmoMode, GizmoSpace
 
 gizmo_axis_color: dict[GizmoAxis, Color] = {
@@ -79,7 +85,7 @@ def node_world_position(nodes: dict[str, Node], node_id: str) -> Vector3:
     return matrix_translation(world_matrix(nodes, node_id))
 
 
-def selection_pivot(scene: Scene, selected_ids: set[str]) -> Vector3 | None:
+def selection_pivot(scene: Scene, selected_ids: Sequence[str]) -> Vector3 | None:
     """return average world origin of selected groups, or none"""
     if not selected_ids:
         return None
@@ -96,13 +102,16 @@ def selection_pivot(scene: Scene, selected_ids: set[str]) -> Vector3 | None:
     return vector3_scale(total, 1.0 / float(count))
 
 
-def selection_rotation(scene: Scene, selected_ids: set[str]) -> Quaternion:
-    """return local rotation of the first selected group (identity if none)"""
+def selection_rotation(scene: Scene, selected_ids: Sequence[str]) -> Quaternion:
+    """return world rotation of the first selected group (identity if none)
+
+    local-space gizmo axes are drawn in world, so they need the composed
+    orientation — a child's local rotation alone ignores its parents
+    """
     group_id: str
     for group_id in selected_ids:
-        node: Node | None = scene.nodes.get(group_id)
-        if node is not None:
-            return node.transform.rotation
+        if group_id in scene.nodes:
+            return world_rotation(scene.nodes, group_id)
     return quaternion_identity()
 
 
@@ -331,7 +340,9 @@ def hit_test_gizmo(
     return best_axis
 
 
-def capture_transforms(scene: Scene, selected_ids: set[str]) -> dict[str, Transform]:
+def capture_transforms(
+    scene: Scene, selected_ids: Sequence[str]
+) -> dict[str, Transform]:
     """snapshot local transforms for selected groups"""
     result: dict[str, Transform] = {}
     group_id: str
@@ -346,7 +357,7 @@ def capture_transforms(scene: Scene, selected_ids: set[str]) -> dict[str, Transf
 def begin_gizmo_drag(
     state: GizmoState,
     scene: Scene,
-    selected_ids: set[str],
+    selected_ids: Sequence[str],
     ray: Ray,
     axis: GizmoAxis,
     pivot: Vector3,
@@ -419,10 +430,14 @@ def apply_drag_to_scene(
         axis: Vector3 = vector3_normalize(drag.axis_dir)
         delta = vector3_scale(axis, vector3_dot_product(delta, axis))
         for group_id, start_transform in drag.start_transforms.items():
+            # drag delta is always world-space; nested nodes store parent-local
+            local_delta: Vector3 = world_delta_to_local(
+                scene.nodes, group_id, delta
+            )
             scene.set_node(
                 replace(
                     scene.nodes[group_id],
-                    transform=translate_transform(start_transform, delta),
+                    transform=translate_transform(start_transform, local_delta),
                 )
             )
         return

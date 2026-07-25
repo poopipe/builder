@@ -29,6 +29,12 @@ def toggle_meshes_panel(context: CommandContext, _: None) -> None:
     context.ui.status = f"Meshes panel {state}"
 
 
+def toggle_outliner(context: CommandContext, _: None) -> None:
+    context.ui.toggle_outliner()
+    state: str = "shown" if context.ui.outliner_open else "hidden"
+    context.ui.status = f"Outliner {state}"
+
+
 def set_gizmo_mode(context: CommandContext, mode: GizmoMode) -> None:
     context.scene.gizmo.mode = mode
     context.ui.status = f"Gizmo mode: {mode.value}"
@@ -50,6 +56,7 @@ cmd_toggle_grid: Command[None] = Command("Toggle Grid", toggle_grid)
 cmd_focus_camera: Command[None] = Command("Focus camera", focus_camera)
 cmd_toggle_side_panel: Command[None] = Command("Panel", toggle_side_panel)
 cmd_toggle_meshes_panel: Command[None] = Command("Meshes", toggle_meshes_panel)
+cmd_toggle_outliner: Command[None] = Command("Outliner", toggle_outliner)
 cmd_gizmo_translate: Command[GizmoMode] = Command("Move", set_gizmo_mode)
 cmd_gizmo_rotate: Command[GizmoMode] = Command("Rotate", set_gizmo_mode)
 cmd_gizmo_scale: Command[GizmoMode] = Command("Scale", set_gizmo_mode)
