@@ -19,7 +19,6 @@ from pyray import (
     draw_rectangle_rec,
     draw_text_ex,
     end_scissor_mode,
-    get_char_pressed,
     get_mouse_position,
     get_mouse_wheel_move,
     get_time,
@@ -30,6 +29,13 @@ from pyray import (
     measure_text_ex,
 )
 
+from builder.ui.text_field import (
+    TextAction,
+    TextEdit,
+    begin_edit,
+    draw_text_field,
+    handle_text_keys,
+)
 from builder.ui.theme import (
     ui_button_gap,
     ui_button_height,
@@ -37,8 +43,6 @@ from builder.ui.theme import (
     ui_color_button,
     ui_color_button_hover,
     ui_color_button_press,
-    ui_color_input,
-    ui_color_input_focus,
     ui_color_overlay,
     ui_color_panel,
     ui_color_selection,
@@ -53,6 +57,7 @@ from builder.ui.widgets import Button, draw_button, is_point_in_rect, update_but
 
 FileBrowserMode = Literal["open", "save"]
 FileBrowserFrameResult = Path | Literal["cancelled"] | None
+filename_blocked_chars: str = '"*?<>|'
 
 
 @dataclass(frozen=True)
@@ -72,8 +77,7 @@ class FileBrowserState:
     directory: Path
     filter_suffix: str
     filename: str = ""
-    filename_focused: bool = False
-    filename_select_all: bool = False
+    filename_edit: TextEdit | None = None
     scroll: float = 0.0
     selected_name: str | None = None
     last_click_name: str | None = None
@@ -122,8 +126,7 @@ def make_save_browser(
         directory=directory.resolve(),
         filter_suffix=filter_suffix.lower(),
         filename=initial_name,
-        filename_focused=True,
-        filename_select_all=True,
+        filename_edit=begin_edit(initial_name),
     )
 
 
@@ -207,31 +210,19 @@ def resolve_confirm_path(state: FileBrowserState) -> Path | None:
     return ensure_suffix(state.directory / name, state.filter_suffix).resolve()
 
 
-def handle_filename_typing(state: FileBrowserState) -> None:
-    """edit save filename while focused"""
-    if not state.filename_focused:
-        return
-    if is_key_pressed(KeyboardKey.KEY_ESCAPE):
-        state.filename_focused = False
-        state.filename_select_all = False
-        return
-    if is_key_pressed(KeyboardKey.KEY_BACKSPACE):
-        if state.filename_select_all:
-            state.filename = ""
-            state.filename_select_all = False
-        else:
-            state.filename = state.filename[:-1]
-        return
-    code: int = get_char_pressed()
-    while code > 0:
-        char: str = chr(code)
-        if char.isprintable() and char not in ('"', "*", "?", "<", ">", "|"):
-            if state.filename_select_all:
-                state.filename = char
-                state.filename_select_all = False
-            else:
-                state.filename += char
-        code = get_char_pressed()
+def handle_filename_typing(state: FileBrowserState) -> bool:
+    """edit save filename while focused; true when Enter asks to confirm"""
+    edit: TextEdit | None = state.filename_edit
+    if edit is None:
+        return False
+    action: TextAction = handle_text_keys(
+        edit, blocked_chars=filename_blocked_chars
+    )
+    state.filename = edit.text
+    if action is TextAction.cancel:
+        state.filename_edit = None
+        return False
+    return action is TextAction.commit
 
 
 def activate_entry(state: FileBrowserState, entry: BrowserEntry) -> FileBrowserFrameResult:
@@ -243,8 +234,7 @@ def activate_entry(state: FileBrowserState, entry: BrowserEntry) -> FileBrowserF
     state.error = ""
     if state.mode == "save":
         state.filename = entry.name
-        state.filename_focused = False
-        state.filename_select_all = False
+        state.filename_edit = None
         return None
     now: float = get_time()
     is_double: bool = (
@@ -319,10 +309,10 @@ def update_file_browser(
     )
 
     result: FileBrowserFrameResult = None
-    if is_key_pressed(KeyboardKey.KEY_ESCAPE) and not state.filename_focused:
+    if is_key_pressed(KeyboardKey.KEY_ESCAPE) and state.filename_edit is None:
         return "cancelled", [], [], window
 
-    handle_filename_typing(state)
+    name_confirmed: bool = handle_filename_typing(state)
 
     entries: list[BrowserEntry] = []
     try:
@@ -371,11 +361,9 @@ def update_file_browser(
 
     if state.mode == "save" and left_pressed:
         if is_point_in_rect(mouse.x, mouse.y, name_rect):
-            state.filename_focused = True
-            state.filename_select_all = True
+            state.filename_edit = begin_edit(state.filename)
         elif not is_point_in_rect(mouse.x, mouse.y, confirm_rect):
-            state.filename_focused = False
-            state.filename_select_all = False
+            state.filename_edit = None
 
     def confirm() -> None:
         nonlocal result
@@ -404,11 +392,8 @@ def update_file_browser(
     for button in buttons:
         update_button(button, mouse, left_down, left_released)
 
-    if state.mode == "save" and state.filename_focused:
-        if is_key_pressed(KeyboardKey.KEY_ENTER) or is_key_pressed(
-            KeyboardKey.KEY_KP_ENTER
-        ):
-            confirm()
+    if name_confirmed:
+        confirm()
 
     return result, rows, buttons, window
 
@@ -524,35 +509,14 @@ def draw_file_browser(
             window.width - ui_pad * 2.0,
             float(ui_button_height),
         )
-        draw_rectangle_rec(name_rect, ui_color_input)
-        border: Color = (
-            ui_color_input_focus if state.filename_focused else ui_color_border
-        )
-        draw_rectangle_lines_ex(
-            name_rect,
-            2.0 if state.filename_focused else 1.0,
-            border,
-        )
-        text: str = state.filename
-        tx: float = name_rect.x + 8.0
-        ty: float = (
-            name_rect.y + (name_rect.height - float(ui_font_size)) * 0.5
-        )
-        if state.filename_focused and state.filename_select_all and text != "":
-            text_w: float = measure_text_ex(
-                font, text, float(ui_font_size), 0
-            ).x
-            draw_rectangle_rec(
-                Rectangle(tx, ty, text_w, float(ui_font_size)),
-                ui_color_selection,
-            )
-        draw_text_ex(
+        edit: TextEdit | None = state.filename_edit
+        draw_text_field(
             font,
-            text,
-            Vector2(tx, ty),
-            float(ui_font_size),
-            0,
-            ui_color_text,
+            name_rect,
+            edit.text if edit is not None else state.filename,
+            focused=edit is not None,
+            caret=edit.caret if edit is not None else 0,
+            select_all=edit.select_all if edit is not None else False,
         )
 
     if state.error != "":

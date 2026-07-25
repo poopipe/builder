@@ -24,6 +24,42 @@ def translate_transform(transform: Transform, delta_world: Vector3) -> Transform
     )
 
 
+def translate_transform_local(
+    transform: Transform,
+    offset_local: Vector3,
+) -> Transform:
+    """return transform moved along its own axes"""
+    return Transform(
+        vector3_add(
+            transform.translation,
+            vector3_rotate_by_quaternion(offset_local, transform.rotation),
+        ),
+        transform.rotation,
+        transform.scale,
+    )
+
+
+def set_transform_translation(
+    transform: Transform,
+    translation: Vector3,
+) -> Transform:
+    """return transform with its translation replaced"""
+    return Transform(translation, transform.rotation, transform.scale)
+
+
+def set_transform_rotation(
+    transform: Transform,
+    rotation: Quaternion,
+) -> Transform:
+    """return transform with its rotation replaced"""
+    return Transform(transform.translation, rotation, transform.scale)
+
+
+def set_transform_scale(transform: Transform, scale: Vector3) -> Transform:
+    """return transform with its scale replaced"""
+    return Transform(transform.translation, transform.rotation, scale)
+
+
 def rotate_transform_world(
     transform: Transform,
     rotation: Quaternion,

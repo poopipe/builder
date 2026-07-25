@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from builder.ui.file_browser import FileBrowserState
+from builder.ui.text_field import FieldId, TextEdit
 
 
 @dataclass
@@ -15,10 +16,8 @@ class UiState:
     side_panel_open: bool = True
     meshes_panel_open: bool = True
     meshes_panel_scroll: float = 0.0
-    inspector_group_id: str | None = None
-    inspector_focus_key: str | None = None
-    inspector_draft: str | None = None
-    inspector_select_all: bool = False
+    focus: FieldId | None = None
+    edit: TextEdit | None = None
     file_browser: FileBrowserState | None = None
 
     def toggle_side_panel(self) -> None:
@@ -29,9 +28,15 @@ class UiState:
         """show or hide the mesh catalog panel"""
         self.meshes_panel_open = not self.meshes_panel_open
 
-    def clear_inspector_focus(self) -> None:
-        """discard in-progress inspector text editing"""
-        self.inspector_group_id = None
-        self.inspector_focus_key = None
-        self.inspector_draft = None
-        self.inspector_select_all = False
+    def clear_focus(self) -> None:
+        """discard in-progress text editing"""
+        self.focus = None
+        self.edit = None
+
+    def focused_edit(self, panel: str, key: str, owner: str = "") -> TextEdit | None:
+        """return the live edit when this exact field holds focus"""
+        if self.focus is None or self.edit is None:
+            return None
+        if self.focus != FieldId(panel=panel, key=key, owner=owner):
+            return None
+        return self.edit

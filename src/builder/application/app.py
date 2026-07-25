@@ -53,7 +53,6 @@ from builder.ui.file_browser import (
 from builder.ui.font import load_app_font, unload_app_font
 from builder.ui.inspector import (
     ParamRowRects,
-    apply_inspector_exit_key,
     draw_inspector,
     sync_inspector_focus,
     update_inspector,
@@ -69,6 +68,13 @@ from builder.ui.theme import (
     ui_meshes_panel_width,
     ui_pad,
     ui_side_panel_width,
+)
+from builder.ui.transform_bar import (
+    TransformBarRects,
+    clear_transform_focus,
+    draw_transform_bar,
+    layout_transform_bar,
+    update_transform_bar,
 )
 from builder.ui.ui_state import UiState
 from builder.ui.widgets import (
@@ -97,6 +103,14 @@ def dropped_path_string(raw: Any) -> str:
     if isinstance(text, bytes):
         return text.decode("utf-8", errors="surrogateescape")
     return text
+
+
+def apply_text_exit_key(ui: UiState) -> None:
+    """disable window-close-on-escape while typing or a file dialog is open"""
+    if ui.focus is not None or ui.file_browser is not None:
+        set_exit_key(0)
+    else:
+        set_exit_key(KeyboardKey.KEY_ESCAPE)
 
 
 class Application:
@@ -156,7 +170,7 @@ class Application:
         self.handle_dropped_files()
         group: Node | None = selected_parametric_group(self.scene.nodes)
         sync_inspector_focus(self.ui, group)
-        apply_inspector_exit_key(self.ui)
+        apply_text_exit_key(self.ui)
 
         panel_width: int = ui_side_panel_width if self.ui.side_panel_open else 0
         meshes_width: int = ui_meshes_panel_width if self.ui.meshes_panel_open else 0
@@ -182,6 +196,32 @@ class Application:
         )
         if not browser_open:
             update_buttons(menu_buttons, layout.menu)
+
+        transform_bar: TransformBarRects | None = None
+        if not browser_open:
+            menu_right: float = float(ui_pad)
+            if menu_buttons:
+                last_menu: Button = menu_buttons[-1]
+                menu_right = (
+                    last_menu.rect.x + last_menu.rect.width + float(ui_button_gap)
+                )
+            transform_bar = layout_transform_bar(
+                self.font,
+                layout.menu,
+                self.scene.nodes,
+                self.scene.gizmo.mode,
+                menu_right,
+            )
+            if transform_bar is None:
+                clear_transform_focus(self.ui)
+            else:
+                update_transform_bar(
+                    self.scene.nodes,
+                    self.ui,
+                    self.scene.gizmo.mode,
+                    self.scene.gizmo.space,
+                    transform_bar,
+                )
 
         # buttons run commands
         # commands are listed in consts (eg. panel_commands)
@@ -282,6 +322,15 @@ class Application:
         clear_background(ui_color_bg)
         self.scene.draw(layout.viewport)
         draw_menu_bar(self.font, layout.menu, menu_buttons)
+        if transform_bar is not None:
+            draw_transform_bar(
+                self.font,
+                self.scene.nodes,
+                self.ui,
+                self.scene.gizmo.mode,
+                self.scene.gizmo.space,
+                transform_bar,
+            )
         if self.ui.side_panel_open:
             draw_button_stack(self.font, layout.panel, panel_buttons)
         if self.ui.meshes_panel_open:

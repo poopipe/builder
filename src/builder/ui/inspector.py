@@ -2,26 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from random import randrange
 
 from pyray import (
-    Color,
     Font,
-    KeyboardKey,
     MouseButton,
     Rectangle,
     Vector2,
     draw_rectangle_lines_ex,
     draw_rectangle_rec,
     draw_text_ex,
-    get_char_pressed,
     get_mouse_position,
-    get_time,
-    is_key_pressed,
     is_mouse_button_pressed,
-    measure_text_ex,
-    set_exit_key,
 )
 
 from builder.generators.generator_types import (
@@ -48,15 +42,20 @@ from builder.generators.regenerate import (
 from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
+from builder.ui.text_field import (
+    FieldId,
+    TextAction,
+    TextEdit,
+    begin_edit,
+    draw_text_field,
+    field_after,
+    handle_text_keys,
+)
 from builder.ui.theme import (
     ui_button_gap,
     ui_button_height,
     ui_color_border,
-    ui_color_button,
-    ui_color_input,
-    ui_color_input_focus,
     ui_color_panel,
-    ui_color_selection,
     ui_color_text,
     ui_font_size,
     ui_pad,
@@ -69,6 +68,9 @@ from builder.ui.widgets import (
     is_point_in_rect,
     update_buttons,
 )
+
+
+inspector_panel: str = "inspector"
 
 
 @dataclass(frozen=True)
@@ -84,19 +86,10 @@ class ParamRowRects:
 
 def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
     """clear draft editing when the inspected group changes"""
-    if group is None:
-        ui.clear_inspector_focus()
+    if ui.focus is None or ui.focus.panel != inspector_panel:
         return
-    if ui.inspector_group_id is not None and ui.inspector_group_id != group.id:
-        ui.clear_inspector_focus()
-
-
-def apply_inspector_exit_key(ui: UiState) -> None:
-    """disable window-close-on-escape while typing or a file dialog is open"""
-    if ui.inspector_focus_key is not None or ui.file_browser is not None:
-        set_exit_key(0)
-    else:
-        set_exit_key(KeyboardKey.KEY_ESCAPE)
+    if group is None or ui.focus.owner != group.id:
+        ui.clear_focus()
 
 
 def layout_param_rows(area: Rectangle, fields: tuple[ParamField, ...]) -> list[ParamRowRects]:
@@ -163,58 +156,62 @@ def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
     value: ParamValue = params_with_defaults(generator.kind, generator.params)[
         field.key
     ]
-    ui.inspector_group_id = group.id
-    ui.inspector_focus_key = field.key
-    ui.inspector_draft = format_param(field, value)
-    ui.inspector_select_all = True
+    ui.focus = FieldId(panel=inspector_panel, key=field.key, owner=group.id)
+    ui.edit = begin_edit(format_param(field, value))
 
 
 def commit_inspector_draft(scene: Scene, ui: UiState, group: Node) -> None:
-    """apply typed draft on Enter; invalid text is discarded"""
-    if ui.inspector_focus_key is None or ui.inspector_draft is None:
-        ui.clear_inspector_focus()
+    """apply the typed draft to its param; invalid text is discarded"""
+    if ui.focus is None or ui.edit is None:
         return
     generator: Generator | None = group.generator
     if generator is None:
-        ui.clear_inspector_focus()
         return
-    field: ParamField = field_for(get_spec(generator.kind), ui.inspector_focus_key)
-    parsed: ParamValue | None = parse_param(field, ui.inspector_draft)
-    ui.clear_inspector_focus()
+    field: ParamField = field_for(get_spec(generator.kind), ui.focus.key)
+    parsed: ParamValue | None = parse_param(field, ui.edit.text)
     if parsed is None:
         return
     set_generator_param(scene, group.id, field.key, parsed)
 
 
-def handle_inspector_typing(scene: Scene, ui: UiState, group: Node) -> None:
-    """typed-field keyboard: commit on Enter, cancel on Escape"""
-    if ui.inspector_focus_key is None or ui.inspector_draft is None:
+def focus_param_key(scene: Scene, ui: UiState, group_id: str, key: str) -> None:
+    """move editing to another param of the same group, reading its current value"""
+    node: Node | None = scene.nodes.get(group_id)
+    generator: Generator | None = node.generator if node is not None else None
+    if node is None or generator is None:
+        ui.clear_focus()
         return
-    if is_key_pressed(KeyboardKey.KEY_ESCAPE):
-        ui.clear_inspector_focus()
+    focus_param_field(ui, node, field_for(get_spec(generator.kind), key))
+
+
+def handle_inspector_typing(
+    scene: Scene,
+    ui: UiState,
+    group: Node,
+    keys: Sequence[str],
+) -> None:
+    """commit on Enter, cancel on Escape, commit and step focus on Tab"""
+    edit: TextEdit | None = ui.edit
+    if ui.focus is None or edit is None:
         return
-    if is_key_pressed(KeyboardKey.KEY_ENTER) or is_key_pressed(
-        KeyboardKey.KEY_KP_ENTER
-    ):
-        commit_inspector_draft(scene, ui, group)
+    if ui.focus.panel != inspector_panel or ui.focus.owner != group.id:
         return
-    if is_key_pressed(KeyboardKey.KEY_BACKSPACE):
-        if ui.inspector_select_all:
-            ui.inspector_draft = ""
-            ui.inspector_select_all = False
-        else:
-            ui.inspector_draft = ui.inspector_draft[:-1]
+    action: TextAction = handle_text_keys(edit)
+    if action is TextAction.editing:
         return
-    code: int = get_char_pressed()
-    while code > 0:
-        char: str = chr(code)
-        if char.isprintable():
-            if ui.inspector_select_all:
-                ui.inspector_draft = char
-                ui.inspector_select_all = False
-            else:
-                ui.inspector_draft = (ui.inspector_draft or "") + char
-        code = get_char_pressed()
+    if action is TextAction.cancel:
+        ui.clear_focus()
+        return
+    next_key: str | None = None
+    if action is TextAction.focus_next:
+        next_key = field_after(keys, ui.focus.key, 1)
+    elif action is TextAction.focus_prev:
+        next_key = field_after(keys, ui.focus.key, -1)
+    commit_inspector_draft(scene, ui, group)
+    if next_key is None:
+        ui.clear_focus()
+        return
+    focus_param_key(scene, ui, group.id, next_key)
 
 
 def mesh_label(catalog: MeshCatalog, mesh_id: MeshId) -> str:
@@ -242,7 +239,7 @@ def build_pattern_buttons(
     buttons: list[Button] = []
 
     def clear() -> None:
-        ui.clear_inspector_focus()
+        ui.clear_focus()
 
     def cycle_mode() -> None:
         clear()
@@ -367,7 +364,7 @@ def update_inspector(
         return [], []
     spec: GeneratorSpec = get_spec(generator.kind)
     rows: list[ParamRowRects] = layout_param_rows(area, spec.fields)
-    handle_inspector_typing(scene, ui, group)
+    handle_inspector_typing(scene, ui, group, [row.key for row in rows])
 
     mouse: Vector2 = get_mouse_position()
     clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
@@ -378,11 +375,11 @@ def update_inspector(
         key: str = row.key
 
         def step_minus(k: str = key) -> None:
-            ui.clear_inspector_focus()
+            ui.clear_focus()
             step_generator_param(scene, group.id, k, -1)
 
         def step_plus(k: str = key) -> None:
-            ui.clear_inspector_focus()
+            ui.clear_focus()
             step_generator_param(scene, group.id, k, 1)
 
         buttons.append(Button(label="-", on_click=step_minus, rect=row.minus))
@@ -413,7 +410,7 @@ def update_inspector(
     )
 
     def on_bake() -> None:
-        ui.clear_inspector_focus()
+        ui.clear_focus()
         bake_group(scene, group.id)
         ui.status = "Baked group (static)"
 
@@ -433,56 +430,9 @@ def update_inspector(
                 on_value = True
                 break
         if not on_control and not on_value:
-            ui.clear_inspector_focus()
+            ui.clear_focus()
 
     return buttons, rows
-
-
-def draw_value_field(
-    font: Font,
-    rect: Rectangle,
-    text: str,
-    *,
-    focused: bool,
-    select_all: bool,
-) -> None:
-    """draw the editable value box for one param"""
-    draw_rectangle_rec(
-        rect, ui_color_input if focused else ui_color_button
-    )
-    border: Color = ui_color_input_focus if focused else ui_color_border
-    draw_rectangle_lines_ex(rect, 2.0 if focused else 1.0, border)
-
-    pad_x: float = 6.0
-    text_w: float = measure_text_ex(font, text, float(ui_font_size), 0).x
-    ty: float = rect.y + (rect.height - float(ui_font_size)) * 0.5
-    tx: float
-    if focused:
-        tx = rect.x + pad_x
-    else:
-        tx = rect.x + (rect.width - text_w) * 0.5
-
-    if focused and select_all and text != "":
-        draw_rectangle_rec(
-            Rectangle(
-                tx - 1.0,
-                ty - 1.0,
-                text_w + 2.0,
-                float(ui_font_size) + 2.0,
-            ),
-            ui_color_selection,
-        )
-
-    draw_text_ex(
-        font, text, Vector2(tx, ty), float(ui_font_size), 0, ui_color_text
-    )
-
-    if focused and not select_all and int(get_time() * 2.0) % 2 == 0:
-        caret_x: float = tx + text_w + 1.0
-        draw_rectangle_rec(
-            Rectangle(caret_x, ty, 1.0, float(ui_font_size)),
-            ui_color_text,
-        )
 
 
 def draw_inspector(
@@ -523,29 +473,28 @@ def draw_inspector(
             0,
             ui_color_text,
         )
-        display: str
-        focused: bool
-        select_all: bool = False
-        if (
-            ui.inspector_focus_key == row.key
-            and ui.inspector_group_id == group.id
-            and ui.inspector_draft is not None
-        ):
-            display = ui.inspector_draft
-            focused = True
-            select_all = ui.inspector_select_all
-        else:
-            display = format_param(
-                field,
-                params_with_defaults(generator.kind, generator.params)[row.key],
+        edit: TextEdit | None = ui.focused_edit(
+            inspector_panel, row.key, group.id
+        )
+        if edit is not None:
+            draw_text_field(
+                font,
+                row.value,
+                edit.text,
+                focused=True,
+                caret=edit.caret,
+                select_all=edit.select_all,
             )
-            focused = False
-        draw_value_field(
+            continue
+        draw_text_field(
             font,
             row.value,
-            display,
-            focused=focused,
-            select_all=select_all,
+            format_param(
+                field,
+                params_with_defaults(generator.kind, generator.params)[row.key],
+            ),
+            focused=False,
+            center_unfocused=True,
         )
 
     button: Button
