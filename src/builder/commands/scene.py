@@ -11,6 +11,7 @@ from builder.commands.commands_types import Command
 from builder.generators.generator_types import Generator, GeneratorSpec, MeshPattern, ParamMap
 from builder.generators.registry import default_params, get_spec
 from builder.meshes.mesh_catalog import MeshAsset
+from builder.scene.clone import clone_subtrees
 from builder.scene.ids import new_node_id
 from builder.scene.selection import subtree_ids
 from builder.scene.scene_types import builtin_cube, MeshId, Node, transform_at
@@ -130,8 +131,29 @@ def delete_selection(context: CommandContext, _: None) -> None:
     context.ui.status = f"Deleted {count} {label}"
 
 
+def duplicate_selection(context: CommandContext, _: None) -> None:
+    """copy selected groups in place and select the copies"""
+    selected: set[str] = set(context.scene.nodes.selected_ids)
+    if not selected:
+        context.ui.status = "Nothing selected"
+        return
+    # keep scene order so the copies are created in the same order as the originals
+    roots: list[str] = [
+        node_id for node_id in context.scene.nodes.nodes if node_id in selected
+    ]
+    clones: list[Node]
+    new_roots: list[str]
+    clones, new_roots = clone_subtrees(context.scene.nodes.nodes, roots)
+    context.scene.add_nodes(clones)
+    context.scene.set_selection(new_roots)
+    count: int = len(new_roots)
+    label: str = "group" if count == 1 else "groups"
+    context.ui.status = f"Duplicated {count} {label}"
+
+
 cmd_place_mesh: Command[None] = Command("Place mesh", place_active_mesh)
 cmd_select_mesh: Command[MeshId] = Command("Select mesh", select_mesh)
 cmd_place_grid: Command[None] = Command("Grid", place_grid)
 cmd_place_radial_grid: Command[None] = Command("Radial grid", place_radial_grid)
 cmd_delete: Command[None] = Command("Delete", delete_selection)
+cmd_duplicate: Command[None] = Command("Duplicate", duplicate_selection)

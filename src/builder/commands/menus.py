@@ -13,6 +13,7 @@ from builder.commands.file import (
 )
 from builder.commands.scene import (
     cmd_delete,
+    cmd_duplicate,
     cmd_place_grid,
     cmd_place_mesh,
     cmd_place_radial_grid,
@@ -44,6 +45,7 @@ menu_commands: tuple[CommandItem, ...] = (
 )
 panel_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_place_mesh, None),
+    CommandEntry(cmd_duplicate, None),
     CommandEntry(cmd_delete, None),
     CommandEntry(cmd_toggle_grid, None),
     CommandEntry(cmd_focus_camera, None),
