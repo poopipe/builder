@@ -56,7 +56,7 @@ class Button:
 
 @dataclass
 class LayoutRects:
-    """window regions for the current frame"""
+    """window regions"""
 
     menu: Rectangle
     panel: Rectangle
@@ -87,9 +87,7 @@ def compute_layout(
     inspector_w: int = max(0, inspector_width)
     body_y: int = menu_h
     body_h: int = max(0, height - menu_h - status_h)
-    viewport_w: int = max(
-        0, width - panel_w - outliner_w - meshes_w - inspector_w
-    )
+    viewport_w: int = max(0, width - panel_w - outliner_w - meshes_w - inspector_w)
     outliner_x: float = float(panel_w)
     viewport_x: float = float(panel_w + outliner_w)
     inspector_x: float = viewport_x + float(viewport_w)
@@ -283,9 +281,7 @@ def layout_buttons_horizontal(
     for label, on_click in items:
         label_w: float = measure_text_ex(font, label, font_size, 0).x
         bw: float = max(min_width, label_w + pad * 2)
-        buttons.append(
-            Button(label, on_click, Rectangle(x, y, bw, button_height))
-        )
+        buttons.append(Button(label, on_click, Rectangle(x, y, bw, button_height)))
         x += bw + gap
     return buttons
 
@@ -306,9 +302,7 @@ def layout_buttons_vertical(
     label: str
     on_click: Callable[[], None]
     for label, on_click in items:
-        buttons.append(
-            Button(label, on_click, Rectangle(x, y, bw, button_height))
-        )
+        buttons.append(Button(label, on_click, Rectangle(x, y, bw, button_height)))
         y += button_height + gap
     return buttons
 

@@ -89,7 +89,7 @@ class FileBrowserState:
 
 @dataclass
 class BrowserRow:
-    """laid-out listing row for one frame"""
+    """laid-out listing row"""
 
     entry: BrowserEntry
     rect: Rectangle = field(default_factory=lambda: Rectangle(0, 0, 0, 0))
@@ -271,9 +271,7 @@ def handle_filename_typing(state: FileBrowserState) -> bool:
     edit: TextEdit | None = state.filename_edit
     if edit is None:
         return False
-    action: TextAction = handle_text_keys(
-        edit, blocked_chars=filename_blocked_chars
-    )
+    action: TextAction = handle_text_keys(edit, blocked_chars=filename_blocked_chars)
     state.filename = edit.text
     if action is TextAction.cancel:
         state.filename_edit = None
@@ -285,7 +283,9 @@ def handle_filename_typing(state: FileBrowserState) -> bool:
     return action is TextAction.commit
 
 
-def activate_entry(state: FileBrowserState, entry: BrowserEntry) -> FileBrowserFrameResult:
+def activate_entry(
+    state: FileBrowserState, entry: BrowserEntry
+) -> FileBrowserFrameResult:
     """navigate dirs; select/open files"""
     if entry.is_dir:
         navigate_to(state, entry.path)
@@ -319,9 +319,7 @@ def update_file_browser(
     title_h: float = float(ui_font_size + ui_pad)
     path_h: float = float(ui_button_height)
     footer_h: float = float(ui_button_height + ui_pad * 2)
-    name_h: float = (
-        float(ui_button_height + ui_pad) if state.mode == "save" else 0.0
-    )
+    name_h: float = float(ui_button_height + ui_pad) if state.mode == "save" else 0.0
     list_top: float = window.y + ui_pad + title_h + path_h + ui_pad
     path_rect: Rectangle = Rectangle(
         window.x + ui_pad,
@@ -331,13 +329,7 @@ def update_file_browser(
     )
     list_h: float = max(
         0.0,
-        window.height
-        - ui_pad * 2.0
-        - title_h
-        - path_h
-        - ui_pad
-        - name_h
-        - footer_h,
+        window.height - ui_pad * 2.0 - title_h - path_h - ui_pad - name_h - footer_h,
     )
     list_rect: Rectangle = Rectangle(
         window.x + ui_pad,
@@ -351,9 +343,7 @@ def update_file_browser(
         window.width - ui_pad * 2.0,
         float(ui_button_height),
     )
-    btn_y: float = (
-        window.y + window.height - ui_pad - float(ui_button_height)
-    )
+    btn_y: float = window.y + window.height - ui_pad - float(ui_button_height)
     btn_w: float = 88.0
     cancel_rect: Rectangle = Rectangle(
         window.x + window.width - ui_pad - btn_w,
@@ -395,9 +385,7 @@ def update_file_browser(
         state.error = str(exc)
 
     row_h: float = float(ui_button_height)
-    content_h: float = max(
-        0.0, len(entries) * (row_h + ui_button_gap) - ui_button_gap
-    )
+    content_h: float = max(0.0, len(entries) * (row_h + ui_button_gap) - ui_button_gap)
     max_scroll: float = max(0.0, content_h - list_h)
     mouse: Vector2 = get_mouse_position()
     if is_point_in_rect(mouse.x, mouse.y, list_rect):
@@ -437,9 +425,7 @@ def update_file_browser(
         if is_point_in_rect(mouse.x, mouse.y, path_rect):
             state.path_edit = begin_edit(str(state.directory))
             state.filename_edit = None
-        elif state.mode == "save" and is_point_in_rect(
-            mouse.x, mouse.y, name_rect
-        ):
+        elif state.mode == "save" and is_point_in_rect(mouse.x, mouse.y, name_rect):
             state.filename_edit = begin_edit(state.filename)
             state.path_edit = None
         elif not is_point_in_rect(mouse.x, mouse.y, confirm_rect):
@@ -546,19 +532,11 @@ def draw_file_browser(
     )
 
     footer_h: float = float(ui_button_height + ui_pad * 2)
-    name_h: float = (
-        float(ui_button_height + ui_pad) if state.mode == "save" else 0.0
-    )
+    name_h: float = float(ui_button_height + ui_pad) if state.mode == "save" else 0.0
     list_top: float = window.y + ui_pad + title_h + path_h + ui_pad
     list_h: float = max(
         0.0,
-        window.height
-        - ui_pad * 2.0
-        - title_h
-        - path_h
-        - ui_pad
-        - name_h
-        - footer_h,
+        window.height - ui_pad * 2.0 - title_h - path_h - ui_pad - name_h - footer_h,
     )
     list_rect: Rectangle = Rectangle(
         window.x + ui_pad,

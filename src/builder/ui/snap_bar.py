@@ -61,7 +61,7 @@ snap_edit_minimum: dict[GizmoMode, float] = {
 
 @dataclass(frozen=True)
 class SnapBarRects:
-    """laid-out snap controls for one frame"""
+    """laid-out snap controls"""
 
     area: Rectangle
     toggle: Rectangle

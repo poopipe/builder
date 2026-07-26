@@ -58,8 +58,6 @@ outliner_caret_width: float = 16.0
 
 @dataclass
 class OutlinerRow:
-    """one group row in the outliner tree"""
-
     node_id: str
     depth: int
     name: str

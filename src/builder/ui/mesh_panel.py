@@ -45,8 +45,6 @@ from builder.ui.widgets import Button, draw_button, is_point_in_rect, update_but
 
 @dataclass
 class MeshRow:
-    """one selectable mesh asset row"""
-
     mesh_id: MeshId
     label: str
     detail: str
@@ -82,18 +80,12 @@ def update_mesh_panel(
         area.width - ui_pad * 2.0,
         float(ui_button_height),
     )
-    list_top: float = (
-        import_rect.y + import_rect.height + ui_button_gap
-    )
-    list_h: float = max(
-        0.0, area.y + area.height - ui_pad - list_top
-    )
+    list_top: float = import_rect.y + import_rect.height + ui_button_gap
+    list_h: float = max(0.0, area.y + area.height - ui_pad - list_top)
     list_rect: Rectangle = Rectangle(area.x, list_top, area.width, list_h)
 
     row_h: float = float(ui_button_height + 10)
-    content_h: float = max(
-        0.0, len(assets) * (row_h + ui_button_gap) - ui_button_gap
-    )
+    content_h: float = max(0.0, len(assets) * (row_h + ui_button_gap) - ui_button_gap)
     max_scroll: float = max(0.0, content_h - list_h)
 
     mouse: Vector2 = get_mouse_position()
@@ -163,9 +155,10 @@ def draw_mesh_row(font: Font, row: MeshRow) -> None:
     detail: str = row.detail
     if detail_w > max_detail_w and len(detail) > 3:
         # trim with ellipsis so long paths fit the row
-        while len(detail) > 3 and measure_text_ex(
-            font, detail + "...", detail_size, 0
-        ).x > max_detail_w:
+        while (
+            len(detail) > 3
+            and measure_text_ex(font, detail + "...", detail_size, 0).x > max_detail_w
+        ):
             detail = detail[:-1]
         detail = detail + "..."
     draw_text_ex(
@@ -204,11 +197,7 @@ def draw_mesh_panel(
         draw_button(button, font)
     title_h: float = float(ui_font_size + ui_pad)
     list_top: float = (
-        area.y
-        + ui_pad
-        + title_h
-        + float(ui_button_height)
-        + ui_button_gap
+        area.y + ui_pad + title_h + float(ui_button_height) + ui_button_gap
     )
     list_h: float = max(0.0, area.y + area.height - ui_pad - list_top)
     begin_scissor_mode(int(area.x), int(list_top), int(area.width), int(list_h))

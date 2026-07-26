@@ -55,8 +55,6 @@ transform_label_gap: float = 4.0
 
 @dataclass(frozen=True)
 class TransformField:
-    """one laid-out type-in field"""
-
     key: str
     label: str
     label_rect: Rectangle
@@ -65,7 +63,7 @@ class TransformField:
 
 @dataclass(frozen=True)
 class TransformBarRects:
-    """laid-out type-in transform for one frame"""
+    """laid-out type-in transform"""
 
     area: Rectangle
     owner: str
@@ -87,13 +85,10 @@ def layout_transform_bar(
     size: float = float(ui_font_size)
     labels: tuple[str, str, str] = transform_field_labels(mode)
     keys: tuple[str, str, str] = transform_field_keys(mode)
-    label_w: float = max(
-        measure_text_ex(font, label, size, 0).x for label in labels
-    )
+    label_w: float = max(measure_text_ex(font, label, size, 0).x for label in labels)
     group_w: float = (
-        (label_w + transform_label_gap + transform_field_width) * 3.0
-        + ui_button_gap * 2.0
-    )
+        label_w + transform_label_gap + transform_field_width
+    ) * 3.0 + ui_button_gap * 2.0
     height: float = float(ui_button_height)
     x: float = area.x + area.width - ui_pad - group_w
     if x < min_x:
@@ -152,9 +147,7 @@ def focus_transform_field(
     index: int | None = field_index(transform_field_keys(mode), key)
     if index is None:
         return
-    values: tuple[float, float, float] = transform_field_values(
-        scene, mode, space
-    )
+    values: tuple[float, float, float] = transform_field_values(scene, mode, space)
     ui.focus = FieldId(panel=transform_panel, key=key, owner=owner)
     ui.edit = begin_edit(format_transform_value(values[index]))
 
@@ -243,9 +236,7 @@ def draw_transform_bar(
 ) -> None:
     """draw the axis labels and field boxes"""
     size: float = float(ui_font_size)
-    values: tuple[float, float, float] = transform_field_values(
-        scene, mode, space
-    )
+    values: tuple[float, float, float] = transform_field_values(scene, mode, space)
     index: int
     field: TransformField
     for index, field in enumerate(bar.fields):
@@ -260,9 +251,7 @@ def draw_transform_bar(
             0,
             ui_color_text,
         )
-        edit: TextEdit | None = ui.focused_edit(
-            transform_panel, field.key, bar.owner
-        )
+        edit: TextEdit | None = ui.focused_edit(transform_panel, field.key, bar.owner)
         if edit is not None:
             draw_text_field(
                 font,
