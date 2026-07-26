@@ -39,22 +39,22 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
         ParamField("radius", "Outer radius", "float", 0.5, minimum=0.1, maximum=50.0),
         ParamField("spacing", "Spacing deg", "float", 5.0, minimum=1.0, maximum=180.0),
         ParamField(
-            "count_radius", "Count radius", "int", 1.0, minimum=1.0, maximum=512.0
+            "count_height", "Count height", "int", 1.0, minimum=1.0, maximum=512.0
         ),
         ParamField(
-            "spacing_radius",
-            "Spacing radius",
+            "spacing_height",
+            "Spacing height",
             "float",
             0.25,
             minimum=0.1,
             maximum=50.0,
         ),
         ParamField(
-            "count_height", "Count height", "int", 1.0, minimum=1.0, maximum=512.0
+            "count_radius", "Count radius", "int", 1.0, minimum=1.0, maximum=512.0
         ),
         ParamField(
-            "spacing_height",
-            "Spacing height",
+            "spacing_radius",
+            "Spacing radius",
             "float",
             0.25,
             minimum=0.1,

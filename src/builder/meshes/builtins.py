@@ -37,20 +37,20 @@ def center_mesh(mesh: Mesh) -> Mesh:
     return mesh
 
 
-def make_cube(size: float = 1.5) -> Mesh:
+def make_cube(size: float = 1.0) -> Mesh:
     """create a cube mesh. Caller owns unload"""
     return gen_mesh_cube(size, size, size)
 
 
 def make_cylinder(
-    radius: float = 0.5, height: float = 1.5, slices: int = 16
+    radius: float = 1.0 / 3.0, height: float = 1.0, slices: int = 16
 ) -> Mesh:
     """create a cylinder mesh centered on the origin. Caller owns unload"""
     return center_mesh(gen_mesh_cylinder(radius, height, slices))
 
 
 def make_cone(
-    radius: float = 0.5, height: float = 1.5, slices: int = 16
+    radius: float = 1.0 / 3.0, height: float = 1.0, slices: int = 16
 ) -> Mesh:
     """create a cone mesh centered on the origin. Caller owns unload"""
     return center_mesh(gen_mesh_cone(radius, height, slices))
@@ -58,18 +58,18 @@ def make_cone(
 
 def make_torus(
     radius: float = 0.35,
-    size: float = 1.5,
+    size: float = 1.0,
     rad_seg: int = 16,
     sides: int = 16,
 ) -> Mesh:
     """create a torus mesh. Caller owns unload
 
     raylib treats radius as the hole/tube ratio (clamped 0.1..1) and size as
-    overall extent, matching the other ~1.5 builtins
+    overall extent, matching the other 1m builtins
     """
     return gen_mesh_torus(radius, size, rad_seg, sides)
 
 
-def make_sphere(radius: float = 0.75, rings: int = 16, slices: int = 16) -> Mesh:
+def make_sphere(radius: float = 0.5, rings: int = 16, slices: int = 16) -> Mesh:
     """create a sphere mesh. Caller owns unload"""
     return gen_mesh_sphere(radius, rings, slices)
