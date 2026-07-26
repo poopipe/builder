@@ -129,6 +129,10 @@ def place_radial_grid(context: CommandContext, _: None) -> None:
     place_generator_group(context, "radial_grid")
 
 
+def place_ngon_grid(context: CommandContext, _: None) -> None:
+    place_generator_group(context, "ngon_grid")
+
+
 def delete_selection(context: CommandContext, _: None) -> None:
     """remove selected groups and their descendants"""
     selected: list[str] = list(context.scene.nodes.selected_ids)
@@ -271,6 +275,7 @@ cmd_place_mesh: Command[None] = Command("Place mesh", place_active_mesh)
 cmd_select_mesh: Command[MeshId] = Command("Select mesh", select_mesh)
 cmd_place_grid: Command[None] = Command("Grid", place_grid)
 cmd_place_radial_grid: Command[None] = Command("Radial grid", place_radial_grid)
+cmd_place_ngon_grid: Command[None] = Command("N-gon grid", place_ngon_grid)
 cmd_delete: Command[None] = Command("Delete", delete_selection)
 cmd_duplicate: Command[None] = Command("Duplicate", duplicate_selection)
 cmd_group: Command[None] = Command("Group", group_selection)
