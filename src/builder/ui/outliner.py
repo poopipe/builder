@@ -278,7 +278,10 @@ def update_outliner(
         )
         name_x: float = indent_x + outliner_caret_width
         name_rect: Rectangle = Rectangle(
-            name_x, y, max(0.0, area.x + area.width - ui_pad - name_x), outliner_row_height
+            name_x,
+            y,
+            max(0.0, area.x + area.width - ui_pad - name_x),
+            outliner_row_height,
         )
         row: OutlinerRow = OutlinerRow(
             node_id=node.id,
@@ -294,7 +297,10 @@ def update_outliner(
             is_parent_target=node.id == parent_target,
             is_hovered=is_point_in_rect(mouse.x, mouse.y, rect),
         )
-        visible: bool = rect.y + rect.height > list_rect.y and rect.y < list_rect.y + list_rect.height
+        visible: bool = (
+            rect.y + rect.height > list_rect.y
+            and rect.y < list_rect.y + list_rect.height
+        )
         if clicked and pointer_in_list and visible and row.is_hovered:
             if has_children and is_point_in_rect(mouse.x, mouse.y, caret_rect):
                 toggle_collapsed(ui, node.id)
@@ -403,5 +409,5 @@ def draw_outliner_row(font: Font, ui: UiState, row: OutlinerRow) -> None:
             ),
             summary_size,
             0,
-            ui_color_border,
+            ui_color_text,
         )

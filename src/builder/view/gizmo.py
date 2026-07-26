@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from math import atan2, cos, degrees, pi, radians, sin
 
 from pyray import (
@@ -71,6 +71,15 @@ class GizmoDrag:
     start_scale_distance: float = 1.0
 
 
+def default_snap_steps() -> dict[GizmoMode, float]:
+    """snap increment per tool: meters, degrees, scale factor"""
+    return {
+        GizmoMode.translate: 1.0,
+        GizmoMode.rotate: 1.0,
+        GizmoMode.scale: 0.1,
+    }
+
+
 @dataclass
 class GizmoState:
     """active gizmo tool, snap settings, and optional drag"""
@@ -78,9 +87,7 @@ class GizmoState:
     mode: GizmoMode = GizmoMode.translate
     space: GizmoSpace = GizmoSpace.world
     snap_enabled: bool = False
-    snap_translate: float = 1.0
-    snap_rotate: float = 1.0
-    snap_scale: float = 0.1
+    snap_step: dict[GizmoMode, float] = field(default_factory=default_snap_steps)
     drag: GizmoDrag | None = None
 
 
@@ -89,25 +96,6 @@ def snap_scalar(value: float, step: float) -> float:
     if step <= 0.0:
         return value
     return round(value / step) * step
-
-
-def snap_step_for_mode(state: GizmoState, mode: GizmoMode) -> float:
-    """return the editable snap increment for the given tool"""
-    if mode is GizmoMode.translate:
-        return state.snap_translate
-    if mode is GizmoMode.rotate:
-        return state.snap_rotate
-    return state.snap_scale
-
-
-def set_snap_step_for_mode(state: GizmoState, mode: GizmoMode, value: float) -> None:
-    """write the snap increment for the given tool"""
-    if mode is GizmoMode.translate:
-        state.snap_translate = value
-    elif mode is GizmoMode.rotate:
-        state.snap_rotate = value
-    else:
-        state.snap_scale = value
 
 
 def node_world_position(nodes: dict[str, Node], node_id: str) -> Vector3:
@@ -460,7 +448,7 @@ def apply_drag_to_scene(
         axis: Vector3 = vector3_normalize(drag.axis_dir)
         distance: float = vector3_dot_product(delta, axis)
         if state.snap_enabled:
-            distance = snap_scalar(distance, state.snap_translate)
+            distance = snap_scalar(distance, state.snap_step[GizmoMode.translate])
         delta = vector3_scale(axis, distance)
         for group_id, start_transform in drag.start_transforms.items():
             # drag delta is always world-space; nested nodes store parent-local
@@ -483,7 +471,7 @@ def apply_drag_to_scene(
         delta_angle: float = angle - drag.start_angle
         if state.snap_enabled:
             delta_angle = radians(
-                snap_scalar(degrees(delta_angle), state.snap_rotate)
+                snap_scalar(degrees(delta_angle), state.snap_step[GizmoMode.rotate])
             )
         rotation: Quaternion = quaternion_from_axis_angle(drag.axis_dir, delta_angle)
         for group_id, start_transform in drag.start_transforms.items():
@@ -523,7 +511,7 @@ def apply_drag_to_scene(
         factor: float = distance / drag.start_scale_distance
         factor = max(0.05, min(20.0, factor))
         if state.snap_enabled:
-            factor = max(0.05, snap_scalar(factor, state.snap_scale))
+            factor = max(0.05, snap_scalar(factor, state.snap_step[GizmoMode.scale]))
         for group_id, start_transform in drag.start_transforms.items():
             scene.set_node(
                 replace(

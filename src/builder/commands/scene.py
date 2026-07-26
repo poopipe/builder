@@ -9,13 +9,18 @@ from pyray import Transform, Vector3, vector3_add
 
 from builder.commands.command_context import CommandContext
 from builder.commands.commands_types import Command
-from builder.generators.generator_types import Generator, GeneratorSpec, MeshPattern, ParamMap
+from builder.generators.generator_types import (
+    Generator,
+    GeneratorSpec,
+    MeshPattern,
+    ParamMap,
+)
 from builder.generators.registry import default_params, get_spec
 from builder.meshes.mesh_catalog import MeshAsset
 from builder.scene.clone import clone_subtrees
 from builder.scene.ids import new_node_id
 from builder.scene.selection import subtree_ids
-from builder.scene.scene_types import builtin_cube, MeshId, Node, transform_at
+from builder.scene.scene_types import MeshId, Node, transform_at
 from builder.scene.transforms import (
     local_transform_under_parent,
     matrix_translation,
@@ -57,7 +62,7 @@ def build_mesh_group(
 
 
 def place_mesh_group(context: CommandContext, mesh_id: MeshId, name: str) -> None:
-    """place one instance of a registered mesh under a selected group"""
+    """place new mesh group"""
     nodes: list[Node] = build_mesh_group(
         transform_at(Vector3(0.0, 0.0, 0.0)),
         [transform_at(Vector3(0.0, 0.0, 0.0))],
@@ -104,9 +109,8 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
         params=params,
     )
     locals_: list[Transform] = spec.build_transforms(params)
-    group_y: float = 0.75 if mesh_id == builtin_cube else 0.0
     nodes: list[Node] = build_mesh_group(
-        transform_at(Vector3(0.0, group_y, 0.0)),
+        transform_at(Vector3(0.0, 0.0, 0.0)),
         locals_,
         mesh_id,
         generator,
@@ -114,9 +118,7 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
     )
     context.scene.add_nodes(nodes)
     context.scene.set_selection([nodes[0].id])
-    context.ui.status = (
-        f"Placed {spec.label} ({len(nodes) - 1} × {asset.label})"
-    )
+    context.ui.status = f"Placed {spec.label} ({len(nodes) - 1} × {asset.label})"
 
 
 def place_grid(context: CommandContext, _: None) -> None:
@@ -217,9 +219,7 @@ def unparent_selection(context: CommandContext, _: None) -> None:
         if node is None or node.parent_id is None:
             continue
         local: Transform = local_transform_under_parent(nodes, node_id, None)
-        context.scene.nodes.set_node(
-            replace(node, parent_id=None, transform=local)
-        )
+        context.scene.nodes.set_node(replace(node, parent_id=None, transform=local))
         unparented += 1
     context.scene.nodes.mark_structure_changed()
     context.ui.status = f"Unparented {unparented}"
@@ -261,9 +261,7 @@ def group_selection(context: CommandContext, _: None) -> None:
         if node is None:
             continue
         local: Transform = local_transform_under_parent(nodes, node_id, group_id)
-        context.scene.nodes.set_node(
-            replace(node, parent_id=group_id, transform=local)
-        )
+        context.scene.nodes.set_node(replace(node, parent_id=group_id, transform=local))
     context.scene.nodes.mark_structure_changed()
     context.scene.set_selection([group_id])
     context.ui.status = f"Grouped {count}"

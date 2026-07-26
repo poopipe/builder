@@ -231,15 +231,11 @@ class Application:
                 menu_right = (
                     last_menu.rect.x + last_menu.rect.width + float(ui_button_gap)
                 )
-            snap_bar = layout_snap_bar(
-                self.font, layout.menu, self.scene.gizmo.mode, menu_right
-            )
+            snap_bar = layout_snap_bar(self.font, layout.menu, menu_right)
             if snap_bar is None:
                 clear_snap_focus(self.ui)
             else:
-                snap_buttons = update_snap_bar(
-                    self.scene.gizmo, self.ui, snap_bar
-                )
+                snap_buttons = update_snap_bar(self.scene.gizmo, self.ui, snap_bar)
                 menu_right = (
                     snap_bar.area.x + snap_bar.area.width + float(ui_button_gap)
                 )
@@ -385,9 +381,7 @@ class Application:
         self.scene.draw(layout.viewport)
         draw_menu_bar(self.font, layout.menu, menu_buttons)
         if snap_bar is not None:
-            draw_snap_bar(
-                self.font, self.scene.gizmo, self.ui, snap_bar, snap_buttons
-            )
+            draw_snap_bar(self.font, self.scene.gizmo, self.ui, snap_bar, snap_buttons)
         if transform_bar is not None:
             draw_transform_bar(
                 self.font,

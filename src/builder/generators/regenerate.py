@@ -1,4 +1,4 @@
-"""regenerate and bake parametric group children"""
+"""regrnerate and bake parametric group children"""
 
 from __future__ import annotations
 
@@ -15,15 +15,15 @@ from builder.generators.generator_types import (
     ParamValue,
 )
 from builder.generators.mesh_pattern import mesh_for_index
-from builder.generators.registry import clamp_param, field_for, get_spec, params_with_defaults
+from builder.generators.registry import (
+    clamp_param,
+    field_for,
+    get_spec,
+    params_with_defaults,
+)
 from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
-
-
-def child_ids(nodes: dict[str, Node], group_id: str) -> list[str]:
-    """return ids of direct children of a group"""
-    return [node.id for node in nodes.values() if node.parent_id == group_id]
 
 
 def mesh_child_ids(nodes: dict[str, Node], group_id: str) -> list[str]:
@@ -58,9 +58,7 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
     spec: GeneratorSpec = get_spec(generator.kind)
     params: ParamMap = params_with_defaults(generator.kind, generator.params)
     if params != generator.params:
-        scene.add_nodes(
-            [replace(group, generator=replace(generator, params=params))]
-        )
+        scene.add_nodes([replace(group, generator=replace(generator, params=params))])
         group = scene.nodes[group_id]
         generator = group.generator
         assert generator is not None
@@ -106,9 +104,7 @@ def set_generator_param(
     clamped: ParamValue = clamp_param(field, value)
     params: ParamMap = params_with_defaults(generator.kind, generator.params)
     params[key] = clamped
-    scene.add_nodes(
-        [replace(group, generator=replace(generator, params=params))]
-    )
+    scene.add_nodes([replace(group, generator=replace(generator, params=params))])
     regenerate_group(scene, group_id)
 
 
@@ -143,7 +139,5 @@ def set_generator_pattern(scene: Scene, group_id: str, pattern: MeshPattern) -> 
     """replace the generator mesh pattern and regenerate children"""
     group: Node = scene.nodes[group_id]
     generator: Generator = require_generator(scene, group_id)
-    scene.add_nodes(
-        [replace(group, generator=replace(generator, meshes=pattern))]
-    )
+    scene.add_nodes([replace(group, generator=replace(generator, meshes=pattern))])
     regenerate_group(scene, group_id)
