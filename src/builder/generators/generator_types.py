@@ -9,11 +9,32 @@ from typing import TYPE_CHECKING, Literal
 from pyray import Transform
 
 if TYPE_CHECKING:
-    from builder.scene.scene_types import MeshId
+    from builder.scene.scene_types import MeshId, Node
 
 type ParamValue = int | float
 type ParamMap = dict[str, ParamValue]
-type BuildTransforms = Callable[[Mapping[str, ParamValue]], list[Transform]]
+type SlotRole = Literal["default", "point", "edge"]
+
+
+@dataclass(frozen=True)
+class GeneratedSlot:
+    """one placed mesh instance from a generator build"""
+
+    transform: Transform
+    role: SlotRole = "default"
+
+
+@dataclass(frozen=True)
+class BuildContext:
+    """scene access for generators that read control-point children"""
+
+    nodes: Mapping[str, Node]
+    group_id: str
+
+
+type BuildTransforms = Callable[
+    [Mapping[str, ParamValue], BuildContext], list[GeneratedSlot]
+]
 
 
 @dataclass(frozen=True)
@@ -34,6 +55,101 @@ class ParamField:
 
 axis_choices: tuple[tuple[int, str], ...] = ((0, "X"), (1, "Y"), (2, "Z"))
 
+facing_none_center: tuple[tuple[int, str], ...] = (
+    (0, "None"),
+    (1, "Center"),
+)
+facing_none_center_edge: tuple[tuple[int, str], ...] = (
+    (0, "None"),
+    (1, "Center"),
+    (2, "Edge"),
+)
+facing_none_edge: tuple[tuple[int, str], ...] = (
+    (0, "None"),
+    (2, "Edge"),
+)
+
+orient_fields: tuple[ParamField, ...] = (
+    ParamField(
+        "orient_yaw", "Orient yaw", "float", 5.0, minimum=-180.0, maximum=180.0
+    ),
+    ParamField(
+        "orient_pitch",
+        "Orient pitch",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    ),
+    ParamField(
+        "orient_roll", "Orient roll", "float", 5.0, minimum=-180.0, maximum=180.0
+    ),
+)
+orient_defaults: ParamMap = {
+    "orient_yaw": 0.0,
+    "orient_pitch": 0.0,
+    "orient_roll": 0.0,
+}
+
+# same keys as orient_fields; labels for generators with separate point meshes
+edge_orient_fields: tuple[ParamField, ...] = (
+    ParamField(
+        "orient_yaw",
+        "Edge orient yaw",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    ),
+    ParamField(
+        "orient_pitch",
+        "Edge orient pitch",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    ),
+    ParamField(
+        "orient_roll",
+        "Edge orient roll",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    ),
+)
+point_orient_fields: tuple[ParamField, ...] = (
+    ParamField(
+        "point_orient_yaw",
+        "Point orient yaw",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    ),
+    ParamField(
+        "point_orient_pitch",
+        "Point orient pitch",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    ),
+    ParamField(
+        "point_orient_roll",
+        "Point orient roll",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    ),
+)
+point_orient_defaults: ParamMap = {
+    "point_orient_yaw": 0.0,
+    "point_orient_pitch": 0.0,
+    "point_orient_roll": 0.0,
+}
+
 
 @dataclass(frozen=True)
 class GeneratorSpec:
@@ -44,6 +160,7 @@ class GeneratorSpec:
     fields: tuple[ParamField, ...]
     defaults: ParamMap
     build_transforms: BuildTransforms
+    supports_point_meshes: bool = False
 
 
 type MeshSequenceMode = Literal["repeat", "pingpong", "random"]
@@ -69,3 +186,4 @@ class Generator:
     kind: str
     meshes: MeshPattern
     params: ParamMap
+    point_meshes: MeshPattern | None = None

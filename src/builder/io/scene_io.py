@@ -102,12 +102,28 @@ def apply_mesh_fallbacks(node: Node, fallbacks: dict[str, MeshId]) -> Node:
     remapped: tuple[MeshId, ...] = tuple(
         remap_mesh_id(slot, fallbacks) or builtin_cube for slot in pattern.mesh_ids
     )
-    if mesh_id is node.mesh_id and remapped == pattern.mesh_ids:
+    point_pattern: MeshPattern | None = node.generator.point_meshes
+    remapped_points: MeshPattern | None = point_pattern
+    if point_pattern is not None:
+        point_ids: tuple[MeshId, ...] = tuple(
+            remap_mesh_id(slot, fallbacks) or builtin_cube
+            for slot in point_pattern.mesh_ids
+        )
+        remapped_points = replace(point_pattern, mesh_ids=point_ids)
+    if (
+        mesh_id is node.mesh_id
+        and remapped == pattern.mesh_ids
+        and remapped_points == point_pattern
+    ):
         return node
     return replace(
         node,
         mesh_id=mesh_id,
-        generator=replace(node.generator, meshes=replace(pattern, mesh_ids=remapped)),
+        generator=replace(
+            node.generator,
+            meshes=replace(pattern, mesh_ids=remapped),
+            point_meshes=remapped_points,
+        ),
     )
 
 

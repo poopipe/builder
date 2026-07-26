@@ -16,11 +16,19 @@ from builder.generators.generator_types import (
     ParamMap,
 )
 from builder.generators.registry import default_params, get_spec
+from builder.generators.regenerate import regenerate_group
 from builder.meshes.mesh_catalog import MeshAsset
 from builder.scene.clone import clone_subtrees
 from builder.scene.ids import new_node_id
 from builder.scene.selection import subtree_ids
-from builder.scene.scene_types import MeshId, Node, transform_at
+from builder.scene.scene_types import (
+    MeshId,
+    Node,
+    role_bezier_handle_in,
+    role_bezier_handle_out,
+    role_bezier_point,
+    transform_at,
+)
 from builder.scene.transforms import (
     local_transform_under_parent,
     matrix_translation,
@@ -58,6 +66,60 @@ def build_mesh_group(
                 generator=None,
             )
         )
+    return nodes
+
+
+def default_spline_controls(group_id: str) -> list[Node]:
+    """return a default open 3-point cubic bezier under group_id"""
+    nodes: list[Node] = []
+    specs: tuple[tuple[str, Vector3, Vector3 | None, Vector3 | None], ...] = (
+        ("Point 0", Vector3(-4.0, 0.0, 0.0), None, Vector3(1.5, 0.0, 0.0)),
+        (
+            "Point 1",
+            Vector3(0.0, 0.0, 0.0),
+            Vector3(-1.5, 0.0, 0.0),
+            Vector3(1.5, 0.0, 0.0),
+        ),
+        ("Point 2", Vector3(4.0, 0.0, 0.0), Vector3(-1.5, 0.0, 0.0), None),
+    )
+    name: str
+    position: Vector3
+    handle_in: Vector3 | None
+    handle_out: Vector3 | None
+    for name, position, handle_in, handle_out in specs:
+        point_id: str = new_node_id()
+        nodes.append(
+            Node(
+                id=point_id,
+                parent_id=group_id,
+                transform=transform_at(position),
+                mesh_id=None,
+                name=name,
+                role=role_bezier_point,
+            )
+        )
+        if handle_in is not None:
+            nodes.append(
+                Node(
+                    id=new_node_id(),
+                    parent_id=point_id,
+                    transform=transform_at(handle_in),
+                    mesh_id=None,
+                    name="In",
+                    role=role_bezier_handle_in,
+                )
+            )
+        if handle_out is not None:
+            nodes.append(
+                Node(
+                    id=new_node_id(),
+                    parent_id=point_id,
+                    transform=transform_at(handle_out),
+                    mesh_id=None,
+                    name="Out",
+                    role=role_bezier_handle_out,
+                )
+            )
     return nodes
 
 
@@ -103,22 +165,37 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
     if asset is None:
         context.ui.status = f"Mesh is not available: {mesh_id.name}"
         return
+    pattern: MeshPattern = MeshPattern(mesh_ids=(mesh_id,))
     generator: Generator = Generator(
         kind=kind,
-        meshes=MeshPattern(mesh_ids=(mesh_id,)),
+        meshes=pattern,
         params=params,
+        point_meshes=pattern if spec.supports_point_meshes else None,
     )
-    locals_: list[Transform] = spec.build_transforms(params)
-    nodes: list[Node] = build_mesh_group(
-        transform_at(Vector3(0.0, 0.0, 0.0)),
-        locals_,
-        mesh_id,
-        generator,
-        name=spec.label,
-    )
+    group_id: str = new_node_id()
+    nodes: list[Node] = [
+        Node(
+            id=group_id,
+            parent_id=None,
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+            generator=generator,
+            name=spec.label,
+        )
+    ]
+    if kind == "spline":
+        nodes.extend(default_spline_controls(group_id))
     context.scene.add_nodes(nodes)
-    context.scene.set_selection([nodes[0].id])
-    context.ui.status = f"Placed {spec.label} ({len(nodes) - 1} × {asset.label})"
+    regenerate_group(context.scene.nodes, group_id)
+    meshed: int = len(
+        [
+            node
+            for node in context.scene.nodes.nodes.values()
+            if node.parent_id == group_id and node.mesh_id is not None
+        ]
+    )
+    context.scene.set_selection([group_id])
+    context.ui.status = f"Placed {spec.label} ({meshed} × {asset.label})"
 
 
 def place_grid(context: CommandContext, _: None) -> None:
@@ -131,6 +208,10 @@ def place_radial_grid(context: CommandContext, _: None) -> None:
 
 def place_ngon_grid(context: CommandContext, _: None) -> None:
     place_generator_group(context, "ngon_grid")
+
+
+def place_spline(context: CommandContext, _: None) -> None:
+    place_generator_group(context, "spline")
 
 
 def delete_selection(context: CommandContext, _: None) -> None:
@@ -276,6 +357,7 @@ cmd_select_mesh: Command[MeshId] = Command("Select mesh", select_mesh)
 cmd_place_grid: Command[None] = Command("Grid", place_grid)
 cmd_place_radial_grid: Command[None] = Command("Radial grid", place_radial_grid)
 cmd_place_ngon_grid: Command[None] = Command("N-gon grid", place_ngon_grid)
+cmd_place_spline: Command[None] = Command("Spline", place_spline)
 cmd_delete: Command[None] = Command("Delete", delete_selection)
 cmd_duplicate: Command[None] = Command("Duplicate", duplicate_selection)
 cmd_group: Command[None] = Command("Group", group_selection)

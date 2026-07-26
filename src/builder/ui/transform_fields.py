@@ -13,6 +13,7 @@ from math import degrees, radians
 
 from pyray import Transform, Vector3, quaternion_from_axis_angle, vector3_scale
 
+from builder.generators.regenerate import regenerate_splines_touching
 from builder.scene.orientation import (
     quaternion_from_yaw_pitch_roll,
     yaw_pitch_roll_from_quaternion,
@@ -170,6 +171,7 @@ def apply_transform_field(
     value: float,
 ) -> None:
     """write one typed field to every selected group"""
+    touched: list[str] = []
     node: Node
     for node in selected_nodes(scene):
         scene.set_node(
@@ -180,6 +182,8 @@ def apply_transform_field(
                 ),
             )
         )
+        touched.append(node.id)
+    regenerate_splines_touching(scene, touched)
 
 
 def format_transform_value(value: float) -> str:

@@ -16,7 +16,7 @@ from builder.generators.generator_types import (
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node
 
-scene_format_version: int = 2
+scene_format_version: int = 3
 scene_file_suffix: str = ".scene"
 
 
@@ -126,11 +126,14 @@ def mesh_pattern_from_json(data: dict[str, Any]) -> MeshPattern:
 
 def generator_to_json(generator: Generator) -> dict[str, Any]:
     """encode a generator recipe"""
-    return {
+    payload: dict[str, Any] = {
         "kind": generator.kind,
         "meshes": mesh_pattern_to_json(generator.meshes),
         "params": dict(generator.params),
     }
+    if generator.point_meshes is not None:
+        payload["point_meshes"] = mesh_pattern_to_json(generator.point_meshes)
+    return payload
 
 
 def generator_from_json(data: Any) -> Generator:
@@ -148,6 +151,10 @@ def generator_from_json(data: Any) -> Generator:
     pattern: MeshPattern = mesh_pattern_from_json(
         meshes_raw if isinstance(meshes_raw, dict) else data
     )
+    point_meshes: MeshPattern | None = None
+    point_raw: Any = data.get("point_meshes")
+    if isinstance(point_raw, dict):
+        point_meshes = mesh_pattern_from_json(point_raw)
     params: ParamMap = {}
     key: Any
     value: Any
@@ -158,7 +165,12 @@ def generator_from_json(data: Any) -> Generator:
             raise ValueError(f"generator.params[{key!r}] must be a number")
         param_value: ParamValue = int(value) if isinstance(value, int) else float(value)
         params[key] = param_value
-    return Generator(kind=kind, meshes=pattern, params=params)
+    # migrate radial face_center bool into facing enum
+    if kind == "radial_grid" and "facing" not in params and "face_center" in params:
+        params["facing"] = 1 if int(params["face_center"]) else 0
+    return Generator(
+        kind=kind, meshes=pattern, params=params, point_meshes=point_meshes
+    )
 
 
 def mesh_asset_to_json(asset: MeshAsset, relative_source: str | None) -> dict[str, Any]:
@@ -213,6 +225,8 @@ def node_to_json(node: Node) -> dict[str, Any]:
     }
     if node.name != "":
         payload["name"] = node.name
+    if node.role != "":
+        payload["role"] = node.role
     if node.generator is not None:
         payload["generator"] = generator_to_json(node.generator)
     return payload
@@ -232,6 +246,9 @@ def node_from_json(data: Any) -> Node:
     name_raw: Any = data.get("name", "")
     if not isinstance(name_raw, str):
         raise ValueError("node.name must be a string")
+    role_raw: Any = data.get("role", "")
+    if not isinstance(role_raw, str):
+        raise ValueError("node.role must be a string")
     mesh_id: MeshId | None
     if mesh_name is None:
         mesh_id = None
@@ -249,6 +266,7 @@ def node_from_json(data: Any) -> Node:
         mesh_id=mesh_id,
         generator=generator,
         name=name_raw,
+        role=role_raw,
     )
 
 

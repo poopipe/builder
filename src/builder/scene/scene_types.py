@@ -25,7 +25,8 @@ class MeshId:
 class Node:
     """a scene node; mesh_id none means transform-only group
 
-    name is a display label shown in the outliner; empty means derive one
+    name is a display label shown in the outliner; empty means derive one.
+    role tags control-point / handle nodes for spline generators
     """
 
     id: str
@@ -34,6 +35,13 @@ class Node:
     mesh_id: MeshId | None
     generator: Generator | None = None
     name: str = ""
+    role: str = ""
+
+
+# spline control hierarchy
+role_bezier_point: str = "bezier_point"
+role_bezier_handle_in: str = "bezier_handle_in"
+role_bezier_handle_out: str = "bezier_handle_out"
 
 
 def transform_at(translation: Vector3) -> Transform:

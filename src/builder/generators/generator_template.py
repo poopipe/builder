@@ -2,7 +2,7 @@
 
 to add a generator:
 1. copy this file to generators/<your_kind>.py
-2. write the transform builder - pure, one Transform per placed mesh
+2. write the slot builder - pure, one GeneratedSlot per placed mesh
 3. describe the editable params in the spec - fields drive the inspector
 4. add the spec to generator_specs in generators/registry.py
 5. add a place command in commands/scene.py and a panel button in commands/menus.py
@@ -19,10 +19,15 @@ from math import cos, radians, sin
 from pyray import Transform, Vector3
 
 from builder.generators.generator_types import (
+    BuildContext,
+    GeneratedSlot,
     GeneratorSpec,
     ParamField,
     ParamValue,
+    orient_defaults,
+    orient_fields,
 )
+from builder.generators.orient import slots_from_transforms
 from builder.scene.scene_types import transform_at
 
 
@@ -52,13 +57,18 @@ def template_spiral_transforms(
     return transforms
 
 
-def template_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
-    """build template transforms from a param map"""
-    return template_spiral_transforms(
-        Vector3(0.0, 0.0, 0.0),
-        count=int(params["count"]),
-        turns=float(params["turns"]),
-        radius=float(params["radius"]),
+def template_from_params(
+    params: Mapping[str, ParamValue],
+    _: BuildContext,
+) -> list[GeneratedSlot]:
+    """build template slots from a param map"""
+    return slots_from_transforms(
+        template_spiral_transforms(
+            Vector3(0.0, 0.0, 0.0),
+            count=int(params["count"]),
+            turns=float(params["turns"]),
+            radius=float(params["radius"]),
+        )
     )
 
 
@@ -69,7 +79,8 @@ template_spec: GeneratorSpec = GeneratorSpec(
         ParamField("count", "Count", "int", 1.0, minimum=1.0, maximum=512.0),
         ParamField("turns", "Turns", "float", 0.25, minimum=0.1, maximum=32.0),
         ParamField("radius", "Radius", "float", 0.5, minimum=0.1, maximum=100.0),
+        *orient_fields,
     ),
-    defaults={"count": 24, "turns": 2.0, "radius": 8.0},
+    defaults={"count": 24, "turns": 2.0, "radius": 8.0, **orient_defaults},
     build_transforms=template_from_params,
 )

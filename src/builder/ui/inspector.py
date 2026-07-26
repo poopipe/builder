@@ -39,6 +39,7 @@ from builder.generators.regenerate import (
     set_generator_pattern,
     step_generator_param,
 )
+from builder.generators.spline_edit import add_spline_point
 from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
@@ -292,6 +293,9 @@ def build_pattern_buttons(
     active_mesh_id: MeshId,
     area: Rectangle,
     start_y: float,
+    *,
+    title: str = "Meshes",
+    points: bool = False,
 ) -> tuple[list[Button], float]:
     """build mesh-pattern controls below the param rows; return (buttons, next_y)"""
     x: float = area.x + ui_pad
@@ -307,12 +311,15 @@ def build_pattern_buttons(
     def cycle_mode() -> None:
         clear()
         set_generator_pattern(
-            scene, group.id, replace(pattern, mode=next_mode(pattern.mode))
+            scene,
+            group.id,
+            replace(pattern, mode=next_mode(pattern.mode)),
+            points=points,
         )
 
     buttons.append(
         Button(
-            label=f"Order: {pattern.mode}",
+            label=f"{title}: {pattern.mode}",
             on_click=cycle_mode,
             rect=Rectangle(x, y, inner_w, row_h),
         )
@@ -324,19 +331,28 @@ def build_pattern_buttons(
         def seed_minus() -> None:
             clear()
             set_generator_pattern(
-                scene, group.id, replace(pattern, seed=max(0, pattern.seed - 1))
+                scene,
+                group.id,
+                replace(pattern, seed=max(0, pattern.seed - 1)),
+                points=points,
             )
 
         def seed_plus() -> None:
             clear()
             set_generator_pattern(
-                scene, group.id, replace(pattern, seed=pattern.seed + 1)
+                scene,
+                group.id,
+                replace(pattern, seed=pattern.seed + 1),
+                points=points,
             )
 
         def seed_reroll() -> None:
             clear()
             set_generator_pattern(
-                scene, group.id, replace(pattern, seed=randrange(0, 1_000_000))
+                scene,
+                group.id,
+                replace(pattern, seed=randrange(0, 1_000_000)),
+                points=points,
             )
 
         value_x: float = x + step_w + ui_button_gap
@@ -371,12 +387,14 @@ def build_pattern_buttons(
         def assign(s: int = slot) -> None:
             clear()
             set_generator_pattern(
-                scene, group.id, set_slot(pattern, s, active_mesh_id)
+                scene, group.id, set_slot(pattern, s, active_mesh_id), points=points
             )
 
         def remove(s: int = slot) -> None:
             clear()
-            set_generator_pattern(scene, group.id, remove_slot(pattern, s))
+            set_generator_pattern(
+                scene, group.id, remove_slot(pattern, s), points=points
+            )
 
         buttons.append(
             Button(
@@ -400,6 +418,7 @@ def build_pattern_buttons(
             scene,
             group.id,
             replace(pattern, mesh_ids=pattern.mesh_ids + (active_mesh_id,)),
+            points=points,
         )
 
     buttons.append(
@@ -491,8 +510,51 @@ def update_inspector(
         active_mesh_id,
         area,
         pattern_start,
+        title="Edge meshes" if spec.supports_point_meshes else "Meshes",
+        points=False,
     )
     buttons.extend(pattern_buttons)
+    if spec.supports_point_meshes:
+        point_pattern: MeshPattern = (
+            generator.point_meshes
+            if generator.point_meshes is not None
+            else generator.meshes
+        )
+        point_buttons: list[Button]
+        point_buttons, bake_y = build_pattern_buttons(
+            scene,
+            ui,
+            group,
+            point_pattern,
+            catalog,
+            active_mesh_id,
+            area,
+            bake_y,
+            title="Point meshes",
+            points=True,
+        )
+        buttons.extend(point_buttons)
+
+    if generator.kind == "spline":
+
+        def on_add_point() -> None:
+            ui.clear_focus()
+            add_spline_point(scene, group.id)
+            ui.status = "Added spline point"
+
+        buttons.append(
+            Button(
+                label="Add point",
+                on_click=on_add_point,
+                rect=Rectangle(
+                    area.x + ui_pad,
+                    bake_y,
+                    area.width - ui_pad * 2,
+                    float(ui_button_height),
+                ),
+            )
+        )
+        bake_y += float(ui_button_height) + ui_pad
 
     bake_rect: Rectangle = Rectangle(
         area.x + ui_pad,

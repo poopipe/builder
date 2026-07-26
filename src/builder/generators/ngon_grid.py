@@ -4,31 +4,37 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from pyray import Transform, Vector3
+from pyray import Vector3
 
 from builder.distribution.grids import ngon_grid_transforms
 from builder.generators.generator_types import (
+    BuildContext,
+    GeneratedSlot,
     GeneratorSpec,
     ParamField,
+    ParamMap,
     ParamValue,
     axis_choices,
+    edge_orient_fields,
+    facing_none_center_edge,
+    orient_defaults,
+    point_orient_defaults,
+    point_orient_fields,
 )
 
-facing_choices: tuple[tuple[int, str], ...] = (
-    (0, "None"),
-    (1, "Center"),
-    (2, "Edge"),
-)
 
-
-def ngon_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
-    """build n-gon grid transforms from a param map"""
+def ngon_grid_from_params(
+    params: Mapping[str, ParamValue],
+    _: BuildContext,
+) -> list[GeneratedSlot]:
+    """build n-gon grid slots from a param map"""
     return ngon_grid_transforms(
         Vector3(0.0, 0.0, 0.0),
         radius=float(params["radius"]),
         sides=int(params["sides"]),
         spacing=float(params["spacing"]),
         facing=int(params.get("facing", 0)),
+        point_facing=int(params.get("point_facing", params.get("facing", 0))),
         include_points=bool(int(params.get("include_points", 1))),
         aspect=float(params.get("aspect", 1.0)),
         axis=int(params.get("axis", 1)),
@@ -40,6 +46,24 @@ def ngon_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
     )
 
 
+ngon_defaults: ParamMap = {
+    "axis": 1,
+    "sides": 6,
+    "radius": 5.0,
+    "aspect": 1.0,
+    "spacing": 1.0,
+    "count_radius": 1,
+    "spacing_radius": 2.0,
+    "count_height": 1,
+    "spacing_height": 2.0,
+    "include_points": 1,
+    "facing": 1,
+    "point_facing": 1,
+    "build_from": 1,
+    **orient_defaults,
+    **point_orient_defaults,
+}
+
 ngon_grid_spec: GeneratorSpec = GeneratorSpec(
     kind="ngon_grid",
     label="N-gon grid",
@@ -47,9 +71,7 @@ ngon_grid_spec: GeneratorSpec = GeneratorSpec(
         ParamField("axis", "Axis", "enum", 1.0, options=axis_choices),
         ParamField("sides", "Sides", "int", 1.0, minimum=3.0, maximum=64.0),
         ParamField("radius", "Outer radius", "float", 0.5, minimum=0.1, maximum=50.0),
-        ParamField(
-            "aspect", "Aspect", "float", 0.1, minimum=0.1, maximum=10.0
-        ),
+        ParamField("aspect", "Aspect", "float", 0.1, minimum=0.1, maximum=10.0),
         ParamField(
             "spacing", "Edge spacing", "float", 0.25, minimum=0.1, maximum=50.0
         ),
@@ -76,22 +98,21 @@ ngon_grid_spec: GeneratorSpec = GeneratorSpec(
             maximum=50.0,
         ),
         ParamField("include_points", "Points", "bool", 1.0),
-        ParamField("facing", "Facing", "enum", 1.0, options=facing_choices),
+        ParamField(
+            "facing", "Edge facing", "enum", 1.0, options=facing_none_center_edge
+        ),
+        ParamField(
+            "point_facing",
+            "Point facing",
+            "enum",
+            1.0,
+            options=facing_none_center_edge,
+        ),
         ParamField("build_from", "Build from", "enum", 1.0, options=axis_choices),
+        *edge_orient_fields,
+        *point_orient_fields,
     ),
-    defaults={
-        "axis": 1,
-        "sides": 6,
-        "radius": 5.0,
-        "aspect": 1.0,
-        "spacing": 1.0,
-        "count_radius": 1,
-        "spacing_radius": 2.0,
-        "count_height": 1,
-        "spacing_height": 2.0,
-        "include_points": 1,
-        "facing": 1,
-        "build_from": 1,
-    },
+    defaults=ngon_defaults,
     build_transforms=ngon_grid_from_params,
+    supports_point_meshes=True,
 )

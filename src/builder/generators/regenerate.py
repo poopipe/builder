@@ -1,12 +1,12 @@
-"""regrnerate and bake parametric group children"""
+"""regenerate and bake parametric group children"""
 
 from __future__ import annotations
 
 from dataclasses import replace
 
-from pyray import Transform
-
 from builder.generators.generator_types import (
+    BuildContext,
+    GeneratedSlot,
     Generator,
     GeneratorSpec,
     MeshPattern,
@@ -15,6 +15,7 @@ from builder.generators.generator_types import (
     ParamValue,
 )
 from builder.generators.mesh_pattern import mesh_for_index
+from builder.generators.orient import apply_orient_to_slots
 from builder.generators.registry import (
     clamp_param,
     field_for,
@@ -23,7 +24,7 @@ from builder.generators.registry import (
 )
 from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import MeshId, Node
 
 
 def mesh_child_ids(nodes: dict[str, Node], group_id: str) -> list[str]:
@@ -46,6 +47,13 @@ def selected_parametric_group(scene: Scene) -> Node | None:
     return node
 
 
+def pattern_for_slot(generator: Generator, slot: GeneratedSlot) -> MeshPattern:
+    """return the mesh pattern for a slot role"""
+    if slot.role == "point" and generator.point_meshes is not None:
+        return generator.point_meshes
+    return generator.meshes
+
+
 def regenerate_group(scene: Scene, group_id: str) -> None:
     """replace meshed children from the group's generator recipe
 
@@ -58,22 +66,32 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
     spec: GeneratorSpec = get_spec(generator.kind)
     params: ParamMap = params_with_defaults(generator.kind, generator.params)
     if params != generator.params:
-        scene.add_nodes([replace(group, generator=replace(generator, params=params))])
+        scene.add_nodes(
+            [replace(group, generator=replace(generator, params=params))]
+        )
         group = scene.nodes[group_id]
         generator = group.generator
         assert generator is not None
-    locals_: list[Transform] = spec.build_transforms(params)
+    context: BuildContext = BuildContext(nodes=scene.nodes, group_id=group_id)
+    slots: list[GeneratedSlot] = apply_orient_to_slots(
+        spec.build_transforms(params, context), params
+    )
     scene.remove_nodes(mesh_child_ids(scene.nodes, group_id))
     children: list[Node] = []
     index: int
-    local: Transform
-    for index, local in enumerate(locals_):
+    slot: GeneratedSlot
+    role_index: dict[str, int] = {"default": 0, "point": 0, "edge": 0}
+    for slot in slots:
+        index = role_index[slot.role]
+        role_index[slot.role] = index + 1
+        pattern: MeshPattern = pattern_for_slot(generator, slot)
+        mesh_id: MeshId = mesh_for_index(pattern, index)
         children.append(
             Node(
                 id=new_node_id(),
                 parent_id=group_id,
-                transform=local,
-                mesh_id=mesh_for_index(generator.meshes, index),
+                transform=slot.transform,
+                mesh_id=mesh_id,
                 generator=None,
             )
         )
@@ -135,9 +153,49 @@ def require_generator(scene: Scene, group_id: str) -> Generator:
     return generator
 
 
-def set_generator_pattern(scene: Scene, group_id: str, pattern: MeshPattern) -> None:
-    """replace the generator mesh pattern and regenerate children"""
+def set_generator_pattern(
+    scene: Scene,
+    group_id: str,
+    pattern: MeshPattern,
+    *,
+    points: bool = False,
+) -> None:
+    """replace the edge or point mesh pattern and regenerate children"""
     group: Node = scene.nodes[group_id]
     generator: Generator = require_generator(scene, group_id)
-    scene.add_nodes([replace(group, generator=replace(generator, meshes=pattern))])
+    if points:
+        scene.add_nodes(
+            [replace(group, generator=replace(generator, point_meshes=pattern))]
+        )
+    else:
+        scene.add_nodes(
+            [replace(group, generator=replace(generator, meshes=pattern))]
+        )
     regenerate_group(scene, group_id)
+
+
+def spline_generator_id(nodes: dict[str, Node], node_id: str) -> str | None:
+    """return ancestor id that owns a spline generator, if any"""
+    current_id: str | None = node_id
+    while current_id is not None:
+        node: Node | None = nodes.get(current_id)
+        if node is None:
+            return None
+        if node.generator is not None and node.generator.kind == "spline":
+            return current_id
+        current_id = node.parent_id
+    return None
+
+
+def regenerate_splines_touching(
+    scene: Scene, node_ids: list[str] | set[str]
+) -> None:
+    """regenerate any spline generator affected by edits to node_ids"""
+    seen: set[str] = set()
+    node_id: str
+    for node_id in node_ids:
+        spline_id: str | None = spline_generator_id(scene.nodes, node_id)
+        if spline_id is None or spline_id in seen:
+            continue
+        seen.add(spline_id)
+        regenerate_group(scene, spline_id)

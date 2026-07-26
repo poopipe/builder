@@ -22,6 +22,7 @@ from pyray import (
 )
 
 from builder.scene.scene_types import transform_at
+from builder.generators.generator_types import GeneratedSlot, SlotRole
 
 type AxisIndex = int
 
@@ -155,6 +156,23 @@ def align_build_from(
             )
         )
     return aligned
+
+
+def align_slots(
+    slots: list[GeneratedSlot],
+    origin: Vector3,
+    build_from: AxisIndex,
+) -> list[GeneratedSlot]:
+    """align slot translations with build-from, preserving roles"""
+    if not slots:
+        return slots
+    aligned: list[Transform] = align_build_from(
+        [slot.transform for slot in slots], origin, build_from
+    )
+    return [
+        GeneratedSlot(transform, slot.role)
+        for slot, transform in zip(slots, aligned, strict=True)
+    ]
 
 
 def grid_transforms(
@@ -299,28 +317,32 @@ def scale_aspect(
     return vector3_add(center, offset)
 
 
-def append_oriented(
-    transforms: list[Transform],
+def append_oriented_slot(
+    slots: list[GeneratedSlot],
     position: Vector3,
     center: Vector3,
     edge_dir: Vector3,
     cylinder: AxisIndex,
     facing: int,
+    role: SlotRole,
 ) -> None:
-    """append a transform with optional facing toward center or along the edge"""
+    """append a slot with optional facing toward center or along the edge"""
     aim: Vector3 | None = None
     if facing == 1:
         aim = vector3_subtract(center, position)
     elif facing == 2:
         aim = edge_dir
     if aim is None or vector3_length(aim) < 1e-6:
-        transforms.append(transform_at(position))
+        slots.append(GeneratedSlot(transform_at(position), role))
         return
-    transforms.append(
-        Transform(
-            position,
-            rotation_looking_along(aim, axis_vector(cylinder, 1.0)),
-            Vector3(1.0, 1.0, 1.0),
+    slots.append(
+        GeneratedSlot(
+            Transform(
+                position,
+                rotation_looking_along(aim, axis_vector(cylinder, 1.0)),
+                Vector3(1.0, 1.0, 1.0),
+            ),
+            role,
         )
     )
 
@@ -331,6 +353,7 @@ def ngon_grid_transforms(
     sides: int,
     spacing: float,
     facing: int = 0,
+    point_facing: int = 0,
     include_points: bool = True,
     aspect: float = 1.0,
     axis: AxisIndex = 1,
@@ -339,8 +362,8 @@ def ngon_grid_transforms(
     count_radius: int = 1,
     spacing_radius: float = 2.0,
     build_from: AxisIndex = 1,
-) -> list[Transform]:
-    """return transforms for stacked concentric regular polygons
+) -> list[GeneratedSlot]:
+    """return slots for stacked concentric regular polygons
 
     spacing is the target linear step along each edge in meters.
     each edge includes its start vertex (when include_points) and evenly spaced
@@ -348,7 +371,7 @@ def ngon_grid_transforms(
     radius is the outer circumradius; count_radius rings step inward.
     aspect scales offsets from the ring center along the in-plane axis that
     matches ring_direction's cosine basis (Y-cylinder -> X, etc).
-    facing: 0 = none, 1 = +Z toward center, 2 = +Z along the edge.
+    facing / point_facing: 0 = none, 1 = +Z toward center, 2 = +Z along the edge.
     """
     cylinder: AxisIndex = clamp_axis(axis)
     side_count: int = max(3, int(sides))
@@ -357,7 +380,7 @@ def ngon_grid_transforms(
     step: float = max(1e-6, float(spacing))
     aspect_scale: float = max(1e-6, float(aspect))
     stretch_axis: AxisIndex = aspect_scale_axis(cylinder)
-    transforms: list[Transform] = []
+    slots: list[GeneratedSlot] = []
     ih: int
     ir: int
     for ih in range(height_count):
@@ -395,7 +418,15 @@ def ngon_grid_transforms(
                     position: Vector3 = vector3_add(
                         p0, vector3_scale(edge_dir, t)
                     )
-                    append_oriented(
-                        transforms, position, center, edge_dir, cylinder, facing
+                    role: SlotRole = "point" if sample == 0 else "edge"
+                    slot_facing: int = point_facing if role == "point" else facing
+                    append_oriented_slot(
+                        slots,
+                        position,
+                        center,
+                        edge_dir,
+                        cylinder,
+                        slot_facing,
+                        role,
                     )
-    return align_build_from(transforms, origin, build_from)
+    return align_slots(slots, origin, build_from)

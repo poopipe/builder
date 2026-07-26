@@ -58,6 +58,7 @@ from builder.scene.scene_types import (
     builtin_torus,
 )
 from builder.scene.selection import root_group_id
+from builder.generators.regenerate import regenerate_splines_touching
 from builder.view.gizmo import (
     GizmoState,
     apply_drag_to_scene,
@@ -235,7 +236,14 @@ class Viewport:
             self.dragging_orbit = False
             self.dragging_pan = False
             if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
+                dragged: list[str] = (
+                    list(self.gizmo.drag.start_transforms.keys())
+                    if self.gizmo.drag is not None
+                    else []
+                )
                 end_gizmo_drag(self.gizmo)
+                if dragged:
+                    regenerate_splines_touching(self.nodes, dragged)
             return
 
         ray: Ray = viewport_world_ray(self.camera, mouse)
@@ -258,7 +266,9 @@ class Viewport:
                     self.camera.position,
                 )
             if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
+                dragged: list[str] = list(self.gizmo.drag.start_transforms.keys())
                 end_gizmo_drag(self.gizmo)
+                regenerate_splines_touching(self.nodes, dragged)
             return
 
         if (

@@ -4,32 +4,64 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from pyray import Transform, Vector3
+from pyray import Vector3
 
 from builder.distribution.grids import radial_grid_transforms
 from builder.generators.generator_types import (
+    BuildContext,
+    GeneratedSlot,
     GeneratorSpec,
     ParamField,
+    ParamMap,
     ParamValue,
     axis_choices,
+    facing_none_center,
+    orient_defaults,
+    orient_fields,
 )
+from builder.generators.orient import slots_from_transforms
 
 
-def radial_grid_from_params(params: Mapping[str, ParamValue]) -> list[Transform]:
-    """build radial grid transforms from a param map"""
-    return radial_grid_transforms(
-        Vector3(0.0, 0.0, 0.0),
-        radius=float(params["radius"]),
-        spacing=float(params["spacing"]),
-        face_center=bool(int(params["face_center"])),
-        axis=int(params.get("axis", 1)),
-        count_height=int(params.get("count_height", 1)),
-        spacing_height=float(params.get("spacing_height", 2.0)),
-        count_radius=int(params.get("count_radius", 1)),
-        spacing_radius=float(params.get("spacing_radius", 2.0)),
-        build_from=int(params.get("build_from", 1)),
+def radial_facing(params: Mapping[str, ParamValue]) -> bool:
+    """resolve facing, migrating legacy face_center when needed"""
+    if "facing" in params:
+        return int(params["facing"]) == 1
+    return bool(int(params.get("face_center", 0)))
+
+
+def radial_grid_from_params(
+    params: Mapping[str, ParamValue],
+    _: BuildContext,
+) -> list[GeneratedSlot]:
+    """build radial grid slots from a param map"""
+    return slots_from_transforms(
+        radial_grid_transforms(
+            Vector3(0.0, 0.0, 0.0),
+            radius=float(params["radius"]),
+            spacing=float(params["spacing"]),
+            face_center=radial_facing(params),
+            axis=int(params.get("axis", 1)),
+            count_height=int(params.get("count_height", 1)),
+            spacing_height=float(params.get("spacing_height", 2.0)),
+            count_radius=int(params.get("count_radius", 1)),
+            spacing_radius=float(params.get("spacing_radius", 2.0)),
+            build_from=int(params.get("build_from", 1)),
+        )
     )
 
+
+radial_defaults: ParamMap = {
+    "axis": 1,
+    "radius": 5.0,
+    "spacing": 30.0,
+    "count_radius": 1,
+    "spacing_radius": 2.0,
+    "count_height": 1,
+    "spacing_height": 2.0,
+    "facing": 1,
+    "build_from": 1,
+    **orient_defaults,
+}
 
 radial_grid_spec: GeneratorSpec = GeneratorSpec(
     kind="radial_grid",
@@ -60,19 +92,10 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
             minimum=0.1,
             maximum=50.0,
         ),
-        ParamField("face_center", "Face center", "bool", 1.0),
+        ParamField("facing", "Facing", "enum", 1.0, options=facing_none_center),
         ParamField("build_from", "Build from", "enum", 1.0, options=axis_choices),
+        *orient_fields,
     ),
-    defaults={
-        "axis": 1,
-        "radius": 5.0,
-        "spacing": 30.0,
-        "count_radius": 1,
-        "spacing_radius": 2.0,
-        "count_height": 1,
-        "spacing_height": 2.0,
-        "face_center": 1,
-        "build_from": 1,
-    },
+    defaults=radial_defaults,
     build_transforms=radial_grid_from_params,
 )
