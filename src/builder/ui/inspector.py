@@ -101,113 +101,163 @@ def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
         ui.clear_focus()
 
 
-def layout_param_rows(area: Rectangle, fields: tuple[ParamField, ...]) -> list[ParamRowRects]:
-    """place label / stepper / value rows, or a checkbox row for bools"""
+group_header_height: float = float(ui_button_height)
+
+
+@dataclass(frozen=True)
+class GroupHeaderRect:
+    """collapse toggle for a contiguous run of grouped params"""
+
+    title: str
+    rect: Rectangle
+    expanded: bool
+
+
+@dataclass(frozen=True)
+class ParamLayout:
+    """laid-out params: group headers, visible rows, and content bottom edge"""
+
+    headers: tuple[GroupHeaderRect, ...]
+    rows: tuple[ParamRowRects, ...]
+    bottom: float
+
+
+def layout_field_row(
+    field: ParamField, x: float, y: float, inner_w: float
+) -> tuple[ParamRowRects, float]:
+    """place one param row and return it with the y below it"""
+    empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
+    if field.value_type == "bool":
+        hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
+        row: ParamRowRects = ParamRowRects(
+            key=field.key,
+            label=hit,
+            minus=empty,
+            value=hit,
+            plus=empty,
+            is_bool=True,
+        )
+        return row, y + float(ui_button_height) + ui_pad
+    if field.value_type == "enum":
+        options: tuple[tuple[int, str], ...] = field.options or ()
+        enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+        controls_y: float = y + float(ui_font_size) + 4.0
+        option_count: int = max(1, len(options))
+        option_w: float = (
+            inner_w - ui_button_gap * (option_count - 1)
+        ) / option_count
+        option_rects: tuple[Rectangle, ...] = tuple(
+            Rectangle(
+                x + (option_w + ui_button_gap) * index,
+                controls_y,
+                option_w,
+                float(ui_button_height),
+            )
+            for index in range(len(options))
+        )
+        row = ParamRowRects(
+            key=field.key,
+            label=enum_label,
+            minus=empty,
+            value=empty,
+            plus=empty,
+            is_enum=True,
+            option_rects=option_rects,
+        )
+        return row, controls_y + float(ui_button_height) + ui_pad
+    label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+    controls_y = y + float(ui_font_size) + 4.0
+    minus: Rectangle = Rectangle(
+        x, controls_y, float(ui_stepper_width), float(ui_button_height)
+    )
+    plus: Rectangle = Rectangle(
+        x + inner_w - float(ui_stepper_width),
+        controls_y,
+        float(ui_stepper_width),
+        float(ui_button_height),
+    )
+    value: Rectangle = Rectangle(
+        minus.x + minus.width + ui_button_gap,
+        controls_y,
+        plus.x - (minus.x + minus.width + ui_button_gap * 2),
+        float(ui_button_height),
+    )
+    row = ParamRowRects(
+        key=field.key, label=label, minus=minus, value=value, plus=plus
+    )
+    return row, controls_y + float(ui_button_height) + ui_pad
+
+
+def layout_params(
+    area: Rectangle, fields: tuple[ParamField, ...], collapsed: set[str]
+) -> ParamLayout:
+    """place group headers and the rows of ungrouped or expanded params"""
+    headers: list[GroupHeaderRect] = []
     rows: list[ParamRowRects] = []
     y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
     x: float = area.x + ui_pad
     inner_w: float = area.width - ui_pad * 2
-    empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
+    current_group: str = ""
+    group_open: bool = True
     field: ParamField
     for field in fields:
-        if field.value_type == "bool":
-            hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
-            rows.append(
-                ParamRowRects(
-                    key=field.key,
-                    label=hit,
-                    minus=empty,
-                    value=hit,
-                    plus=empty,
-                    is_bool=True,
-                )
-            )
-            y += float(ui_button_height) + ui_pad
-            continue
-        if field.value_type == "enum":
-            options: tuple[tuple[int, str], ...] = field.options or ()
-            enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-            y += float(ui_font_size) + 4.0
-            option_count: int = max(1, len(options))
-            option_w: float = (
-                inner_w - ui_button_gap * (option_count - 1)
-            ) / option_count
-            option_rects: list[Rectangle] = []
-            index: int
-            for index in range(len(options)):
-                option_rects.append(
-                    Rectangle(
-                        x + (option_w + ui_button_gap) * index,
-                        y,
-                        option_w,
-                        float(ui_button_height),
+        if field.group != current_group:
+            current_group = field.group
+            if field.group != "":
+                group_open = field.group not in collapsed
+                headers.append(
+                    GroupHeaderRect(
+                        title=field.group,
+                        rect=Rectangle(x, y, inner_w, group_header_height),
+                        expanded=group_open,
                     )
                 )
-            rows.append(
-                ParamRowRects(
-                    key=field.key,
-                    label=enum_label,
-                    minus=empty,
-                    value=empty,
-                    plus=empty,
-                    is_enum=True,
-                    option_rects=tuple(option_rects),
-                )
-            )
-            y += float(ui_button_height) + ui_pad
+                y += group_header_height + ui_button_gap
+            else:
+                group_open = True
+        if field.group != "" and not group_open:
             continue
-        label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-        y += float(ui_font_size) + 4.0
-        controls_y: float = y
-        minus: Rectangle = Rectangle(
-            x,
-            controls_y,
-            float(ui_stepper_width),
-            float(ui_button_height),
-        )
-        plus: Rectangle = Rectangle(
-            x + inner_w - float(ui_stepper_width),
-            controls_y,
-            float(ui_stepper_width),
-            float(ui_button_height),
-        )
-        value: Rectangle = Rectangle(
-            minus.x + minus.width + ui_button_gap,
-            controls_y,
-            plus.x - (minus.x + minus.width + ui_button_gap * 2),
-            float(ui_button_height),
-        )
-        rows.append(
-            ParamRowRects(
-                key=field.key,
-                label=label,
-                minus=minus,
-                value=value,
-                plus=plus,
-            )
-        )
-        y += float(ui_button_height) + ui_pad
-    return rows
+        row: ParamRowRects
+        row, y = layout_field_row(field, x, y, inner_w)
+        rows.append(row)
+    return ParamLayout(tuple(headers), tuple(rows), y)
 
 
-def row_bottom(row: ParamRowRects) -> float:
-    """return the lowest edge of a row across all its hit targets"""
-    rects: list[Rectangle] = [row.label, row.minus, row.value, row.plus]
-    rects.extend(row.option_rects)
-    return max(rect.y + rect.height for rect in rects)
+def toggle_inspector_group(ui: UiState, title: str) -> None:
+    """expand or collapse an inspector param group"""
+    if title in ui.inspector_collapsed:
+        ui.inspector_collapsed.discard(title)
+    else:
+        ui.inspector_collapsed.add(title)
 
 
-def bake_button_rect(area: Rectangle, rows: list[ParamRowRects]) -> Rectangle:
-    """place the Bake button below the last param row"""
-    y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
-    if rows:
-        y = row_bottom(rows[-1]) + ui_pad
-    return Rectangle(
-        area.x + ui_pad,
-        y,
-        area.width - ui_pad * 2,
-        float(ui_button_height),
+def append_group_header(
+    buttons: list[Button],
+    ui: UiState,
+    area: Rectangle,
+    y: float,
+    title: str,
+) -> tuple[Rectangle, float, bool]:
+    """append a collapse header button; return (rect, next_y, expanded)"""
+    x: float = area.x + ui_pad
+    inner_w: float = area.width - ui_pad * 2
+    rect: Rectangle = Rectangle(x, y, inner_w, group_header_height)
+    expanded: bool = title not in ui.inspector_collapsed
+
+    def on_toggle(name: str = title) -> None:
+        ui.clear_focus()
+        toggle_inspector_group(ui, name)
+
+    caret: str = "v" if expanded else ">"
+    buttons.append(
+        Button(
+            label=f"{caret}  {title}",
+            on_click=on_toggle,
+            rect=rect,
+            align_left=True,
+        )
     )
+    return rect, y + group_header_height + ui_button_gap, expanded
 
 
 def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
@@ -294,7 +344,6 @@ def build_pattern_buttons(
     area: Rectangle,
     start_y: float,
     *,
-    title: str = "Meshes",
     points: bool = False,
 ) -> tuple[list[Button], float]:
     """build mesh-pattern controls below the param rows; return (buttons, next_y)"""
@@ -319,7 +368,7 @@ def build_pattern_buttons(
 
     buttons.append(
         Button(
-            label=f"{title}: {pattern.mode}",
+            label=f"Mode: {pattern.mode}",
             on_click=cycle_mode,
             rect=Rectangle(x, y, inner_w, row_h),
         )
@@ -445,7 +494,8 @@ def update_inspector(
     if generator is None:
         return [], []
     spec: GeneratorSpec = get_spec(generator.kind)
-    rows: list[ParamRowRects] = layout_param_rows(area, spec.fields)
+    layout: ParamLayout = layout_params(area, spec.fields, ui.inspector_collapsed)
+    rows: list[ParamRowRects] = list(layout.rows)
     text_keys: list[str] = [
         row.key for row in rows if not row.is_bool and not row.is_enum
     ]
@@ -454,6 +504,22 @@ def update_inspector(
     mouse: Vector2 = get_mouse_position()
     clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
     buttons: list[Button] = []
+    header: GroupHeaderRect
+    for header in layout.headers:
+
+        def toggle_group(title: str = header.title) -> None:
+            ui.clear_focus()
+            toggle_inspector_group(ui, title)
+
+        caret: str = "v" if header.expanded else ">"
+        buttons.append(
+            Button(
+                label=f"{caret}  {header.title}",
+                on_click=toggle_group,
+                rect=header.rect,
+                align_left=True,
+            )
+        )
     params: dict[str, ParamValue] = params_with_defaults(
         generator.kind, generator.params
     )
@@ -498,42 +564,54 @@ def update_inspector(
         if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
             focus_param_field(ui, group, field)
 
-    pattern_start: float = bake_button_rect(area, rows).y
-    pattern_buttons: list[Button]
-    bake_y: float
-    pattern_buttons, bake_y = build_pattern_buttons(
-        scene,
-        ui,
-        group,
-        generator.meshes,
-        catalog,
-        active_mesh_id,
-        area,
-        pattern_start,
-        title="Edge meshes" if spec.supports_point_meshes else "Meshes",
-        points=False,
+    pattern_start: float = layout.bottom
+    bake_y: float = pattern_start
+    edge_title: str = (
+        "Edge meshes" if spec.supports_point_meshes else "Meshes"
     )
-    buttons.extend(pattern_buttons)
-    if spec.supports_point_meshes:
-        point_pattern: MeshPattern = (
-            generator.point_meshes
-            if generator.point_meshes is not None
-            else generator.meshes
-        )
-        point_buttons: list[Button]
-        point_buttons, bake_y = build_pattern_buttons(
+    _: Rectangle
+    edge_open: bool
+    _, bake_y, edge_open = append_group_header(
+        buttons, ui, area, bake_y, edge_title
+    )
+    if edge_open:
+        pattern_buttons: list[Button]
+        pattern_buttons, bake_y = build_pattern_buttons(
             scene,
             ui,
             group,
-            point_pattern,
+            generator.meshes,
             catalog,
             active_mesh_id,
             area,
             bake_y,
-            title="Point meshes",
-            points=True,
+            points=False,
         )
-        buttons.extend(point_buttons)
+        buttons.extend(pattern_buttons)
+    if spec.supports_point_meshes:
+        point_open: bool
+        _, bake_y, point_open = append_group_header(
+            buttons, ui, area, bake_y, "Point meshes"
+        )
+        if point_open:
+            point_pattern: MeshPattern = (
+                generator.point_meshes
+                if generator.point_meshes is not None
+                else generator.meshes
+            )
+            point_buttons: list[Button]
+            point_buttons, bake_y = build_pattern_buttons(
+                scene,
+                ui,
+                group,
+                point_pattern,
+                catalog,
+                active_mesh_id,
+                area,
+                bake_y,
+                points=True,
+            )
+            buttons.extend(point_buttons)
 
     if generator.kind == "spline":
 

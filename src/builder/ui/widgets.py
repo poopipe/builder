@@ -52,6 +52,7 @@ class Button:
     rect: Rectangle = field(default_factory=lambda: Rectangle(0, 0, 0, 0))
     is_hovered: bool = False
     is_pressed: bool = False
+    align_left: bool = False
 
 
 @dataclass
@@ -185,7 +186,11 @@ def draw_button(button: Button, font: Font) -> None:
     text_size: int = ui_font_size
     text_w: float = measure_text_ex(font, button.label, float(text_size), 0).x
     text_h: float = float(text_size)
-    tx: float = button.rect.x + (button.rect.width - text_w) * 0.5
+    tx: float = (
+        button.rect.x + ui_pad
+        if button.align_left
+        else button.rect.x + (button.rect.width - text_w) * 0.5
+    )
     ty: float = button.rect.y + (button.rect.height - text_h) * 0.5
     draw_text_ex(
         font,

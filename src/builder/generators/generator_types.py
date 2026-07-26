@@ -42,6 +42,9 @@ class ParamField:
     """one editable parameter exposed by a generator kind
 
     an enum field carries ordered (value, label) options shown as radio buttons
+
+    group names a collapsible section in the inspector; contiguous fields
+    sharing a group fold together, empty group stays pinned at the top
     """
 
     key: str
@@ -51,6 +54,7 @@ class ParamField:
     minimum: float | None = None
     maximum: float | None = None
     options: tuple[tuple[int, str], ...] | None = None
+    group: str = ""
 
 
 axis_choices: tuple[tuple[int, str], ...] = ((0, "X"), (1, "Y"), (2, "Z"))
@@ -69,20 +73,39 @@ facing_none_edge: tuple[tuple[int, str], ...] = (
     (2, "Edge"),
 )
 
+distribution_group: str = "Distribution"
+spacing_group: str = "Spacing"
+orientation_group: str = "Orientation"
+edge_group: str = "Edge"
+point_group: str = "Point"
+
 orient_fields: tuple[ParamField, ...] = (
     ParamField(
-        "orient_yaw", "Orient yaw", "float", 5.0, minimum=-180.0, maximum=180.0
-    ),
-    ParamField(
-        "orient_pitch",
-        "Orient pitch",
+        "orient_yaw",
+        "Yaw",
         "float",
         5.0,
         minimum=-180.0,
         maximum=180.0,
+        group=orientation_group,
     ),
     ParamField(
-        "orient_roll", "Orient roll", "float", 5.0, minimum=-180.0, maximum=180.0
+        "orient_pitch",
+        "Pitch",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+        group=orientation_group,
+    ),
+    ParamField(
+        "orient_roll",
+        "Roll",
+        "float",
+        5.0,
+        minimum=-180.0,
+        maximum=180.0,
+        group=orientation_group,
     ),
 )
 orient_defaults: ParamMap = {
@@ -95,53 +118,59 @@ orient_defaults: ParamMap = {
 edge_orient_fields: tuple[ParamField, ...] = (
     ParamField(
         "orient_yaw",
-        "Edge orient yaw",
+        "Yaw",
         "float",
         5.0,
         minimum=-180.0,
         maximum=180.0,
+        group=edge_group,
     ),
     ParamField(
         "orient_pitch",
-        "Edge orient pitch",
+        "Pitch",
         "float",
         5.0,
         minimum=-180.0,
         maximum=180.0,
+        group=edge_group,
     ),
     ParamField(
         "orient_roll",
-        "Edge orient roll",
+        "Roll",
         "float",
         5.0,
         minimum=-180.0,
         maximum=180.0,
+        group=edge_group,
     ),
 )
 point_orient_fields: tuple[ParamField, ...] = (
     ParamField(
         "point_orient_yaw",
-        "Point orient yaw",
+        "Yaw",
         "float",
         5.0,
         minimum=-180.0,
         maximum=180.0,
+        group=point_group,
     ),
     ParamField(
         "point_orient_pitch",
-        "Point orient pitch",
+        "Pitch",
         "float",
         5.0,
         minimum=-180.0,
         maximum=180.0,
+        group=point_group,
     ),
     ParamField(
         "point_orient_roll",
-        "Point orient roll",
+        "Roll",
         "float",
         5.0,
         minimum=-180.0,
         maximum=180.0,
+        group=point_group,
     ),
 )
 point_orient_defaults: ParamMap = {

@@ -20,6 +20,18 @@ class UiState:
     outliner_scroll: float = 0.0
     # ids of collapsed outliner groups; not persisted with the scene
     outliner_collapsed: set[str] = field(default_factory=set)
+    # titles of collapsed inspector param groups; Distribution starts open
+    inspector_collapsed: set[str] = field(
+        default_factory=lambda: {
+            "Spacing",
+            "Edge",
+            "Point",
+            "Orientation",
+            "Edge meshes",
+            "Point meshes",
+            "Meshes",
+        }
+    )
     # last outliner row clicked and when, for double-click-to-rename detection
     outliner_click_id: str = ""
     outliner_click_time: float = 0.0
