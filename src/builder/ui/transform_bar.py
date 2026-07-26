@@ -228,8 +228,9 @@ def update_transform_bar(
         if is_point_in_rect(mouse.x, mouse.y, field.rect):
             focus_transform_field(scene, ui, mode, space, bar.owner, field.key)
             return
+    # only dismiss transform editing; the menu is shared with snap and other controls
     if is_point_in_rect(mouse.x, mouse.y, bar.area):
-        ui.clear_focus()
+        clear_transform_focus(ui)
 
 
 def draw_transform_bar(
