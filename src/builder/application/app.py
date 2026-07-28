@@ -65,6 +65,11 @@ from builder.ui.inspector import (
     sync_inspector_focus,
     update_inspector,
 )
+from builder.ui.modifiers_panel import (
+    draw_modifiers_panel,
+    sync_modifiers_focus,
+    update_modifiers_panel,
+)
 from builder.ui.mesh_panel import MeshRow, draw_mesh_panel, update_mesh_panel
 from builder.ui.outliner import (
     OutlinerRow,
@@ -87,6 +92,7 @@ from builder.ui.theme import (
     ui_font_size,
     ui_inspector_panel_width,
     ui_meshes_panel_width,
+    ui_modifiers_panel_width,
     ui_outliner_panel_width,
     ui_pad,
     ui_side_panel_width,
@@ -192,12 +198,14 @@ class Application:
         self.handle_dropped_files()
         group: Node | None = selected_parametric_group(self.scene.nodes)
         sync_inspector_focus(self.ui, group)
+        sync_modifiers_focus(self.ui, group)
         apply_text_exit_key(self.ui)
 
         panel_width: int = ui_side_panel_width if self.ui.side_panel_open else 0
         outliner_width: int = ui_outliner_panel_width if self.ui.outliner_open else 0
         meshes_width: int = ui_meshes_panel_width if self.ui.meshes_panel_open else 0
         inspector_width: int = ui_inspector_panel_width if group is not None else 0
+        modifiers_width: int = ui_modifiers_panel_width if group is not None else 0
         layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
@@ -205,6 +213,7 @@ class Application:
             outliner_width=outliner_width,
             meshes_width=meshes_width,
             inspector_width=inspector_width,
+            modifiers_width=modifiers_width,
         )
 
         browser_open: bool = self.ui.file_browser is not None
@@ -307,6 +316,8 @@ class Application:
 
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
+        modifiers_buttons: list[Button] = []
+        modifiers_rows: list[ParamRowRects] = []
         if group is not None and not browser_open:
             group_id: str = group.id
             inspector_buttons, inspector_rows = update_inspector(
@@ -325,6 +336,19 @@ class Application:
                 if refreshed is not None and refreshed.generator is not None
                 else None
             )
+            if group is not None:
+                modifiers_buttons, modifiers_rows = update_modifiers_panel(
+                    self.scene.nodes,
+                    self.ui,
+                    layout.modifiers,
+                    group,
+                )
+                refreshed = self.scene.nodes.nodes.get(group_id)
+                group = (
+                    refreshed
+                    if refreshed is not None and refreshed.generator is not None
+                    else None
+                )
 
         browser_rows: list[BrowserRow] = []
         browser_buttons: list[Button] = []
@@ -372,6 +396,10 @@ class Application:
                 group is not None
                 and is_point_in_rect(mouse.x, mouse.y, layout.inspector)
             )
+            or (
+                group is not None
+                and is_point_in_rect(mouse.x, mouse.y, layout.modifiers)
+            )
             or is_point_in_rect(mouse.x, mouse.y, layout.status)
         )
         self.scene.handle_input(layout.viewport, ui_over)
@@ -407,6 +435,14 @@ class Application:
                 group,
                 inspector_buttons,
                 inspector_rows,
+            )
+            draw_modifiers_panel(
+                self.font,
+                layout.modifiers,
+                self.ui,
+                group,
+                modifiers_buttons,
+                modifiers_rows,
             )
         draw_status_bar(self.font, layout.status, self.ui.status)
         if self.ui.file_browser is not None and browser_window is not None:

@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from pyray import Transform
 
-from builder.generators.generator_types import Generator
+from builder.generators.generator_types import Generator, Modifier
 from builder.scene.ids import new_node_id
 from builder.scene.scene_types import Node
 from builder.scene.selection import subtree_ids
@@ -21,11 +21,20 @@ def copy_transform(transform: Transform) -> Transform:
     return Transform(transform.translation, transform.rotation, transform.scale)
 
 
+def clone_modifier(modifier: Modifier) -> Modifier:
+    """copy a modifier, detaching its param map from the original"""
+    return replace(modifier, params=dict(modifier.params))
+
+
 def clone_generator(generator: Generator | None) -> Generator | None:
-    """copy a generator, detaching its param map from the original"""
+    """copy a generator, detaching params and modifiers from the original"""
     if generator is None:
         return None
-    return replace(generator, params=dict(generator.params))
+    return replace(
+        generator,
+        params=dict(generator.params),
+        modifiers=tuple(clone_modifier(modifier) for modifier in generator.modifiers),
+    )
 
 
 def clone_subtrees(

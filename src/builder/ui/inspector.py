@@ -91,6 +91,7 @@ class ParamRowRects:
     is_bool: bool = False
     is_enum: bool = False
     option_rects: tuple[Rectangle, ...] = ()
+    modifier_index: int | None = None
 
 
 def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
@@ -261,7 +262,7 @@ def append_group_header(
 
 
 def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
-    """begin typed editing for one param"""
+    """begin typed editing for one generator param"""
     if field.value_type in ("bool", "enum"):
         return
     generator: Generator | None = group.generator

@@ -216,3 +216,16 @@ class Generator:
     meshes: MeshPattern
     params: ParamMap
     point_meshes: MeshPattern | None = None
+    modifiers: tuple[Modifier, ...] = ()
+
+
+@dataclass(frozen=True)
+class Modifier:
+    """one step in a generator's post-process stack
+
+    may rewrite slot transforms or drop slots; must not invent new ones
+    """
+
+    kind: str
+    params: ParamMap
+    enabled: bool = True

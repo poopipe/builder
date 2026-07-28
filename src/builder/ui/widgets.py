@@ -63,8 +63,9 @@ class LayoutRects:
     panel: Rectangle
     outliner: Rectangle
     viewport: Rectangle
-    meshes: Rectangle
     inspector: Rectangle
+    modifiers: Rectangle
+    meshes: Rectangle
     status: Rectangle
 
 
@@ -75,10 +76,11 @@ def compute_layout(
     outliner_width: int = 0,
     meshes_width: int = 0,
     inspector_width: int = 0,
+    modifiers_width: int = 0,
 ) -> LayoutRects:
     """split the window into menu, side panels, viewport, and status bar
 
-    columns left to right: tools panel, outliner, viewport, inspector, meshes
+    columns left to right: tools, outliner, viewport, inspector, modifiers, meshes
     """
     menu_h: int = ui_menu_bar_height
     status_h: int = ui_status_bar_height
@@ -86,13 +88,17 @@ def compute_layout(
     outliner_w: int = max(0, outliner_width)
     meshes_w: int = max(0, meshes_width)
     inspector_w: int = max(0, inspector_width)
+    modifiers_w: int = max(0, modifiers_width)
     body_y: int = menu_h
     body_h: int = max(0, height - menu_h - status_h)
-    viewport_w: int = max(0, width - panel_w - outliner_w - meshes_w - inspector_w)
+    viewport_w: int = max(
+        0, width - panel_w - outliner_w - meshes_w - inspector_w - modifiers_w
+    )
     outliner_x: float = float(panel_w)
     viewport_x: float = float(panel_w + outliner_w)
     inspector_x: float = viewport_x + float(viewport_w)
-    meshes_x: float = inspector_x + float(inspector_w)
+    modifiers_x: float = inspector_x + float(inspector_w)
+    meshes_x: float = modifiers_x + float(modifiers_w)
     return LayoutRects(
         menu=Rectangle(0, 0, float(width), float(menu_h)),
         panel=Rectangle(0, float(body_y), float(panel_w), float(body_h)),
@@ -112,6 +118,12 @@ def compute_layout(
             inspector_x,
             float(body_y),
             float(inspector_w),
+            float(body_h),
+        ),
+        modifiers=Rectangle(
+            modifiers_x,
+            float(body_y),
+            float(modifiers_w),
             float(body_h),
         ),
         meshes=Rectangle(meshes_x, float(body_y), float(meshes_w), float(body_h)),

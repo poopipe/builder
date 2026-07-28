@@ -10,13 +10,15 @@ from builder.generators.generator_types import (
     Generator,
     MeshPattern,
     MeshSequenceMode,
+    Modifier,
     ParamMap,
     ParamValue,
 )
+from builder.modifiers.registry import known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node
 
-scene_format_version: int = 3
+scene_format_version: int = 4
 scene_file_suffix: str = ".scene"
 
 
@@ -124,6 +126,42 @@ def mesh_pattern_from_json(data: dict[str, Any]) -> MeshPattern:
     return MeshPattern(mesh_ids=tuple(mesh_ids), mode=mode, seed=seed_raw)
 
 
+def modifier_to_json(modifier: Modifier) -> dict[str, Any]:
+    """encode one modifier stack entry"""
+    return {
+        "kind": modifier.kind,
+        "params": dict(modifier.params),
+        "enabled": modifier.enabled,
+    }
+
+
+def modifier_from_json(data: Any) -> Modifier | None:
+    """decode one modifier; unknown kinds are dropped"""
+    if not isinstance(data, dict):
+        raise ValueError("modifier must be an object")
+    kind: Any = data.get("kind")
+    params_raw: Any = data.get("params", {})
+    if not isinstance(kind, str) or kind == "":
+        raise ValueError("modifier.kind must be a non-empty string")
+    if not known_modifier_kind(kind):
+        return None
+    if not isinstance(params_raw, dict):
+        raise ValueError("modifier.params must be an object")
+    params: ParamMap = {}
+    key: Any
+    value: Any
+    for key, value in params_raw.items():
+        if not isinstance(key, str):
+            raise ValueError("modifier.params keys must be strings")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"modifier.params[{key!r}] must be a number")
+        params[key] = int(value) if isinstance(value, int) else float(value)
+    enabled_raw: Any = data.get("enabled", True)
+    if not isinstance(enabled_raw, bool):
+        raise ValueError("modifier.enabled must be a boolean")
+    return Modifier(kind=kind, params=params, enabled=enabled_raw)
+
+
 def generator_to_json(generator: Generator) -> dict[str, Any]:
     """encode a generator recipe"""
     payload: dict[str, Any] = {
@@ -133,6 +171,10 @@ def generator_to_json(generator: Generator) -> dict[str, Any]:
     }
     if generator.point_meshes is not None:
         payload["point_meshes"] = mesh_pattern_to_json(generator.point_meshes)
+    if generator.modifiers:
+        payload["modifiers"] = [
+            modifier_to_json(modifier) for modifier in generator.modifiers
+        ]
     return payload
 
 
@@ -173,8 +215,23 @@ def generator_from_json(data: Any) -> Generator:
     # migrate radial face_center bool into facing enum
     if kind == "radial" and "facing" not in params and "face_center" in params:
         params["facing"] = 1 if int(params["face_center"]) else 0
+    modifiers: list[Modifier] = []
+    modifiers_raw: Any = data.get("modifiers", [])
+    if modifiers_raw is None:
+        modifiers_raw = []
+    if not isinstance(modifiers_raw, list):
+        raise ValueError("generator.modifiers must be an array")
+    entry: Any
+    for entry in modifiers_raw:
+        decoded: Modifier | None = modifier_from_json(entry)
+        if decoded is not None:
+            modifiers.append(decoded)
     return Generator(
-        kind=kind, meshes=pattern, params=params, point_meshes=point_meshes
+        kind=kind,
+        meshes=pattern,
+        params=params,
+        point_meshes=point_meshes,
+        modifiers=tuple(modifiers),
     )
 
 
