@@ -1,4 +1,4 @@
-"""n-gon grid generator: stacked regular polygons with linear edge spacing"""
+"""n-gon generator: stacked regular polygons with linear edge spacing"""
 
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ from builder.generators.generator_types import (
 )
 
 
-def ngon_grid_from_params(
+def ngon_from_params(
     params: Mapping[str, ParamValue],
     _: BuildContext,
 ) -> list[GeneratedSlot]:
-    """build n-gon grid slots from a param map"""
+    """build n-gon slots from a param map"""
     return ngon_grid_transforms(
         Vector3(0.0, 0.0, 0.0),
         radius=float(params["radius"]),
@@ -61,16 +61,16 @@ ngon_defaults: ParamMap = {
     "count_height": 1,
     "spacing_height": 2.0,
     "include_points": 1,
-    "facing": 1,
+    "facing": 2,
     "point_facing": 1,
     "build_from": 1,
     **orient_defaults,
     **point_orient_defaults,
 }
 
-ngon_grid_spec: GeneratorSpec = GeneratorSpec(
-    kind="ngon_grid",
-    label="N-gon grid",
+ngon_spec: GeneratorSpec = GeneratorSpec(
+    kind="ngon",
+    label="N-gon",
     fields=(
         ParamField(
             "axis",
@@ -181,6 +181,6 @@ ngon_grid_spec: GeneratorSpec = GeneratorSpec(
         *point_orient_fields,
     ),
     defaults=ngon_defaults,
-    build_transforms=ngon_grid_from_params,
+    build_transforms=ngon_from_params,
     supports_point_meshes=True,
 )

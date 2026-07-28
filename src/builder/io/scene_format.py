@@ -165,8 +165,13 @@ def generator_from_json(data: Any) -> Generator:
             raise ValueError(f"generator.params[{key!r}] must be a number")
         param_value: ParamValue = int(value) if isinstance(value, int) else float(value)
         params[key] = param_value
+    # migrate renamed generator kinds from older scene files
+    if kind == "radial_grid":
+        kind = "radial"
+    elif kind == "ngon_grid":
+        kind = "ngon"
     # migrate radial face_center bool into facing enum
-    if kind == "radial_grid" and "facing" not in params and "face_center" in params:
+    if kind == "radial" and "facing" not in params and "face_center" in params:
         params["facing"] = 1 if int(params["face_center"]) else 0
     return Generator(
         kind=kind, meshes=pattern, params=params, point_meshes=point_meshes

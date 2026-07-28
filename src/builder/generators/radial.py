@@ -1,4 +1,4 @@
-"""radial grid generator: stacked rings around a chosen cylinder axis"""
+"""radial generator: stacked rings around a chosen cylinder axis"""
 
 from __future__ import annotations
 
@@ -32,11 +32,11 @@ def radial_facing(params: Mapping[str, ParamValue]) -> bool:
     return bool(int(params.get("face_center", 0)))
 
 
-def radial_grid_from_params(
+def radial_from_params(
     params: Mapping[str, ParamValue],
     _: BuildContext,
 ) -> list[GeneratedSlot]:
-    """build radial grid slots from a param map"""
+    """build radial slots from a param map"""
     return slots_from_transforms(
         radial_grid_transforms(
             Vector3(0.0, 0.0, 0.0),
@@ -66,9 +66,9 @@ radial_defaults: ParamMap = {
     **orient_defaults,
 }
 
-radial_grid_spec: GeneratorSpec = GeneratorSpec(
-    kind="radial_grid",
-    label="Radial grid",
+radial_spec: GeneratorSpec = GeneratorSpec(
+    kind="radial",
+    label="Radial",
     fields=(
         ParamField(
             "axis",
@@ -151,5 +151,5 @@ radial_grid_spec: GeneratorSpec = GeneratorSpec(
         *orient_fields,
     ),
     defaults=radial_defaults,
-    build_transforms=radial_grid_from_params,
+    build_transforms=radial_from_params,
 )

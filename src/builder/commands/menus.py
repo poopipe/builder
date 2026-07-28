@@ -18,8 +18,8 @@ from builder.commands.scene import (
     cmd_parent,
     cmd_place_grid,
     cmd_place_mesh,
-    cmd_place_ngon_grid,
-    cmd_place_radial_grid,
+    cmd_place_ngon,
+    cmd_place_radial,
     cmd_place_spline,
     cmd_unparent,
 )
@@ -57,8 +57,8 @@ panel_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_toggle_grid, None),
     CommandEntry(cmd_focus_camera, None),
     CommandEntry(cmd_place_grid, None),
-    CommandEntry(cmd_place_radial_grid, None),
-    CommandEntry(cmd_place_ngon_grid, None),
+    CommandEntry(cmd_place_radial, None),
+    CommandEntry(cmd_place_ngon, None),
     CommandEntry(cmd_place_spline, None),
 )
 

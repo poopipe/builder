@@ -14,14 +14,14 @@ from builder.generators.generator_types import (
     ParamValue,
 )
 from builder.generators.grid import grid_spec
-from builder.generators.ngon_grid import ngon_grid_spec
-from builder.generators.radial_grid import radial_grid_spec
+from builder.generators.ngon import ngon_spec
+from builder.generators.radial import radial_spec
 from builder.generators.spline import spline_spec
 
 generator_specs: tuple[GeneratorSpec, ...] = (
     grid_spec,
-    radial_grid_spec,
-    ngon_grid_spec,
+    radial_spec,
+    ngon_spec,
     spline_spec,
 )
 

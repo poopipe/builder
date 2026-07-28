@@ -202,12 +202,12 @@ def place_grid(context: CommandContext, _: None) -> None:
     place_generator_group(context, "grid")
 
 
-def place_radial_grid(context: CommandContext, _: None) -> None:
-    place_generator_group(context, "radial_grid")
+def place_radial(context: CommandContext, _: None) -> None:
+    place_generator_group(context, "radial")
 
 
-def place_ngon_grid(context: CommandContext, _: None) -> None:
-    place_generator_group(context, "ngon_grid")
+def place_ngon(context: CommandContext, _: None) -> None:
+    place_generator_group(context, "ngon")
 
 
 def place_spline(context: CommandContext, _: None) -> None:
@@ -355,8 +355,8 @@ def group_selection(context: CommandContext, _: None) -> None:
 cmd_place_mesh: Command[None] = Command("Place mesh", place_active_mesh)
 cmd_select_mesh: Command[MeshId] = Command("Select mesh", select_mesh)
 cmd_place_grid: Command[None] = Command("Grid", place_grid)
-cmd_place_radial_grid: Command[None] = Command("Radial grid", place_radial_grid)
-cmd_place_ngon_grid: Command[None] = Command("N-gon grid", place_ngon_grid)
+cmd_place_radial: Command[None] = Command("Radial", place_radial)
+cmd_place_ngon: Command[None] = Command("N-gon", place_ngon)
 cmd_place_spline: Command[None] = Command("Spline", place_spline)
 cmd_delete: Command[None] = Command("Delete", delete_selection)
 cmd_duplicate: Command[None] = Command("Duplicate", duplicate_selection)
