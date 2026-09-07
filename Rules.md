@@ -21,3 +21,13 @@ Imports:
 - for pyray enum-like constants, import the enum type and use members (eg. `ConfigFlags.FLAG_WINDOW_RESIZABLE`, `ShaderLocationIndex.SHADER_LOC_MATRIX_MVP`, `ShaderUniformDataType.SHADER_UNIFORM_FLOAT`) — bare names may work at runtime but fail the type checker
 - in general i dislike object oriented design patterns, i prefer a functional style using dataclasses and libraries of pure (where possible) functions (exceptions are allowed with discussion)
 - I insist on strict type annotations
+
+Architecture / data model:
+- do not force a feature into the wrong abstraction. generators are instance-placement recipes (transforms → meshed children of shared catalog meshes). continuous surfaces, terrains, and other unique geometry are first-class node recipes (eg. `Node.heightfield`), not another generator kind
+- recipe fields that drive UI/build use typed param wrappers (`IntParam`, `FloatParam`, …); do not revive ParamField maps or string-field sniffing for recipes
+- prefer IntEnum (or similar) over string/`Literal` discriminators for roles, modes, kinds; serialize enums by **name** in scene JSON, decode name-only — no int fallbacks
+- no backwards compatibility in scene load unless explicitly requested: no migrators, legacy key aliases, soft “load anyway” version paths, or dual shapes. bump `scene_format_version` when the format changes; reject mismatches
+- regenerated children (generator slots, heightfield tiles) are omitted on save and rebuilt on load; keep mesh/tile ids deterministic from parent id + indices so later LOD/streaming can swap residency without renaming the recipe
+- separate catalogs for different asset kinds (meshes vs heightmaps); do not overload `MeshCatalog` for non-mesh assets
+- design for large scale early when the user says so (tiling, sample-per-tile, no full-resolution buffers) but ship the smallest working slice they pick; leave hooks, do not build LOD/streaming until asked
+- keep package `__init__` slim; domain code must not import `command_context` / command modules — use a local Protocol for the host surface needed (register mesh, unload, shader). match exhaustively when adding enum members (file browser titles, etc.); mirror existing UI action enums (`TextAction.editing`, not invented variants)
