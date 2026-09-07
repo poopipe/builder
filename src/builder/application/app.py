@@ -35,6 +35,7 @@ from pyray import (
 from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandEntry, CommandItem
 from builder.commands.file import (
+    apply_import_heightmap_path,
     apply_import_mesh_path,
     apply_open_scene_path,
     apply_save_scene_path,
@@ -51,6 +52,7 @@ from builder.commands.scene import (
     cmd_unparent,
 )
 from builder.generators.regenerate import selected_parametric_group
+from builder.heightfield.regenerate import selected_heightfield_group
 from builder.scene.scene_types import MeshId, Node
 from builder.ui.file_browser import (
     BrowserRow,
@@ -200,6 +202,8 @@ class Application:
         """define the UI layout"""
         self.handle_dropped_files()
         group: Node | None = selected_parametric_group(self.scene.nodes)
+        if group is None:
+            group = selected_heightfield_group(self.scene.nodes)
         sync_inspector_focus(self.ui, group)
         sync_modifiers_focus(self.ui, group)
         apply_text_exit_key(self.ui)
@@ -208,7 +212,11 @@ class Application:
         outliner_width: int = ui_outliner_panel_width if self.ui.outliner_open else 0
         meshes_width: int = ui_meshes_panel_width if self.ui.meshes_panel_open else 0
         inspector_width: int = ui_inspector_panel_width if group is not None else 0
-        modifiers_width: int = ui_modifiers_panel_width if group is not None else 0
+        modifiers_width: int = (
+            ui_modifiers_panel_width
+            if group is not None and group.generator is not None
+            else 0
+        )
         layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
@@ -330,16 +338,19 @@ class Application:
                 group,
                 self.application.mesh_catalog,
                 self.application.active_mesh_id,
+                scene_context=self.scene,
+                heightmap_catalog=self.application.heightmap_catalog,
             )
             # steppers/bake replace the group node; re-read the same id so the
             # drawn group stays consistent with rows even if selection changed
             refreshed: Node | None = self.scene.nodes.nodes.get(group_id)
-            group = (
-                refreshed
-                if refreshed is not None and refreshed.generator is not None
-                else None
-            )
-            if group is not None:
+            if refreshed is None or (
+                refreshed.generator is None and refreshed.heightfield is None
+            ):
+                group = None
+            else:
+                group = refreshed
+            if group is not None and group.generator is not None:
                 modifiers_buttons, modifiers_rows = update_modifiers_panel(
                     self.scene.nodes,
                     self.ui,
@@ -347,11 +358,12 @@ class Application:
                     group,
                 )
                 refreshed = self.scene.nodes.nodes.get(group_id)
-                group = (
-                    refreshed
-                    if refreshed is not None and refreshed.generator is not None
-                    else None
-                )
+                if refreshed is None or (
+                    refreshed.generator is None and refreshed.heightfield is None
+                ):
+                    group = None
+                else:
+                    group = refreshed
 
         browser_rows: list[BrowserRow] = []
         browser_buttons: list[Button] = []
@@ -369,6 +381,7 @@ class Application:
                 case FileBrowserCancel.cancelled:
                     remember_browser_directory(self, self.ui.file_browser)
                     self.ui.file_browser = None
+                    self.ui.heightfield_layer_target = None
                     self.ui.status = "Cancelled"
                 case Path() as chosen:
                     purpose: FileBrowserPurpose = self.ui.file_browser.purpose
@@ -381,6 +394,8 @@ class Application:
                             apply_save_scene_path(self, chosen)
                         case FileBrowserPurpose.import_mesh:
                             apply_import_mesh_path(self, chosen)
+                        case FileBrowserPurpose.import_heightmap:
+                            apply_import_heightmap_path(self, chosen)
                 case None:
                     pass
 
@@ -405,6 +420,7 @@ class Application:
             )
             or (
                 group is not None
+                and group.generator is not None
                 and is_point_in_rect(mouse.x, mouse.y, layout.modifiers)
             )
             or is_point_in_rect(mouse.x, mouse.y, layout.status)
@@ -443,14 +459,15 @@ class Application:
                 inspector_buttons,
                 inspector_rows,
             )
-            draw_modifiers_panel(
-                self.font,
-                layout.modifiers,
-                self.ui,
-                group,
-                modifiers_buttons,
-                modifiers_rows,
-            )
+            if group.generator is not None:
+                draw_modifiers_panel(
+                    self.font,
+                    layout.modifiers,
+                    self.ui,
+                    group,
+                    modifiers_buttons,
+                    modifiers_rows,
+                )
         draw_status_bar(self.font, layout.status, self.ui.status)
         if self.ui.file_browser is not None and browser_window is not None:
             draw_file_browser(

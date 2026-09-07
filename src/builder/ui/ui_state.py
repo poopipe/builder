@@ -38,6 +38,8 @@ class UiState:
     focus: FieldId | None = None
     edit: TextEdit | None = None
     file_browser: FileBrowserState | None = None
+    # group id waiting for a heightmap pick from the file browser
+    heightfield_layer_target: str | None = None
 
     def toggle_side_panel(self) -> None:
         """show or hide the context side panel"""

@@ -17,6 +17,8 @@ from builder.generators.generator_types import (
 )
 from builder.generators.registry import default_params, get_spec
 from builder.generators.regenerate import regenerate_group
+from builder.heightfield.heightfield_types import default_heightfield
+from builder.heightfield.regenerate import regenerate_heightfield
 from builder.meshes.mesh_catalog import MeshAsset
 from builder.scene.clone import clone_subtrees
 from builder.scene.ids import new_node_id
@@ -212,6 +214,33 @@ def place_spline(context: CommandContext, _: None) -> None:
     place_generator_group(context, "spline")
 
 
+def place_heightfield(context: CommandContext, _: None) -> None:
+    """place a tiled heightfield group and build its tile meshes"""
+    group_id: str = new_node_id()
+    heightfield = default_heightfield()
+    context.scene.add_nodes(
+        [
+            Node(
+                id=group_id,
+                parent_id=None,
+                transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                mesh_id=None,
+                heightfield=heightfield,
+                name="Heightfield",
+            )
+        ]
+    )
+    regenerate_heightfield(
+        context.scene,
+        context.application.heightmap_catalog,
+        context.scene.mesh_shader(),
+        group_id,
+    )
+    tiles: int = heightfield.tiles_x.value * heightfield.tiles_z.value
+    context.scene.set_selection([group_id])
+    context.ui.status = f"Placed Heightfield ({tiles} tiles)"
+
+
 def delete_selection(context: CommandContext, _: None) -> None:
     """remove selected groups and their descendants"""
     selected: list[str] = list(context.scene.nodes.selected_ids)
@@ -219,6 +248,17 @@ def delete_selection(context: CommandContext, _: None) -> None:
         context.ui.status = "Nothing selected"
         return
     to_remove: list[str] = subtree_ids(context.scene.nodes.nodes, selected)
+    catalog_ids: frozenset[MeshId] = frozenset(
+        context.application.mesh_catalog.entries.keys()
+    )
+    node_id: str
+    for node_id in to_remove:
+        node: Node | None = context.scene.nodes.nodes.get(node_id)
+        if node is None or node.mesh_id is None:
+            continue
+        if node.mesh_id in catalog_ids:
+            continue
+        context.scene.unload_mesh(node.mesh_id)
     context.scene.nodes.remove_nodes(to_remove)
     context.scene.clear_selection()
     count: int = len(selected)
@@ -239,7 +279,29 @@ def duplicate_selection(context: CommandContext, _: None) -> None:
     clones: list[Node]
     new_roots: list[str]
     clones, new_roots = clone_subtrees(context.scene.nodes.nodes, roots)
-    context.scene.add_nodes(clones)
+    # drop cloned heightfield tile children; regenerate creates fresh meshes
+    kept: list[Node] = []
+    clone: Node
+    for clone in clones:
+        if clone.parent_id in new_roots and clone.mesh_id is not None:
+            root: Node | None = next(
+                (node for node in clones if node.id == clone.parent_id), None
+            )
+            if root is not None and root.heightfield is not None:
+                continue
+        kept.append(clone)
+    context.scene.add_nodes(kept)
+    root_id: str
+    for root_id in new_roots:
+        root_node: Node | None = context.scene.nodes.nodes.get(root_id)
+        if root_node is None or root_node.heightfield is None:
+            continue
+        regenerate_heightfield(
+            context.scene,
+            context.application.heightmap_catalog,
+            context.scene.mesh_shader(),
+            root_id,
+        )
     context.scene.set_selection(new_roots)
     count: int = len(new_roots)
     label: str = "group" if count == 1 else "groups"
@@ -356,6 +418,7 @@ cmd_place_grid: Command[None] = Command("Grid", place_grid)
 cmd_place_radial: Command[None] = Command("Radial", place_radial)
 cmd_place_ngon: Command[None] = Command("N-gon", place_ngon)
 cmd_place_spline: Command[None] = Command("Spline", place_spline)
+cmd_place_heightfield: Command[None] = Command("Heightfield", place_heightfield)
 cmd_delete: Command[None] = Command("Delete", delete_selection)
 cmd_duplicate: Command[None] = Command("Duplicate", duplicate_selection)
 cmd_group: Command[None] = Command("Group", group_selection)

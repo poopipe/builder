@@ -33,6 +33,9 @@ from builder.generators.regenerate import (
     set_generator_params,
     set_generator_pattern,
 )
+from builder.heightfield.heightfield_types import Heightfield, HeightmapLayer
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.regenerate import HeightfieldSceneHost, set_heightfield
 from builder.ui.param_ui import (
     BoolControl,
     EnumControl,
@@ -67,6 +70,8 @@ from builder.ui.text_field import (
     field_after,
     handle_text_keys,
 )
+from builder.ui.file_browser import make_heightmap_browser
+from pathlib import Path
 from builder.ui.theme import (
     ui_button_gap,
     ui_button_height,
@@ -101,6 +106,24 @@ def apply_control_edit(
     """write one inspector control into params and regenerate"""
     set_generator_params(
         scene, group_id, write_control(generator.params, control, value)
+    )
+
+
+def apply_heightfield_control_edit(
+    host: HeightfieldSceneHost,
+    catalog: HeightmapCatalog,
+    group_id: str,
+    heightfield: Heightfield,
+    control: ParamControl,
+    value: Any,
+) -> None:
+    """write one inspector control into the heightfield recipe and regenerate"""
+    set_heightfield(
+        host,
+        catalog,
+        host.mesh_shader(),
+        group_id,
+        write_control(heightfield, control, value),
     )
 
 
@@ -429,6 +452,194 @@ def build_pattern_buttons(
     return buttons, y
 
 
+def update_heightfield_inspector(
+    host: HeightfieldSceneHost,
+    catalog: HeightmapCatalog,
+    ui: UiState,
+    area: Rectangle,
+    group: Node,
+) -> tuple[list[Button], list[ParamRowRects]]:
+    """inspector for a heightfield group"""
+    heightfield: Heightfield | None = group.heightfield
+    if heightfield is None:
+        return [], []
+    scene: Scene = host.nodes
+    controls: tuple[ParamControl, ...] = controls_from_params_type(Heightfield)
+    layout: ParamLayout = layout_params(area, controls, heightfield)
+    rows: list[ParamRowRects] = list(layout.rows)
+
+    if ui.focus is not None and ui.focus.panel == inspector_panel:
+        if ui.focus.owner != group.id:
+            ui.clear_focus()
+        elif ui.edit is not None:
+            action: TextAction = handle_text_keys(ui.edit)
+            match action:
+                case TextAction.editing:
+                    pass
+                case TextAction.cancel:
+                    ui.clear_focus()
+                case TextAction.commit | TextAction.focus_next | TextAction.focus_prev:
+                    control: ParamControl = control_by_key(controls, ui.focus.key)
+                    parsed: Any | None = parse_control(control, ui.edit.text)
+                    if parsed is not None:
+                        apply_heightfield_control_edit(
+                            host,
+                            catalog,
+                            group.id,
+                            heightfield,
+                            control,
+                            parsed,
+                        )
+                    refreshed: Node | None = scene.nodes.get(group.id)
+                    if refreshed is not None and refreshed.heightfield is not None:
+                        heightfield = refreshed.heightfield
+                    text_keys: list[str] = [row.key for row in rows]
+                    next_key: str | None = None
+                    if action is TextAction.focus_next:
+                        next_key = field_after(text_keys, ui.focus.key, 1)
+                    elif action is TextAction.focus_prev:
+                        next_key = field_after(text_keys, ui.focus.key, -1)
+                    if next_key is None:
+                        ui.clear_focus()
+                    else:
+                        next_control: ParamControl = control_by_key(controls, next_key)
+                        ui.focus = FieldId(
+                            panel=inspector_panel,
+                            key=next_key,
+                            owner=group.id,
+                        )
+                        ui.edit = begin_edit(
+                            format_control(
+                                next_control,
+                                read_control(heightfield, next_control),
+                            )
+                        )
+
+    mouse: Vector2 = get_mouse_position()
+    clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
+    buttons: list[Button] = []
+    row: ParamRowRects
+    for row in rows:
+        control = control_by_key(controls, row.key)
+        match control:
+            case IntControl() | FloatControl() as numeric:
+                step: float = control_step(heightfield, numeric)
+
+                def step_minus(
+                    c: ParamControl = numeric,
+                    s: float = step,
+                    hf: Heightfield = heightfield,
+                ) -> None:
+                    ui.clear_focus()
+                    current: Any = read_control(hf, c)
+                    apply_heightfield_control_edit(
+                        host,
+                        catalog,
+                        group.id,
+                        hf,
+                        c,
+                        float(current) - s,
+                    )
+
+                def step_plus(
+                    c: ParamControl = numeric,
+                    s: float = step,
+                    hf: Heightfield = heightfield,
+                ) -> None:
+                    ui.clear_focus()
+                    current: Any = read_control(hf, c)
+                    apply_heightfield_control_edit(
+                        host,
+                        catalog,
+                        group.id,
+                        hf,
+                        c,
+                        float(current) + s,
+                    )
+
+                buttons.append(
+                    Button(label="-", on_click=step_minus, rect=row.minus)
+                )
+                buttons.append(
+                    Button(label="+", on_click=step_plus, rect=row.plus)
+                )
+                if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
+                    ui.focus = FieldId(
+                        panel=inspector_panel,
+                        key=control_key(control),
+                        owner=group.id,
+                    )
+                    ui.edit = begin_edit(
+                        format_control(control, read_control(heightfield, control))
+                    )
+
+    y: float = layout.bottom + ui_pad
+    x: float = area.x + ui_pad
+    inner_w: float = area.width - ui_pad * 2
+    row_h: float = float(ui_button_height)
+    layer_index: int
+    layer: HeightmapLayer
+    for layer_index, layer in enumerate(heightfield.layers):
+        label: str = catalog.entries[layer.heightmap_id].label if (
+            layer.heightmap_id in catalog.entries
+        ) else layer.heightmap_id.name
+
+        def remove_layer(index: int = layer_index, hf: Heightfield = heightfield) -> None:
+            ui.clear_focus()
+            layers: list[HeightmapLayer] = list(hf.layers)
+            del layers[index]
+            set_heightfield(
+                host,
+                catalog,
+                host.mesh_shader(),
+                group.id,
+                replace(hf, layers=tuple(layers)),
+            )
+
+        buttons.append(
+            Button(
+                label=label,
+                on_click=lambda: None,
+                rect=Rectangle(x, y, inner_w - ui_stepper_width - ui_button_gap, row_h),
+            )
+        )
+        buttons.append(
+            Button(
+                label="x",
+                on_click=remove_layer,
+                rect=Rectangle(
+                    x + inner_w - ui_stepper_width, y, ui_stepper_width, row_h
+                ),
+            )
+        )
+        y += row_h + ui_button_gap
+
+    def open_heightmap_browser() -> None:
+        ui.clear_focus()
+        ui.heightfield_layer_target = group.id
+        ui.file_browser = make_heightmap_browser(Path.cwd(), ".png")
+        ui.status = "Add heightmap…"
+
+    buttons.append(
+        Button(
+            label="+ Heightmap (.png)",
+            on_click=open_heightmap_browser,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    update_buttons(buttons, area)
+    if clicked and is_point_in_rect(mouse.x, mouse.y, area):
+        on_control: bool = any(
+            is_point_in_rect(mouse.x, mouse.y, button.rect) for button in buttons
+        )
+        on_value: bool = any(
+            is_point_in_rect(mouse.x, mouse.y, row.value) for row in rows
+        )
+        if not on_control and not on_value:
+            ui.clear_focus()
+    return buttons, rows
+
+
 def update_inspector(
     scene: Scene,
     ui: UiState,
@@ -436,8 +647,16 @@ def update_inspector(
     group: Node,
     catalog: MeshCatalog,
     active_mesh_id: MeshId,
+    scene_context: HeightfieldSceneHost | None = None,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> tuple[list[Button], list[ParamRowRects]]:
     """handle inspector input; return stepper/bake buttons and row geometry"""
+    if group.heightfield is not None:
+        if scene_context is None or heightmap_catalog is None:
+            return [], []
+        return update_heightfield_inspector(
+            scene_context, heightmap_catalog, ui, area, group
+        )
     generator: Generator | None = group.generator
     if generator is None:
         return [], []
@@ -656,12 +875,21 @@ def draw_inspector(
     buttons: list[Button],
     rows: list[ParamRowRects],
 ) -> None:
-    """draw the right inspector panel for a parametric group"""
-    generator: Generator | None = group.generator
-    if generator is None:
+    """draw the right inspector panel for a parametric or heightfield group"""
+    title: str
+    params: Any
+    controls: tuple[ParamControl, ...]
+    if group.heightfield is not None:
+        title = "Heightfield"
+        params = group.heightfield
+        controls = controls_from_params_type(Heightfield)
+    elif group.generator is not None:
+        generator: Generator = group.generator
+        title = get_spec(generator.kind).label
+        params = generator.params
+        controls = controls_from_params_type(get_spec(generator.kind).params_type)
+    else:
         return
-    spec: GeneratorSpec = get_spec(generator.kind)
-    controls: tuple[ParamControl, ...] = controls_from_params_type(spec.params_type)
     draw_rectangle_rec(area, ui_color_panel)
     draw_rectangle_lines_ex(
         Rectangle(area.x, area.y, 1, area.height),
@@ -670,7 +898,7 @@ def draw_inspector(
     )
     draw_text_ex(
         font,
-        spec.label,
+        title,
         Vector2(area.x + ui_pad, area.y + ui_pad),
         float(ui_font_size),
         0,
@@ -679,27 +907,25 @@ def draw_inspector(
     row: ParamRowRects
     for row in rows:
         control: ParamControl = control_by_key(controls, row.key)
-        value: Any = read_control(generator.params, control)
+        value: Any = read_control(params, control)
         match control:
             case BoolControl():
                 draw_checkbox_with_label(
                     font,
                     row.value,
-                    control_label(generator.params, control),
+                    control_label(params, control),
                     checked=bool(value),
                 )
             case EnumControl() as enum_control:
                 draw_text_ex(
                     font,
-                    control_label(generator.params, control),
+                    control_label(params, control),
                     Vector2(row.label.x, row.label.y),
                     float(ui_font_size),
                     0,
                     ui_color_text,
                 )
-                options: tuple[IntEnum, ...] = enum_members(
-                    generator.params, enum_control
-                )
+                options: tuple[IntEnum, ...] = enum_members(params, enum_control)
                 option_index: int
                 option_rect: Rectangle
                 for option_index, option_rect in enumerate(row.option_rects):
@@ -713,7 +939,7 @@ def draw_inspector(
             case IntControl() | FloatControl() | Float3ComponentControl() | Int3ComponentControl():
                 draw_text_ex(
                     font,
-                    control_label(generator.params, control),
+                    control_label(params, control),
                     Vector2(row.label.x, row.label.y),
                     float(ui_font_size),
                     0,

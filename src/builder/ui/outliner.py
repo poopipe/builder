@@ -78,6 +78,8 @@ def group_display_name(node: Node) -> str:
         return node.name
     if node.generator is not None:
         return get_spec(node.generator.kind).label
+    if node.heightfield is not None:
+        return "Heightfield"
     return "Group"
 
 

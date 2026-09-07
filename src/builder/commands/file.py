@@ -6,11 +6,19 @@ from pathlib import Path
 
 from builder.commands.command_context import CommandContext
 from builder.commands.commands_types import Command
+from builder.heightfield.heightfield_types import HeightmapLayer
+from builder.heightfield.heightmap_catalog import (
+    HeightmapAsset,
+    ensure_heightmap_buffer,
+    heightmap_id_for_path,
+    register_heightmap_asset,
+)
+from builder.heightfield.regenerate import set_heightfield
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.io.scene_format import scene_file_suffix
 from builder.io.scene_io import load_scene_from_path, save_scene_to_path
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind, register_mesh_asset
-from builder.scene.scene_types import MeshId
+from builder.scene.scene_types import MeshId, Node
 from builder.ui.file_browser import (
     FileBrowserPurpose,
     FileBrowserState,
@@ -21,6 +29,7 @@ from builder.ui.file_browser import (
 )
 
 mesh_file_suffix: str = ".fbx"
+heightmap_file_suffix: str = ".png"
 
 
 def remembered_browser_directory(
@@ -159,6 +168,53 @@ def apply_import_mesh_path(context: CommandContext, path: Path) -> None:
         import_mesh_from_path(context, path)
     except (OSError, RuntimeError, ValueError) as exc:
         context.ui.status = f"Import failed: {exc}"
+
+
+def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
+    """attach a chosen heightmap image to the pending heightfield group"""
+    from dataclasses import replace
+
+    group_id: str | None = context.ui.heightfield_layer_target
+    context.ui.heightfield_layer_target = None
+    if group_id is None:
+        context.ui.status = "No heightfield selected for heightmap"
+        return
+    group: Node | None = context.scene.nodes.nodes.get(group_id)
+    if group is None or group.heightfield is None:
+        context.ui.status = "Heightfield no longer available"
+        return
+    image_path: Path = path.resolve()
+    heightmap_id = heightmap_id_for_path(image_path)
+    # keep ids unique when the stem collides
+    if heightmap_id in context.application.heightmap_catalog.entries:
+        heightmap_id = heightmap_id_for_path(
+            image_path.with_name(f"{image_path.stem}_{len(context.application.heightmap_catalog.entries)}{image_path.suffix}")
+        )
+    asset: HeightmapAsset = HeightmapAsset(
+        heightmap_id=heightmap_id,
+        label=image_path.stem,
+        source_path=str(image_path),
+    )
+    try:
+        register_heightmap_asset(context.application.heightmap_catalog, asset)
+        ensure_heightmap_buffer(context.application.heightmap_catalog, heightmap_id)
+    except (OSError, RuntimeError, ValueError) as exc:
+        context.ui.status = f"Heightmap failed: {exc}"
+        return
+    layers: tuple[HeightmapLayer, ...] = group.heightfield.layers + (
+        HeightmapLayer(heightmap_id=heightmap_id, amplitude=1.0, offset=0.0),
+    )
+    set_heightfield(
+        context.scene,
+        context.application.heightmap_catalog,
+        context.scene.mesh_shader(),
+        group_id,
+        replace(group.heightfield, layers=layers),
+    )
+    context.application.browser_directories[FileBrowserPurpose.import_heightmap] = (
+        image_path.parent
+    )
+    context.ui.status = f"Added heightmap '{asset.label}'"
 
 
 cmd_quit: Command[None] = Command("Quit", quit_app)

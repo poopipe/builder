@@ -10,6 +10,7 @@ from pyray import Transform, Vector3, Vector4, quaternion_identity
 
 if TYPE_CHECKING:
     from builder.generators.generator_types import Generator
+    from builder.heightfield.heightfield_types import Heightfield
 
 # raylib stores quaternions as Vector4 (x, y, z, w); stubs have no Quaternion type
 type Quaternion = Vector4
@@ -34,7 +35,8 @@ class Node:
     """a scene node; mesh_id none means transform-only group
 
     name is a display label shown in the outliner; empty means derive one.
-    role tags control-point / handle nodes for spline generators
+    role tags control-point / handle nodes for spline generators.
+    generator and heightfield are mutually exclusive recipes on a group
     """
 
     id: str
@@ -42,6 +44,7 @@ class Node:
     transform: Transform
     mesh_id: MeshId | None
     generator: Generator | None = None
+    heightfield: Heightfield | None = None
     name: str = ""
     role: NodeRole = NodeRole.none
 

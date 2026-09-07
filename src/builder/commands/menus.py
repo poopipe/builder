@@ -17,6 +17,7 @@ from builder.commands.scene import (
     cmd_group,
     cmd_parent,
     cmd_place_grid,
+    cmd_place_heightfield,
     cmd_place_mesh,
     cmd_place_ngon,
     cmd_place_radial,
@@ -60,6 +61,7 @@ panel_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_place_radial, None),
     CommandEntry(cmd_place_ngon, None),
     CommandEntry(cmd_place_spline, None),
+    CommandEntry(cmd_place_heightfield, None),
 )
 
 

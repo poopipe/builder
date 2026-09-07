@@ -64,6 +64,7 @@ class FileBrowserPurpose(IntEnum):
     open_scene = 0
     save_scene = 1
     import_mesh = 2
+    import_heightmap = 3
 
 
 class FileBrowserCancel(IntEnum):
@@ -128,6 +129,8 @@ def browser_title(purpose: FileBrowserPurpose) -> str:
             return "Save scene"
         case FileBrowserPurpose.import_mesh:
             return "Import mesh"
+        case FileBrowserPurpose.import_heightmap:
+            return "Add heightmap"
 
 
 def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
@@ -139,6 +142,8 @@ def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
             return "Save"
         case FileBrowserPurpose.import_mesh:
             return "Import"
+        case FileBrowserPurpose.import_heightmap:
+            return "Add"
 
 
 def make_open_browser(
@@ -176,6 +181,13 @@ def make_import_browser(directory: Path, filter_suffix: str) -> FileBrowserState
     """open-mode browser for importing a mesh file"""
     return make_open_browser(
         directory, filter_suffix, purpose=FileBrowserPurpose.import_mesh
+    )
+
+
+def make_heightmap_browser(directory: Path, filter_suffix: str) -> FileBrowserState:
+    """open-mode browser for importing a heightmap image"""
+    return make_open_browser(
+        directory, filter_suffix, purpose=FileBrowserPurpose.import_heightmap
     )
 
 

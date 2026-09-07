@@ -25,6 +25,7 @@ VS_SOURCE: str = """
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;
+in vec4 vertexColor;
 in mat4 instanceTransform;
 out vec3 fragPosition;
 out vec2 fragTexCoord;
@@ -37,7 +38,7 @@ void main()
     mat4 world = parentTransform * instanceTransform;
     fragPosition = vec3(world * vec4(vertexPosition, 1.0));
     fragTexCoord = vertexTexCoord;
-    fragColor = vec4(1.0);
+    fragColor = vertexColor;
     fragNormal = normalize(mat3(world) * vertexNormal);
     gl_Position = mvp * world * vec4(vertexPosition, 1.0);
 }
@@ -124,6 +125,9 @@ class Lighting:
 
         self.shader.locs[ShaderLocationIndex.SHADER_LOC_MATRIX_MVP] = (
             get_shader_location(self.shader, "mvp")
+        )
+        self.shader.locs[ShaderLocationIndex.SHADER_LOC_VERTEX_COLOR] = (
+            get_shader_location_attrib(self.shader, "vertexColor")
         )
         self.shader.locs[ShaderLocationIndex.SHADER_LOC_VERTEX_INSTANCETRANSFORM] = (
             get_shader_location_attrib(self.shader, "instanceTransform")

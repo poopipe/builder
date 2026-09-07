@@ -14,6 +14,7 @@ from pyray import (
     MouseButton,
     Ray,
     Rectangle,
+    Shader,
     Vector2,
     Vector3,
     begin_mode_3d,
@@ -78,7 +79,7 @@ from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
 from builder.view.mesh_table import MeshTable
 from builder.view.picking import pick_nearest_mesh_node
-from builder.view.prepare_mesh import PreparedMesh, prepare_mesh
+from builder.view.prepare_mesh import PreparedMesh, prepare_mesh, release_prepared_mesh
 from builder.view.upload_mesh import upload_imported_mesh
 from builder.view.viewport_ray import mouse_in_rect, viewport_world_ray
 from builder.view.world_axes import draw_world_axes
@@ -189,6 +190,18 @@ class Viewport:
     def register_mesh(self, mesh_id: MeshId, prepared: PreparedMesh) -> None:
         """insert or replace a prepared mesh in the mesh table"""
         self.mesh_table.add_or_replace(mesh_id, prepared)
+
+    def unload_mesh(self, mesh_id: MeshId) -> None:
+        """unload one prepared mesh if present; builtins are ignored"""
+        if mesh_id in builtin_mesh_ids:
+            return
+        prepared: PreparedMesh | None = self.mesh_table.entries.pop(mesh_id, None)
+        if prepared is not None:
+            release_prepared_mesh(prepared)
+
+    def mesh_shader(self) -> Shader:
+        """return the lighting shader used for mesh uploads"""
+        return self.lighting.shader
 
     def register_imported_mesh(self, imported: ImportedMesh) -> MeshId:
         """upload and register an imported mesh; return its mesh id"""

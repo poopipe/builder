@@ -22,11 +22,13 @@ from builder.generators.param_types import (
     IntParam,
 )
 from builder.generators.registry import get_spec
+from builder.heightfield.heightfield_types import Heightfield, HeightmapLayer
+from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapId
 from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 6
+scene_format_version: int = 7
 scene_file_suffix: str = ".scene"
 
 
@@ -47,6 +49,7 @@ class SceneDocument:
     active_mesh_id: MeshId
     ui: SceneUiState
     meshes: tuple[MeshAsset, ...]
+    heightmaps: tuple[HeightmapAsset, ...]
     nodes: tuple[Node, ...]
 
 
@@ -234,9 +237,8 @@ def params_to_json(params: Any) -> dict[str, Any]:
         elif isinstance(value, FloatParam):
             out[field.name] = float(value.value)
         else:
-            raise TypeError(
-                f"unsupported param type for {field.name}: {type(value)!r}"
-            )
+            # skip non-wrapper fields (eg. heightfield.layers)
+            continue
     return out
 
 
@@ -403,6 +405,8 @@ def node_to_json(node: Node) -> dict[str, Any]:
             payload["role"] = node.role.name
     if node.generator is not None:
         payload["generator"] = generator_to_json(node.generator)
+    if node.heightfield is not None:
+        payload["heightfield"] = heightfield_to_json(node.heightfield)
     return payload
 
 
@@ -438,19 +442,106 @@ def node_from_json(data: Any) -> Node:
     generator: Generator | None = None
     if "generator" in data and data["generator"] is not None:
         generator = generator_from_json(data["generator"])
+    heightfield: Heightfield | None = None
+    if "heightfield" in data and data["heightfield"] is not None:
+        heightfield = heightfield_from_json(data["heightfield"])
+    if generator is not None and heightfield is not None:
+        raise ValueError("node cannot have both generator and heightfield")
     return Node(
         id=node_id,
         parent_id=parent_id,
         transform=transform_from_json(data.get("transform")),
         mesh_id=mesh_id,
         generator=generator,
+        heightfield=heightfield,
         name=name_raw,
         role=role,
     )
 
 
+def heightfield_to_json(heightfield: Heightfield) -> dict[str, Any]:
+    """encode a heightfield recipe"""
+    return {
+        "params": params_to_json(heightfield),
+        "layers": [
+            {
+                "heightmap_id": layer.heightmap_id.name,
+                "amplitude": float(layer.amplitude),
+                "offset": float(layer.offset),
+            }
+            for layer in heightfield.layers
+        ],
+    }
+
+
+def heightfield_from_json(data: Any) -> Heightfield:
+    """decode a heightfield recipe"""
+    if not isinstance(data, dict):
+        raise ValueError("heightfield must be an object")
+    params_raw: Any = data.get("params")
+    if not isinstance(params_raw, dict):
+        raise ValueError("heightfield.params must be an object")
+    base: Heightfield = typed_params_from_json(Heightfield, params_raw)
+    layers_raw: Any = data.get("layers", [])
+    if not isinstance(layers_raw, list):
+        raise ValueError("heightfield.layers must be an array")
+    layers: list[HeightmapLayer] = []
+    entry: Any
+    for entry in layers_raw:
+        if not isinstance(entry, dict):
+            raise ValueError("heightfield layer must be an object")
+        map_id: Any = entry.get("heightmap_id")
+        if not isinstance(map_id, str) or map_id == "":
+            raise ValueError("heightfield layer.heightmap_id must be a non-empty string")
+        amplitude: Any = entry.get("amplitude", 1.0)
+        offset: Any = entry.get("offset", 0.0)
+        if isinstance(amplitude, bool) or not isinstance(amplitude, (int, float)):
+            raise ValueError("heightfield layer.amplitude must be a number")
+        if isinstance(offset, bool) or not isinstance(offset, (int, float)):
+            raise ValueError("heightfield layer.offset must be a number")
+        layers.append(
+            HeightmapLayer(
+                heightmap_id=HeightmapId(map_id),
+                amplitude=float(amplitude),
+                offset=float(offset),
+            )
+        )
+    return replace(base, layers=tuple(layers))
+
+
+def heightmap_asset_to_json(
+    asset: HeightmapAsset, relative_source: str
+) -> dict[str, Any]:
+    """encode a heightmap catalog entry"""
+    return {
+        "id": asset.heightmap_id.name,
+        "label": asset.label,
+        "source": relative_source,
+    }
+
+
+def heightmap_asset_from_json(data: Any) -> HeightmapAsset:
+    """decode a heightmap catalog entry; source stays relative until load"""
+    if not isinstance(data, dict):
+        raise ValueError("heightmap entry must be an object")
+    map_id: Any = data.get("id")
+    label: Any = data.get("label")
+    source: Any = data.get("source")
+    if not isinstance(map_id, str) or map_id == "":
+        raise ValueError("heightmap.id must be a non-empty string")
+    if not isinstance(label, str) or label == "":
+        raise ValueError("heightmap.label must be a non-empty string")
+    if not isinstance(source, str) or source == "":
+        raise ValueError("heightmap.source must be a non-empty string")
+    return HeightmapAsset(
+        heightmap_id=HeightmapId(map_id),
+        label=label,
+        source_path=source,
+    )
+
+
 def nodes_for_save(nodes: dict[str, Node]) -> list[Node]:
-    """omit meshed children of live generator groups; those are rebuilt on load
+    """omit meshed children of live generator/heightfield groups; rebuilt on load
 
     nested group nodes are always kept, even when parented under a generator
     """
@@ -459,7 +550,9 @@ def nodes_for_save(nodes: dict[str, Node]) -> list[Node]:
     for node in nodes.values():
         if node.parent_id is not None and node.mesh_id is not None:
             parent: Node | None = nodes.get(node.parent_id)
-            if parent is not None and parent.generator is not None:
+            if parent is not None and (
+                parent.generator is not None or parent.heightfield is not None
+            ):
                 continue
         saved.append(node)
     return saved
@@ -468,6 +561,7 @@ def nodes_for_save(nodes: dict[str, Node]) -> list[Node]:
 def document_to_json(
     document: SceneDocument,
     relative_sources: dict[str, str],
+    heightmap_sources: dict[str, str],
 ) -> dict[str, Any]:
     """encode a scene document; relative_sources maps mesh id -> relative path"""
     meshes_json: list[dict[str, Any]] = []
@@ -475,6 +569,15 @@ def document_to_json(
     for asset in document.meshes:
         relative: str | None = relative_sources.get(asset.mesh_id.name)
         meshes_json.append(mesh_asset_to_json(asset, relative))
+    heightmaps_json: list[dict[str, Any]] = []
+    heightmap: HeightmapAsset
+    for heightmap in document.heightmaps:
+        relative_hm: str | None = heightmap_sources.get(heightmap.heightmap_id.name)
+        if relative_hm is None:
+            raise ValueError(
+                f"heightmap '{heightmap.label}' has no relative source path"
+            )
+        heightmaps_json.append(heightmap_asset_to_json(heightmap, relative_hm))
     nodes_json: list[dict[str, Any]] = [node_to_json(node) for node in document.nodes]
     return {
         "version": document.version,
@@ -485,6 +588,7 @@ def document_to_json(
             "outliner_open": document.ui.outliner_open,
         },
         "meshes": meshes_json,
+        "heightmaps": heightmaps_json,
         "nodes": nodes_json,
     }
 
@@ -517,10 +621,16 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
     ):
         raise ValueError("ui panel flags must be booleans")
     meshes_raw: Any = data.get("meshes")
+    heightmaps_raw: Any = data.get("heightmaps")
     nodes_raw: Any = data.get("nodes")
     if not isinstance(meshes_raw, list) or not isinstance(nodes_raw, list):
         raise ValueError("meshes and nodes must be arrays")
+    if not isinstance(heightmaps_raw, list):
+        raise ValueError("heightmaps must be an array")
     meshes: list[MeshAsset] = [mesh_asset_from_json(entry) for entry in meshes_raw]
+    heightmaps: list[HeightmapAsset] = [
+        heightmap_asset_from_json(entry) for entry in heightmaps_raw
+    ]
     nodes: list[Node] = [node_from_json(entry) for entry in nodes_raw]
     document: SceneDocument = SceneDocument(
         version=version_raw,
@@ -531,6 +641,7 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
             outliner_open=outliner_open,
         ),
         meshes=tuple(meshes),
+        heightmaps=tuple(heightmaps),
         nodes=tuple(nodes),
     )
     return document, []
@@ -539,9 +650,12 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
 def dumps_document(
     document: SceneDocument,
     relative_sources: dict[str, str],
+    heightmap_sources: dict[str, str],
 ) -> str:
     """serialize a scene document to indented json text"""
-    payload: dict[str, Any] = document_to_json(document, relative_sources)
+    payload: dict[str, Any] = document_to_json(
+        document, relative_sources, heightmap_sources
+    )
     return json.dumps(payload, indent=2, sort_keys=False) + "\n"
 
 

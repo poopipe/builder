@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Protocol
 
 from builder.io.mesh_import import ImportedMesh, MeshImporter
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.meshes.mesh_catalog import MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
 from builder.ui.file_browser import FileBrowserState
 from builder.view.gizmo import GizmoState
+from builder.view.prepare_mesh import PreparedMesh
+from pyray import Shader
 
 
 class SceneContext(Protocol):
@@ -49,6 +52,18 @@ class SceneContext(Protocol):
         """upload and register an imported mesh; return its mesh id"""
         ...
 
+    def register_mesh(self, mesh_id: MeshId, prepared: PreparedMesh) -> None:
+        """insert or replace a prepared mesh in the mesh table"""
+        ...
+
+    def unload_mesh(self, mesh_id: MeshId) -> None:
+        """unload one prepared mesh if present; builtins are ignored"""
+        ...
+
+    def mesh_shader(self) -> Shader:
+        """return the lighting shader used for mesh uploads"""
+        ...
+
     def clear_non_builtin_meshes(self) -> None:
         """unload imported meshes; keep builtins"""
         ...
@@ -67,6 +82,7 @@ class UiContext(Protocol):
     outliner_open: bool
     meshes_panel_scroll: float
     file_browser: FileBrowserState | None
+    heightfield_layer_target: str | None
 
     def toggle_side_panel(self) -> None:
         """show or hide the context side panel"""
@@ -87,6 +103,7 @@ class ApplicationContext(Protocol):
     should_close: bool
     importer: MeshImporter
     mesh_catalog: MeshCatalog
+    heightmap_catalog: HeightmapCatalog
     active_mesh_id: MeshId
     scene_path: Path | None
 
