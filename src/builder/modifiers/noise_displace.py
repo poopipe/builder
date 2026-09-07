@@ -11,7 +11,7 @@ from builder.generators.generator_types import (
     GeneratedSlot,
     ParamField,
     ParamMap,
-    axis_choices,
+    Axis,
 )
 from builder.modifiers.modifier_types import ModifierSpec
 
@@ -118,7 +118,7 @@ noise_displace_spec: ModifierSpec = ModifierSpec(
     kind="noise_displace",
     label="Noise displace",
     fields=(
-        ParamField("axis", "Axis", "enum", 1.0, options=axis_choices),
+        ParamField("axis", "Axis", "enum", 1.0, options=Axis),
         ParamField(
             "amplitude", "Amplitude", "float", 0.1, minimum=-50.0, maximum=50.0
         ),

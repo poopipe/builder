@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from enum import IntEnum
+from typing import TYPE_CHECKING, Any, Literal
 
 from pyray import Transform
 
@@ -32,20 +33,9 @@ class BuildContext:
     group_id: str
 
 
-type BuildTransforms = Callable[
-    [Mapping[str, ParamValue], BuildContext], list[GeneratedSlot]
-]
-
-
 @dataclass(frozen=True)
 class ParamField:
-    """one editable parameter exposed by a generator kind
-
-    an enum field carries ordered (value, label) options shown as radio buttons
-
-    group names a collapsible section in the inspector; contiguous fields
-    sharing a group fold together, empty group stays pinned at the top
-    """
+    """inspector descriptor for one editable value"""
 
     key: str
     label: str
@@ -53,142 +43,32 @@ class ParamField:
     step: float
     minimum: float | None = None
     maximum: float | None = None
-    options: tuple[tuple[int, str], ...] | None = None
-    group: str = ""
+    options: type[IntEnum] | tuple[IntEnum, ...] | None = None
 
 
-axis_choices: tuple[tuple[int, str], ...] = ((0, "X"), (1, "Y"), (2, "Z"))
+class Axis(IntEnum):
+    X = 0
+    Y = 1
+    Z = 2
 
-facing_none_center: tuple[tuple[int, str], ...] = (
-    (0, "None"),
-    (1, "Center"),
-)
-facing_none_center_edge: tuple[tuple[int, str], ...] = (
-    (0, "None"),
-    (1, "Center"),
-    (2, "Edge"),
-)
-facing_none_edge: tuple[tuple[int, str], ...] = (
-    (0, "None"),
-    (2, "Edge"),
-)
 
-distribution_group: str = "Distribution"
-spacing_group: str = "Spacing"
-orientation_group: str = "Orientation"
-edge_group: str = "Edge"
-point_group: str = "Point"
+class Facing(IntEnum):
+    none = 0
+    center = 1
+    edge = 2
 
-orient_fields: tuple[ParamField, ...] = (
-    ParamField(
-        "orient_yaw",
-        "Yaw",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=orientation_group,
-    ),
-    ParamField(
-        "orient_pitch",
-        "Pitch",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=orientation_group,
-    ),
-    ParamField(
-        "orient_roll",
-        "Roll",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=orientation_group,
-    ),
-)
-orient_defaults: ParamMap = {
-    "orient_yaw": 0.0,
-    "orient_pitch": 0.0,
-    "orient_roll": 0.0,
-}
 
-# same keys as orient_fields; labels for generators with separate point meshes
-edge_orient_fields: tuple[ParamField, ...] = (
-    ParamField(
-        "orient_yaw",
-        "Yaw",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=edge_group,
-    ),
-    ParamField(
-        "orient_pitch",
-        "Pitch",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=edge_group,
-    ),
-    ParamField(
-        "orient_roll",
-        "Roll",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=edge_group,
-    ),
-)
-point_orient_fields: tuple[ParamField, ...] = (
-    ParamField(
-        "point_orient_yaw",
-        "Yaw",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=point_group,
-    ),
-    ParamField(
-        "point_orient_pitch",
-        "Pitch",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=point_group,
-    ),
-    ParamField(
-        "point_orient_roll",
-        "Roll",
-        "float",
-        5.0,
-        minimum=-180.0,
-        maximum=180.0,
-        group=point_group,
-    ),
-)
-point_orient_defaults: ParamMap = {
-    "point_orient_yaw": 0.0,
-    "point_orient_pitch": 0.0,
-    "point_orient_roll": 0.0,
-}
+type BuildTransforms = Callable[[Any, BuildContext], list[GeneratedSlot]]
 
 
 @dataclass(frozen=True)
 class GeneratorSpec:
-    """registry entry: how to build and edit one generator kind"""
+    """registry entry: how to build one generator kind"""
 
     kind: str
     label: str
-    fields: tuple[ParamField, ...]
-    defaults: ParamMap
     build_transforms: BuildTransforms
+    params_type: type
     supports_point_meshes: bool = False
 
 
@@ -210,11 +90,14 @@ class MeshPattern:
 
 @dataclass(frozen=True)
 class Generator:
-    """parametric recipe owned by a group node until baked"""
+    """parametric recipe owned by a group node until baked
+
+    params is a frozen dataclass declared by the generator kind
+    """
 
     kind: str
     meshes: MeshPattern
-    params: ParamMap
+    params: Any
     point_meshes: MeshPattern | None = None
     modifiers: tuple[Modifier, ...] = ()
 

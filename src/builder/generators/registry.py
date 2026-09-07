@@ -5,12 +5,12 @@ One module per generator kind; add new specs to ``generator_specs``
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from enum import IntEnum
+from typing import Any
 
 from builder.generators.generator_types import (
     GeneratorSpec,
     ParamField,
-    ParamMap,
     ParamValue,
 )
 from builder.generators.grid import grid_spec
@@ -35,32 +35,24 @@ def get_spec(kind: str) -> GeneratorSpec:
     raise KeyError(f"unknown generator kind: {kind}")
 
 
-def default_params(kind: str) -> ParamMap:
-    """return a fresh copy of the default params for a kind"""
-    return dict(get_spec(kind).defaults)
+def default_params(kind: str) -> Any:
+    """return a fresh default params dataclass for a kind"""
+    return get_spec(kind).params_type()
 
 
-def params_with_defaults(kind: str, params: Mapping[str, ParamValue]) -> ParamMap:
-    """return defaults overlaid with stored params (fills keys added later)"""
-    completed: ParamMap = default_params(kind)
-    completed.update(params)
-    return completed
-
-
-def field_for(spec: GeneratorSpec, key: str) -> ParamField:
-    """return the param field with the given key"""
-    field: ParamField
-    for field in spec.fields:
-        if field.key == key:
-            return field
-    raise KeyError(f"unknown param {key!r} for generator {spec.kind}")
+def option_members(field: ParamField) -> tuple[IntEnum, ...]:
+    """return the enum members listed on a field"""
+    raw: type[IntEnum] | tuple[IntEnum, ...] | None = field.options
+    if raw is None:
+        return ()
+    if isinstance(raw, type):
+        return tuple(raw)
+    return raw
 
 
 def enum_option_values(field: ParamField) -> tuple[int, ...]:
     """return the allowed values for an enum field, empty if it has none"""
-    if field.options is None:
-        return ()
-    return tuple(value for value, _ in field.options)
+    return tuple(int(member) for member in option_members(field))
 
 
 def clamp_param(field: ParamField, value: ParamValue) -> ParamValue:
@@ -85,12 +77,10 @@ def clamp_param(field: ParamField, value: ParamValue) -> ParamValue:
 
 def enum_option_label(field: ParamField, value: ParamValue) -> str:
     """return the label for an enum value, or its number if unknown"""
-    if field.options is not None:
-        option_value: int
-        option_label: str
-        for option_value, option_label in field.options:
-            if option_value == int(value):
-                return option_label
+    member: IntEnum
+    for member in option_members(field):
+        if int(member) == int(value):
+            return member.name.capitalize()
     return str(int(value))
 
 

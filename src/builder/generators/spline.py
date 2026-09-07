@@ -2,131 +2,94 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from dataclasses import dataclass
 
 from builder.distribution.spline import spline_slots_from_context
 from builder.generators.generator_types import (
+    Axis,
     BuildContext,
+    Facing,
     GeneratedSlot,
     GeneratorSpec,
-    ParamField,
-    ParamMap,
-    ParamValue,
-    axis_choices,
-    distribution_group,
-    edge_group,
-    edge_orient_fields,
-    facing_none_edge,
-    orient_defaults,
-    point_group,
-    point_orient_defaults,
-    point_orient_fields,
-    spacing_group,
+)
+from builder.generators.orient import apply_orients
+from builder.generators.param_types import (
+    BoolParam,
+    EnumParam,
+    Float3Param,
+    FloatParam,
+    IntParam,
 )
 
 
-def spline_from_params(
-    params: Mapping[str, ParamValue],
-    context: BuildContext,
-) -> list[GeneratedSlot]:
-    """build spline slots from params and control-point children"""
-    return spline_slots_from_context(
-        context,
-        spacing=float(params["spacing"]),
-        closed=bool(int(params.get("closed", 0))),
-        include_points=bool(int(params.get("include_points", 1))),
-        facing=int(params.get("facing", 0)),
-        point_facing=int(params.get("point_facing", params.get("facing", 0))),
-        axis=int(params.get("axis", 1)),
-        count_height=int(params.get("count_height", 1)),
-        spacing_height=float(params.get("spacing_height", 2.0)),
-        build_from=int(params.get("build_from", 1)),
+@dataclass(frozen=True)
+class SplineParams:
+    """recipe values for a spline generator"""
+
+    axis: EnumParam = EnumParam(Axis.Y, label="Axis")
+    closed: BoolParam = BoolParam(False, label="Closed")
+    spacing: FloatParam = FloatParam(1.0, label="Spacing", minimum=0.1, maximum=50.0)
+    count_height: IntParam = IntParam(1, label="Count height", minimum=1, maximum=512)
+    spacing_height: FloatParam = FloatParam(
+        2.0, label="Spacing height", minimum=0.1, maximum=50.0
+    )
+    include_points: BoolParam = BoolParam(True, label="Points")
+    facing: EnumParam = EnumParam(
+        Facing.edge,
+        label="Facing",
+        options=(Facing.none, Facing.edge),
+    )
+    point_facing: EnumParam = EnumParam(
+        Facing.edge,
+        label="Point facing",
+        options=(Facing.none, Facing.edge),
+    )
+    build_from: EnumParam = EnumParam(Axis.Y, label="Build from")
+    orient: Float3Param = Float3Param(
+        label="Orient",
+        label_x="Yaw",
+        label_y="Pitch",
+        label_z="Roll",
+        step=5.0,
+        minimum=-180.0,
+        maximum=180.0,
+    )
+    point_orient: Float3Param = Float3Param(
+        label="Point orient",
+        label_x="Yaw",
+        label_y="Pitch",
+        label_z="Roll",
+        step=5.0,
+        minimum=-180.0,
+        maximum=180.0,
     )
 
 
-spline_defaults: ParamMap = {
-    "axis": 1,
-    "closed": 0,
-    "spacing": 1.0,
-    "count_height": 1,
-    "spacing_height": 2.0,
-    "include_points": 1,
-    "facing": 2,
-    "point_facing": 2,
-    "build_from": 1,
-    **orient_defaults,
-    **point_orient_defaults,
-}
+def spline_from_params(
+    params: SplineParams, context: BuildContext
+) -> list[GeneratedSlot]:
+    """build spline slots from typed params and control-point children"""
+    slots: list[GeneratedSlot] = spline_slots_from_context(
+        context,
+        spacing=params.spacing.value,
+        closed=params.closed.value,
+        include_points=params.include_points.value,
+        facing=int(params.facing.value),
+        point_facing=int(params.point_facing.value),
+        axis=int(params.axis.value),
+        count_height=params.count_height.value,
+        spacing_height=params.spacing_height.value,
+        build_from=int(params.build_from.value),
+    )
+    return apply_orients(
+        slots, orient=params.orient, point_orient=params.point_orient
+    )
+
 
 spline_spec: GeneratorSpec = GeneratorSpec(
     kind="spline",
     label="Spline",
-    fields=(
-        ParamField(
-            "axis",
-            "Axis",
-            "enum",
-            1.0,
-            options=axis_choices,
-            group=distribution_group,
-        ),
-        ParamField("closed", "Closed", "bool", 1.0, group=distribution_group),
-        ParamField(
-            "count_height",
-            "Count height",
-            "int",
-            1.0,
-            minimum=1.0,
-            maximum=512.0,
-            group=distribution_group,
-        ),
-        ParamField("include_points", "Points", "bool", 1.0, group=distribution_group),
-        ParamField(
-            "build_from",
-            "Build from",
-            "enum",
-            1.0,
-            options=axis_choices,
-            group=distribution_group,
-        ),
-        ParamField(
-            "spacing",
-            "Spacing",
-            "float",
-            0.25,
-            minimum=0.1,
-            maximum=50.0,
-            group=spacing_group,
-        ),
-        ParamField(
-            "spacing_height",
-            "Spacing height",
-            "float",
-            0.25,
-            minimum=0.1,
-            maximum=50.0,
-            group=spacing_group,
-        ),
-        ParamField(
-            "facing",
-            "Facing",
-            "enum",
-            1.0,
-            options=facing_none_edge,
-            group=edge_group,
-        ),
-        *edge_orient_fields,
-        ParamField(
-            "point_facing",
-            "Facing",
-            "enum",
-            1.0,
-            options=facing_none_edge,
-            group=point_group,
-        ),
-        *point_orient_fields,
-    ),
-    defaults=spline_defaults,
     build_transforms=spline_from_params,
+    params_type=SplineParams,
     supports_point_meshes=True,
 )

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from enum import IntEnum
 
 from pyray import (
     Font,
@@ -23,7 +24,7 @@ from builder.generators.generator_types import (
     ParamField,
     ParamValue,
 )
-from builder.generators.registry import format_param, parse_param
+from builder.generators.registry import format_param, option_members, parse_param
 from builder.generators.regenerate import (
     set_generator_modifiers,
     set_modifier_param,
@@ -39,7 +40,6 @@ from builder.modifiers.registry import (
 )
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
-from builder.ui.inspector import ParamRowRects, layout_field_row
 from builder.ui.text_field import (
     FieldId,
     TextAction,
@@ -71,6 +71,87 @@ from builder.ui.widgets import (
 
 
 modifiers_panel: str = "modifiers"
+
+
+@dataclass(frozen=True)
+class ModifierRowRects:
+    """hit targets for one modifiers-panel row"""
+
+    key: str
+    label: Rectangle
+    minus: Rectangle
+    value: Rectangle
+    plus: Rectangle
+    is_bool: bool = False
+    is_enum: bool = False
+    option_rects: tuple[Rectangle, ...] = ()
+    modifier_index: int | None = None
+
+
+def layout_field_row(
+    field: ParamField, x: float, y: float, inner_w: float
+) -> tuple[ModifierRowRects, float]:
+    """place one modifier ParamField row and return it with the y below it"""
+    empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
+    if field.value_type == "bool":
+        hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
+        row: ModifierRowRects = ModifierRowRects(
+            key=field.key,
+            label=hit,
+            minus=empty,
+            value=hit,
+            plus=empty,
+            is_bool=True,
+        )
+        return row, y + float(ui_button_height) + ui_pad
+    if field.value_type == "enum":
+        options: tuple[IntEnum, ...] = option_members(field)
+        enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+        controls_y: float = y + float(ui_font_size) + 4.0
+        option_count: int = max(1, len(options))
+        option_w: float = (
+            inner_w - ui_button_gap * (option_count - 1)
+        ) / option_count
+        option_rects: tuple[Rectangle, ...] = tuple(
+            Rectangle(
+                x + (option_w + ui_button_gap) * index,
+                controls_y,
+                option_w,
+                float(ui_button_height),
+            )
+            for index in range(len(options))
+        )
+        row = ModifierRowRects(
+            key=field.key,
+            label=enum_label,
+            minus=empty,
+            value=empty,
+            plus=empty,
+            is_enum=True,
+            option_rects=option_rects,
+        )
+        return row, controls_y + float(ui_button_height) + ui_pad
+    label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+    controls_y = y + float(ui_font_size) + 4.0
+    minus: Rectangle = Rectangle(
+        x, controls_y, float(ui_stepper_width), float(ui_button_height)
+    )
+    plus: Rectangle = Rectangle(
+        x + inner_w - float(ui_stepper_width),
+        controls_y,
+        float(ui_stepper_width),
+        float(ui_button_height),
+    )
+    value: Rectangle = Rectangle(
+        minus.x + minus.width + ui_button_gap,
+        controls_y,
+        plus.x - (minus.x + minus.width + ui_button_gap * 2),
+        float(ui_button_height),
+    )
+    row = ModifierRowRects(
+        key=field.key, label=label, minus=minus, value=value, plus=plus
+    )
+    return row, controls_y + float(ui_button_height) + ui_pad
 
 
 def sync_modifiers_focus(ui: UiState, group: Node | None) -> None:
@@ -190,7 +271,7 @@ def update_modifiers_panel(
     ui: UiState,
     area: Rectangle,
     group: Node,
-) -> tuple[list[Button], list[ParamRowRects]]:
+) -> tuple[list[Button], list[ModifierRowRects]]:
     """handle modifiers panel input; return buttons and row geometry"""
     generator: Generator | None = group.generator
     if generator is None:
@@ -214,7 +295,7 @@ def update_modifiers_panel(
     step_w: float = float(ui_stepper_width)
     y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
     buttons: list[Button] = []
-    rows: list[ParamRowRects] = []
+    rows: list[ModifierRowRects] = []
     mouse: Vector2 = get_mouse_position()
     clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
 
@@ -273,7 +354,7 @@ def update_modifiers_panel(
 
         enable_rect: Rectangle = Rectangle(x, y, inner_w, row_h)
         rows.append(
-            ParamRowRects(
+            ModifierRowRects(
                 key=f"modenable:{index}:{label}",
                 label=enable_rect,
                 minus=Rectangle(0.0, 0.0, 0.0, 0.0),
@@ -305,7 +386,7 @@ def update_modifiers_panel(
         field: ParamField
         for field in mod_spec.fields:
             focus_key: str = f"mod:{index}:{field.key}"
-            row: ParamRowRects
+            row: ModifierRowRects
             row, y = layout_field_row(field, x, y, inner_w)
             row = replace(row, key=focus_key, modifier_index=index)
             rows.append(row)
@@ -322,7 +403,7 @@ def update_modifiers_panel(
                 continue
             if row.is_enum:
                 if clicked:
-                    options: tuple[tuple[int, str], ...] = field.options or ()
+                    options: tuple[IntEnum, ...] = option_members(field)
                     option_index: int
                     option_rect: Rectangle
                     for option_index, option_rect in enumerate(row.option_rects):
@@ -333,7 +414,7 @@ def update_modifiers_panel(
                                 group.id,
                                 index,
                                 field.key,
-                                options[option_index][0],
+                                int(options[option_index]),
                             )
                             break
                 continue
@@ -377,7 +458,7 @@ def draw_modifiers_panel(
     ui: UiState,
     group: Node,
     buttons: list[Button],
-    rows: list[ParamRowRects],
+    rows: list[ModifierRowRects],
 ) -> None:
     """draw the modifiers column for a parametric group"""
     generator: Generator | None = group.generator
@@ -397,7 +478,7 @@ def draw_modifiers_panel(
         0,
         ui_color_text,
     )
-    row: ParamRowRects
+    row: ModifierRowRects
     for row in rows:
         if row.key.startswith("modenable:"):
             enable_label: str = (
@@ -444,18 +525,16 @@ def draw_modifiers_panel(
             ui_color_text,
         )
         if row.is_enum:
-            options: tuple[tuple[int, str], ...] = field.options or ()
+            options: tuple[IntEnum, ...] = option_members(field)
             option_index: int
             option_rect: Rectangle
             for option_index, option_rect in enumerate(row.option_rects):
-                option_value: int
-                option_label: str
-                option_value, option_label = options[option_index]
+                member: IntEnum = options[option_index]
                 draw_radio_option(
                     font,
                     option_rect,
-                    option_label,
-                    selected=int(value) == option_value,
+                    member.name.capitalize(),
+                    selected=int(value) == int(member),
                 )
             continue
         edit: TextEdit | None = ui.focused_edit(modifiers_panel, row.key, group.id)

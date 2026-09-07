@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import MISSING, dataclass, fields, replace
+from enum import IntEnum
+from typing import Any, get_type_hints
 
 from pyray import Transform, Vector3, Vector4
 
@@ -12,13 +13,21 @@ from builder.generators.generator_types import (
     MeshSequenceMode,
     Modifier,
     ParamMap,
-    ParamValue,
 )
+from builder.generators.param_types import (
+    BoolParam,
+    EnumParam,
+    Float3Param,
+    FloatParam,
+    Int3Param,
+    IntParam,
+)
+from builder.generators.registry import get_spec
 from builder.modifiers.registry import known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node
 
-scene_format_version: int = 4
+scene_format_version: int = 6
 scene_file_suffix: str = ".scene"
 
 
@@ -126,6 +135,64 @@ def mesh_pattern_from_json(data: dict[str, Any]) -> MeshPattern:
     return MeshPattern(mesh_ids=tuple(mesh_ids), mode=mode, seed=seed_raw)
 
 
+def vec3_to_json(param: Float3Param | Int3Param) -> dict[str, float | int]:
+    """encode a Float3Param/Int3Param's components"""
+    if isinstance(param, Int3Param):
+        return {"x": int(param.x), "y": int(param.y), "z": int(param.z)}
+    return {"x": float(param.x), "y": float(param.y), "z": float(param.z)}
+
+
+def float3_from_json(
+    data: Any, *, fallback: Float3Param = Float3Param()
+) -> Float3Param:
+    """decode float3 components, accepting legacy yaw/pitch/roll keys"""
+    if data is None:
+        return fallback
+    if not isinstance(data, dict):
+        raise ValueError("float3 must be an object")
+    x_raw: Any = data.get("x", data.get("yaw", fallback.x))
+    y_raw: Any = data.get("y", data.get("pitch", fallback.y))
+    z_raw: Any = data.get("z", data.get("roll", fallback.z))
+    for label, value in (("x", x_raw), ("y", y_raw), ("z", z_raw)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"float3.{label} must be a number")
+    return replace(
+        fallback,
+        x=float(x_raw),
+        y=float(y_raw),
+        z=float(z_raw),
+    )
+
+
+def int3_from_json(
+    data: Any, *, fallback: Int3Param = Int3Param()
+) -> Int3Param:
+    """decode int3 components"""
+    if data is None:
+        return fallback
+    if not isinstance(data, dict):
+        raise ValueError("int3 must be an object")
+    x_raw: Any = data.get("x", fallback.x)
+    y_raw: Any = data.get("y", fallback.y)
+    z_raw: Any = data.get("z", fallback.z)
+    for label, value in (("x", x_raw), ("y", y_raw), ("z", z_raw)):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"int3.{label} must be an integer")
+    return replace(fallback, x=int(x_raw), y=int(y_raw), z=int(z_raw))
+
+
+def pop_legacy_orient_dict(params: dict[str, Any], prefix: str) -> dict[str, float]:
+    """pull legacy flat orient_* keys out of a params dict into an x/y/z object"""
+    yaw_key: str = f"{prefix}orient_yaw"
+    pitch_key: str = f"{prefix}orient_pitch"
+    roll_key: str = f"{prefix}orient_roll"
+    return {
+        "x": float(params.pop(yaw_key, 0.0)),
+        "y": float(params.pop(pitch_key, 0.0)),
+        "z": float(params.pop(roll_key, 0.0)),
+    }
+
+
 def modifier_to_json(modifier: Modifier) -> dict[str, Any]:
     """encode one modifier stack entry"""
     return {
@@ -162,12 +229,96 @@ def modifier_from_json(data: Any) -> Modifier | None:
     return Modifier(kind=kind, params=params, enabled=enabled_raw)
 
 
+def param_field_default(params_type: type, field_name: str) -> Any:
+    """return the default wrapper instance for a params field"""
+    for field in fields(params_type):
+        if field.name != field_name:
+            continue
+        if field.default is not MISSING:
+            return field.default
+        if field.default_factory is not MISSING:
+            return field.default_factory()
+        raise ValueError(f"{params_type.__name__}.{field_name} has no default")
+    raise KeyError(field_name)
+
+
+def params_to_json(params: Any) -> dict[str, Any]:
+    """encode a params dataclass to a json object (values only)"""
+    out: dict[str, Any] = {}
+    for field in fields(params):
+        value: Any = getattr(params, field.name)
+        if isinstance(value, Float3Param) or isinstance(value, Int3Param):
+            out[field.name] = vec3_to_json(value)
+        elif isinstance(value, EnumParam):
+            out[field.name] = int(value.value)
+        elif isinstance(value, BoolParam):
+            out[field.name] = 1 if value.value else 0
+        elif isinstance(value, IntParam):
+            out[field.name] = int(value.value)
+        elif isinstance(value, FloatParam):
+            out[field.name] = float(value.value)
+        else:
+            raise TypeError(
+                f"unsupported param type for {field.name}: {type(value)!r}"
+            )
+    return out
+
+
+def typed_params_from_json(params_type: type, data: dict[str, Any]) -> Any:
+    """build a params dataclass from json values, keeping field metadata"""
+    hints: dict[str, Any] = get_type_hints(params_type)
+    values: dict[str, Any] = {}
+    for field in fields(params_type):
+        if field.name not in data:
+            continue
+        raw: Any = data[field.name]
+        annotation: Any = hints[field.name]
+        default: Any = param_field_default(params_type, field.name)
+        if annotation is Float3Param:
+            values[field.name] = float3_from_json(raw, fallback=default)
+            continue
+        if annotation is Int3Param:
+            values[field.name] = int3_from_json(raw, fallback=default)
+            continue
+        if annotation is EnumParam:
+            enum_type: type[IntEnum] = type(default.value)
+            values[field.name] = replace(default, value=enum_type(int(raw)))
+            continue
+        if annotation is BoolParam:
+            values[field.name] = replace(default, value=bool(int(raw)))
+            continue
+        if annotation is IntParam:
+            values[field.name] = replace(default, value=int(raw))
+            continue
+        if annotation is FloatParam:
+            values[field.name] = replace(default, value=float(raw))
+            continue
+        raise TypeError(
+            f"unsupported param annotation for {field.name}: {annotation!r}"
+        )
+    return params_type(**values)
+
+
+def migrate_params_dict(kind: str, data: dict[str, Any], raw_params: dict[str, Any]) -> None:
+    """fold older scene shapes into nested typed params keys (in place)"""
+    if "orient" not in raw_params and "orient" in data:
+        raw_params["orient"] = data["orient"]
+    if "point_orient" not in raw_params and "point_orient" in data:
+        raw_params["point_orient"] = data["point_orient"]
+    if "orient" not in raw_params and "orient_yaw" in raw_params:
+        raw_params["orient"] = pop_legacy_orient_dict(raw_params, "")
+    if "point_orient" not in raw_params and "point_orient_yaw" in raw_params:
+        raw_params["point_orient"] = pop_legacy_orient_dict(raw_params, "point_")
+    if kind == "radial" and "facing" not in raw_params and "face_center" in raw_params:
+        raw_params["facing"] = 1 if int(raw_params["face_center"]) else 0
+
+
 def generator_to_json(generator: Generator) -> dict[str, Any]:
     """encode a generator recipe"""
     payload: dict[str, Any] = {
         "kind": generator.kind,
         "meshes": mesh_pattern_to_json(generator.meshes),
-        "params": dict(generator.params),
+        "params": params_to_json(generator.params),
     }
     if generator.point_meshes is not None:
         payload["point_meshes"] = mesh_pattern_to_json(generator.point_meshes)
@@ -189,7 +340,6 @@ def generator_from_json(data: Any) -> Generator:
     if not isinstance(params_raw, dict):
         raise ValueError("generator.params must be an object")
     meshes_raw: Any = data.get("meshes")
-    # v2 nests the pattern under "meshes"; v1 kept a flat "mesh_id" string
     pattern: MeshPattern = mesh_pattern_from_json(
         meshes_raw if isinstance(meshes_raw, dict) else data
     )
@@ -197,24 +347,14 @@ def generator_from_json(data: Any) -> Generator:
     point_raw: Any = data.get("point_meshes")
     if isinstance(point_raw, dict):
         point_meshes = mesh_pattern_from_json(point_raw)
-    params: ParamMap = {}
-    key: Any
-    value: Any
-    for key, value in params_raw.items():
-        if not isinstance(key, str):
-            raise ValueError("generator.params keys must be strings")
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"generator.params[{key!r}] must be a number")
-        param_value: ParamValue = int(value) if isinstance(value, int) else float(value)
-        params[key] = param_value
-    # migrate renamed generator kinds from older scene files
     if kind == "radial_grid":
         kind = "radial"
     elif kind == "ngon_grid":
         kind = "ngon"
-    # migrate radial face_center bool into facing enum
-    if kind == "radial" and "facing" not in params and "face_center" in params:
-        params["facing"] = 1 if int(params["face_center"]) else 0
+    spec = get_spec(kind)
+    raw_params: dict[str, Any] = dict(params_raw)
+    migrate_params_dict(kind, data, raw_params)
+    params: Any = typed_params_from_json(spec.params_type, raw_params)
     modifiers: list[Modifier] = []
     modifiers_raw: Any = data.get("modifiers", [])
     if modifiers_raw is None:

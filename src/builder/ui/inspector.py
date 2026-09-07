@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from enum import IntEnum
 from random import randrange
+from typing import Any
 
 from pyray import (
     Font,
@@ -22,22 +24,32 @@ from builder.generators.generator_types import (
     Generator,
     GeneratorSpec,
     MeshPattern,
-    ParamField,
-    ParamValue,
 )
-from builder.generators.registry import (
-    field_for,
-    format_param,
-    get_spec,
-    params_with_defaults,
-    parse_param,
-)
+from builder.generators.registry import get_spec
 from builder.generators.mesh_pattern import next_mode, remove_slot, set_slot
 from builder.generators.regenerate import (
     bake_group,
-    set_generator_param,
+    set_generator_params,
     set_generator_pattern,
-    step_generator_param,
+)
+from builder.ui.param_ui import (
+    BoolControl,
+    EnumControl,
+    FloatControl,
+    IntControl,
+    Float3ComponentControl,
+    Int3ComponentControl,
+    ParamControl,
+    control_by_key,
+    control_key,
+    control_label,
+    control_step,
+    controls_from_params_type,
+    enum_members,
+    format_control,
+    parse_control,
+    read_control,
+    write_control,
 )
 from builder.generators.spline_edit import add_spline_point
 from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
@@ -78,20 +90,27 @@ inspector_panel: str = "inspector"
 
 @dataclass(frozen=True)
 class ParamRowRects:
-    """hit targets for one inspector param row
-
-    option_rects holds one hit target per enum option, in field.options order
-    """
+    """hit targets for one inspector param row"""
 
     key: str
     label: Rectangle
     minus: Rectangle
     value: Rectangle
     plus: Rectangle
-    is_bool: bool = False
-    is_enum: bool = False
     option_rects: tuple[Rectangle, ...] = ()
-    modifier_index: int | None = None
+
+
+def apply_control_edit(
+    scene: Scene,
+    group_id: str,
+    generator: Generator,
+    control: ParamControl,
+    value: Any,
+) -> None:
+    """write one inspector control into params and regenerate"""
+    set_generator_params(
+        scene, group_id, write_control(generator.params, control, value)
+    )
 
 
 def sync_inspector_focus(ui: UiState, group: Node | None) -> None:
@@ -123,105 +142,95 @@ class ParamLayout:
     bottom: float
 
 
-def layout_field_row(
-    field: ParamField, x: float, y: float, inner_w: float
+def layout_control_row(
+    control: ParamControl,
+    params: Any,
+    x: float,
+    y: float,
+    inner_w: float,
 ) -> tuple[ParamRowRects, float]:
     """place one param row and return it with the y below it"""
     empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
-    if field.value_type == "bool":
-        hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
-        row: ParamRowRects = ParamRowRects(
-            key=field.key,
-            label=hit,
-            minus=empty,
-            value=hit,
-            plus=empty,
-            is_bool=True,
-        )
-        return row, y + float(ui_button_height) + ui_pad
-    if field.value_type == "enum":
-        options: tuple[tuple[int, str], ...] = field.options or ()
-        enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-        controls_y: float = y + float(ui_font_size) + 4.0
-        option_count: int = max(1, len(options))
-        option_w: float = (
-            inner_w - ui_button_gap * (option_count - 1)
-        ) / option_count
-        option_rects: tuple[Rectangle, ...] = tuple(
-            Rectangle(
-                x + (option_w + ui_button_gap) * index,
+    row_key: str = control_key(control)
+    match control:
+        case BoolControl():
+            hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
+            row: ParamRowRects = ParamRowRects(
+                key=row_key,
+                label=hit,
+                minus=empty,
+                value=hit,
+                plus=empty,
+            )
+            return row, y + float(ui_button_height) + ui_pad
+        case EnumControl() as enum_control:
+            options: tuple[IntEnum, ...] = enum_members(params, enum_control)
+            enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+            controls_y: float = y + float(ui_font_size) + 4.0
+            option_count: int = max(1, len(options))
+            option_w: float = (
+                inner_w - ui_button_gap * (option_count - 1)
+            ) / option_count
+            option_rects: tuple[Rectangle, ...] = tuple(
+                Rectangle(
+                    x + (option_w + ui_button_gap) * index,
+                    controls_y,
+                    option_w,
+                    float(ui_button_height),
+                )
+                for index in range(len(options))
+            )
+            row = ParamRowRects(
+                key=row_key,
+                label=enum_label,
+                minus=empty,
+                value=empty,
+                plus=empty,
+                option_rects=option_rects,
+            )
+            return row, controls_y + float(ui_button_height) + ui_pad
+        case IntControl() | FloatControl() | Float3ComponentControl() | Int3ComponentControl():
+            label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+            controls_y = y + float(ui_font_size) + 4.0
+            minus: Rectangle = Rectangle(
+                x, controls_y, float(ui_stepper_width), float(ui_button_height)
+            )
+            plus: Rectangle = Rectangle(
+                x + inner_w - float(ui_stepper_width),
                 controls_y,
-                option_w,
+                float(ui_stepper_width),
                 float(ui_button_height),
             )
-            for index in range(len(options))
-        )
-        row = ParamRowRects(
-            key=field.key,
-            label=enum_label,
-            minus=empty,
-            value=empty,
-            plus=empty,
-            is_enum=True,
-            option_rects=option_rects,
-        )
-        return row, controls_y + float(ui_button_height) + ui_pad
-    label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-    controls_y = y + float(ui_font_size) + 4.0
-    minus: Rectangle = Rectangle(
-        x, controls_y, float(ui_stepper_width), float(ui_button_height)
-    )
-    plus: Rectangle = Rectangle(
-        x + inner_w - float(ui_stepper_width),
-        controls_y,
-        float(ui_stepper_width),
-        float(ui_button_height),
-    )
-    value: Rectangle = Rectangle(
-        minus.x + minus.width + ui_button_gap,
-        controls_y,
-        plus.x - (minus.x + minus.width + ui_button_gap * 2),
-        float(ui_button_height),
-    )
-    row = ParamRowRects(
-        key=field.key, label=label, minus=minus, value=value, plus=plus
-    )
-    return row, controls_y + float(ui_button_height) + ui_pad
+            value: Rectangle = Rectangle(
+                minus.x + minus.width + ui_button_gap,
+                controls_y,
+                plus.x - (minus.x + minus.width + ui_button_gap * 2),
+                float(ui_button_height),
+            )
+            row = ParamRowRects(
+                key=row_key,
+                label=label,
+                minus=minus,
+                value=value,
+                plus=plus,
+            )
+            return row, controls_y + float(ui_button_height) + ui_pad
 
 
 def layout_params(
-    area: Rectangle, fields: tuple[ParamField, ...], collapsed: set[str]
+    area: Rectangle, controls: tuple[ParamControl, ...], params: Any
 ) -> ParamLayout:
-    """place group headers and the rows of ungrouped or expanded params"""
-    headers: list[GroupHeaderRect] = []
+    """place inspector rows for reflected params controls"""
     rows: list[ParamRowRects] = []
     y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
     x: float = area.x + ui_pad
     inner_w: float = area.width - ui_pad * 2
-    current_group: str = ""
-    group_open: bool = True
-    field: ParamField
-    for field in fields:
-        if field.group != current_group:
-            current_group = field.group
-            if field.group != "":
-                group_open = field.group not in collapsed
-                headers.append(
-                    GroupHeaderRect(
-                        title=field.group,
-                        rect=Rectangle(x, y, inner_w, group_header_height),
-                        expanded=group_open,
-                    )
-                )
-                y += group_header_height + ui_button_gap
-            else:
-                group_open = True
-        if field.group != "" and not group_open:
-            continue
+    control: ParamControl
+    for control in controls:
         row: ParamRowRects
-        row, y = layout_field_row(field, x, y, inner_w)
+        row, y = layout_control_row(control, params, x, y, inner_w)
         rows.append(row)
-    return ParamLayout(tuple(headers), tuple(rows), y)
+    return ParamLayout((), tuple(rows), y)
 
 
 def toggle_inspector_group(ui: UiState, title: str) -> None:
@@ -261,42 +270,60 @@ def append_group_header(
     return rect, y + group_header_height + ui_button_gap, expanded
 
 
-def focus_param_field(ui: UiState, group: Node, field: ParamField) -> None:
-    """begin typed editing for one generator param"""
-    if field.value_type in ("bool", "enum"):
-        return
+def focus_param_control(
+    ui: UiState,
+    group: Node,
+    control: ParamControl,
+) -> None:
+    """begin typed editing for one numeric generator control"""
+    match control:
+        case BoolControl() | EnumControl():
+            return
+        case _:
+            pass
     generator: Generator | None = group.generator
     if generator is None:
         return
-    value: ParamValue = params_with_defaults(generator.kind, generator.params)[
-        field.key
-    ]
-    ui.focus = FieldId(panel=inspector_panel, key=field.key, owner=group.id)
-    ui.edit = begin_edit(format_param(field, value))
+    value: Any = read_control(generator.params, control)
+    ui.focus = FieldId(
+        panel=inspector_panel, key=control_key(control), owner=group.id
+    )
+    ui.edit = begin_edit(format_control(control, value))
 
 
-def commit_inspector_draft(scene: Scene, ui: UiState, group: Node) -> None:
-    """apply the typed draft to its param; invalid text is discarded"""
+def commit_inspector_draft(
+    scene: Scene,
+    ui: UiState,
+    group: Node,
+    controls: tuple[ParamControl, ...],
+) -> None:
+    """apply the typed draft to its control; invalid text is discarded"""
     if ui.focus is None or ui.edit is None:
         return
     generator: Generator | None = group.generator
     if generator is None:
         return
-    field: ParamField = field_for(get_spec(generator.kind), ui.focus.key)
-    parsed: ParamValue | None = parse_param(field, ui.edit.text)
+    control: ParamControl = control_by_key(controls, ui.focus.key)
+    parsed: Any | None = parse_control(control, ui.edit.text)
     if parsed is None:
         return
-    set_generator_param(scene, group.id, field.key, parsed)
+    apply_control_edit(scene, group.id, generator, control, parsed)
 
 
-def focus_param_key(scene: Scene, ui: UiState, group_id: str, key: str) -> None:
-    """move editing to another param of the same group, reading its current value"""
+def focus_param_key(
+    scene: Scene,
+    ui: UiState,
+    group_id: str,
+    key: str,
+    controls: tuple[ParamControl, ...],
+) -> None:
+    """move editing to another control of the same group"""
     node: Node | None = scene.nodes.get(group_id)
     generator: Generator | None = node.generator if node is not None else None
     if node is None or generator is None:
         ui.clear_focus()
         return
-    focus_param_field(ui, node, field_for(get_spec(generator.kind), key))
+    focus_param_control(ui, node, control_by_key(controls, key))
 
 
 def handle_inspector_typing(
@@ -304,6 +331,7 @@ def handle_inspector_typing(
     ui: UiState,
     group: Node,
     keys: Sequence[str],
+    controls: tuple[ParamControl, ...],
 ) -> None:
     """commit on Enter, cancel on Escape, commit and step focus on Tab"""
     edit: TextEdit | None = ui.edit
@@ -322,11 +350,11 @@ def handle_inspector_typing(
         next_key = field_after(keys, ui.focus.key, 1)
     elif action is TextAction.focus_prev:
         next_key = field_after(keys, ui.focus.key, -1)
-    commit_inspector_draft(scene, ui, group)
+    commit_inspector_draft(scene, ui, group, controls)
     if next_key is None:
         ui.clear_focus()
         return
-    focus_param_key(scene, ui, group.id, next_key)
+    focus_param_key(scene, ui, group.id, next_key, controls)
 
 
 def mesh_label(catalog: MeshCatalog, mesh_id: MeshId) -> str:
@@ -495,12 +523,17 @@ def update_inspector(
     if generator is None:
         return [], []
     spec: GeneratorSpec = get_spec(generator.kind)
-    layout: ParamLayout = layout_params(area, spec.fields, ui.inspector_collapsed)
+    controls: tuple[ParamControl, ...] = controls_from_params_type(spec.params_type)
+    layout: ParamLayout = layout_params(area, controls, generator.params)
     rows: list[ParamRowRects] = list(layout.rows)
     text_keys: list[str] = [
-        row.key for row in rows if not row.is_bool and not row.is_enum
+        row.key
+        for row in rows
+        if not isinstance(
+            control_by_key(controls, row.key), (BoolControl, EnumControl)
+        )
     ]
-    handle_inspector_typing(scene, ui, group, text_keys)
+    handle_inspector_typing(scene, ui, group, text_keys, controls)
 
     mouse: Vector2 = get_mouse_position()
     clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
@@ -521,49 +554,77 @@ def update_inspector(
                 align_left=True,
             )
         )
-    params: dict[str, ParamValue] = params_with_defaults(
-        generator.kind, generator.params
-    )
     row: ParamRowRects
     for row in rows:
-        field: ParamField = field_for(spec, row.key)
-        key: str = row.key
-        if row.is_bool:
+        control: ParamControl = control_by_key(controls, row.key)
+        match control:
+            case BoolControl() as bool_control:
+                current_bool: bool = bool(
+                    read_control(generator.params, bool_control)
+                )
 
-            def toggle_bool(k: str = key, current: ParamValue = params[key]) -> None:
-                ui.clear_focus()
-                set_generator_param(scene, group.id, k, 0 if int(current) else 1)
+                def toggle_bool(
+                    c: BoolControl = bool_control, current: bool = current_bool
+                ) -> None:
+                    ui.clear_focus()
+                    apply_control_edit(
+                        scene, group.id, generator, c, not current
+                    )
 
-            if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
-                toggle_bool()
-            continue
+                if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
+                    toggle_bool()
+            case EnumControl() as enum_control:
+                if clicked:
+                    options: tuple[IntEnum, ...] = enum_members(
+                        generator.params, enum_control
+                    )
+                    option_index: int
+                    option_rect: Rectangle
+                    for option_index, option_rect in enumerate(row.option_rects):
+                        if is_point_in_rect(mouse.x, mouse.y, option_rect):
+                            ui.clear_focus()
+                            apply_control_edit(
+                                scene,
+                                group.id,
+                                generator,
+                                enum_control,
+                                options[option_index],
+                            )
+                            break
+            case (
+                IntControl()
+                | FloatControl()
+                | Float3ComponentControl()
+                | Int3ComponentControl()
+            ) as stepped:
+                step: float = control_step(generator.params, stepped)
 
-        if row.is_enum:
-            if clicked:
-                options: tuple[tuple[int, str], ...] = field.options or ()
-                option_index: int
-                option_rect: Rectangle
-                for option_index, option_rect in enumerate(row.option_rects):
-                    if is_point_in_rect(mouse.x, mouse.y, option_rect):
-                        ui.clear_focus()
-                        set_generator_param(
-                            scene, group.id, key, options[option_index][0]
-                        )
-                        break
-            continue
+                def step_minus(
+                    c: ParamControl = stepped, s: float = step
+                ) -> None:
+                    ui.clear_focus()
+                    current: Any = read_control(generator.params, c)
+                    apply_control_edit(
+                        scene, group.id, generator, c, float(current) - s
+                    )
 
-        def step_minus(k: str = key) -> None:
-            ui.clear_focus()
-            step_generator_param(scene, group.id, k, -1)
+                def step_plus(
+                    c: ParamControl = stepped, s: float = step
+                ) -> None:
+                    ui.clear_focus()
+                    current: Any = read_control(generator.params, c)
+                    apply_control_edit(
+                        scene, group.id, generator, c, float(current) + s
+                    )
 
-        def step_plus(k: str = key) -> None:
-            ui.clear_focus()
-            step_generator_param(scene, group.id, k, 1)
-
-        buttons.append(Button(label="-", on_click=step_minus, rect=row.minus))
-        buttons.append(Button(label="+", on_click=step_plus, rect=row.plus))
-        if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
-            focus_param_field(ui, group, field)
+                buttons.append(
+                    Button(label="-", on_click=step_minus, rect=row.minus)
+                )
+                buttons.append(
+                    Button(label="+", on_click=step_plus, rect=row.plus)
+                )
+                if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
+                    focus_param_control(ui, group, stepped)
 
     pattern_start: float = layout.bottom
     bake_y: float = pattern_start
@@ -681,6 +742,7 @@ def draw_inspector(
     if generator is None:
         return
     spec: GeneratorSpec = get_spec(generator.kind)
+    controls: tuple[ParamControl, ...] = controls_from_params_type(spec.params_type)
     draw_rectangle_rec(area, ui_color_panel)
     draw_rectangle_lines_ex(
         Rectangle(area.x, area.y, 1, area.height),
@@ -697,61 +759,67 @@ def draw_inspector(
     )
     row: ParamRowRects
     for row in rows:
-        field: ParamField = field_for(spec, row.key)
-        value: ParamValue = params_with_defaults(generator.kind, generator.params)[
-            row.key
-        ]
-        if row.is_bool:
-            draw_checkbox_with_label(
-                font,
-                row.value,
-                field.label,
-                checked=bool(int(value)),
-            )
-            continue
-        draw_text_ex(
-            font,
-            field.label,
-            Vector2(row.label.x, row.label.y),
-            float(ui_font_size),
-            0,
-            ui_color_text,
-        )
-        if row.is_enum:
-            options: tuple[tuple[int, str], ...] = field.options or ()
-            option_index: int
-            option_rect: Rectangle
-            for option_index, option_rect in enumerate(row.option_rects):
-                option_value: int
-                option_label: str
-                option_value, option_label = options[option_index]
-                draw_radio_option(
+        control: ParamControl = control_by_key(controls, row.key)
+        value: Any = read_control(generator.params, control)
+        match control:
+            case BoolControl():
+                draw_checkbox_with_label(
                     font,
-                    option_rect,
-                    option_label,
-                    selected=int(value) == option_value,
+                    row.value,
+                    control_label(generator.params, control),
+                    checked=bool(value),
                 )
-            continue
-        edit: TextEdit | None = ui.focused_edit(
-            inspector_panel, row.key, group.id
-        )
-        if edit is not None:
-            draw_text_field(
-                font,
-                row.value,
-                edit.text,
-                focused=True,
-                caret=edit.caret,
-                mark=edit.mark,
-            )
-            continue
-        draw_text_field(
-            font,
-            row.value,
-            format_param(field, value),
-            focused=False,
-            center_unfocused=True,
-        )
+            case EnumControl() as enum_control:
+                draw_text_ex(
+                    font,
+                    control_label(generator.params, control),
+                    Vector2(row.label.x, row.label.y),
+                    float(ui_font_size),
+                    0,
+                    ui_color_text,
+                )
+                options: tuple[IntEnum, ...] = enum_members(
+                    generator.params, enum_control
+                )
+                option_index: int
+                option_rect: Rectangle
+                for option_index, option_rect in enumerate(row.option_rects):
+                    member: IntEnum = options[option_index]
+                    draw_radio_option(
+                        font,
+                        option_rect,
+                        member.name.capitalize(),
+                        selected=int(value) == int(member),
+                    )
+            case IntControl() | FloatControl() | Float3ComponentControl() | Int3ComponentControl():
+                draw_text_ex(
+                    font,
+                    control_label(generator.params, control),
+                    Vector2(row.label.x, row.label.y),
+                    float(ui_font_size),
+                    0,
+                    ui_color_text,
+                )
+                edit: TextEdit | None = ui.focused_edit(
+                    inspector_panel, row.key, group.id
+                )
+                if edit is not None:
+                    draw_text_field(
+                        font,
+                        row.value,
+                        edit.text,
+                        focused=True,
+                        caret=edit.caret,
+                        mark=edit.mark,
+                    )
+                else:
+                    draw_text_field(
+                        font,
+                        row.value,
+                        format_control(control, value),
+                        focused=False,
+                        center_unfocused=True,
+                    )
 
     button: Button
     for button in buttons:

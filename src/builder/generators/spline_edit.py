@@ -14,8 +14,7 @@ from pyray import (
 )
 
 from builder.distribution.spline import child_with_role, ordered_bezier_points
-from builder.generators.generator_types import ParamMap
-from builder.generators.registry import params_with_defaults
+from builder.generators.spline import SplineParams
 from builder.generators.regenerate import regenerate_group
 from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
@@ -59,10 +58,8 @@ def add_spline_point(scene: Scene, group_id: str) -> str:
     group: Node = scene.nodes[group_id]
     if group.generator is None or group.generator.kind != "spline":
         raise ValueError(f"group {group_id} is not a spline")
-    params: ParamMap = params_with_defaults(
-        group.generator.kind, group.generator.params
-    )
-    closed: bool = bool(int(params.get("closed", 0)))
+    params: SplineParams = group.generator.params
+    closed: bool = params.closed.value
     points: list[Node] = ordered_bezier_points(scene.nodes, group_id)
     to_add: list[Node] = []
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+from typing import Any
 
 from pyray import Transform, Vector3, vector3_add
 
@@ -13,7 +14,6 @@ from builder.generators.generator_types import (
     Generator,
     GeneratorSpec,
     MeshPattern,
-    ParamMap,
 )
 from builder.generators.registry import default_params, get_spec
 from builder.generators.regenerate import regenerate_group
@@ -159,7 +159,7 @@ def select_mesh(context: CommandContext, mesh_id: MeshId) -> None:
 def place_generator_group(context: CommandContext, kind: str) -> None:
     """place a parametric mesh group from a registry kind"""
     spec: GeneratorSpec = get_spec(kind)
-    params: ParamMap = default_params(kind)
+    params: Any = default_params(kind)
     mesh_id: MeshId = context.application.active_mesh_id
     asset: MeshAsset | None = context.application.mesh_catalog.entries.get(mesh_id)
     if asset is None:

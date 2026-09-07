@@ -3,26 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 from builder.generators.generator_types import (
     BuildContext,
     GeneratedSlot,
     Generator,
-    GeneratorSpec,
     MeshPattern,
     Modifier,
-    ParamField,
     ParamMap,
     ParamValue,
 )
 from builder.generators.mesh_pattern import mesh_for_index
-from builder.generators.orient import apply_orient_to_slots
-from builder.generators.registry import (
-    clamp_param,
-    field_for,
-    get_spec,
-    params_with_defaults,
-)
+from builder.generators.registry import clamp_param, get_spec
 from builder.modifiers.apply import apply_modifier_stack
 from builder.modifiers.registry import (
     modifier_field_for,
@@ -69,19 +62,9 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
     generator: Generator | None = group.generator
     if generator is None:
         raise ValueError(f"group {group_id} has no generator")
-    spec: GeneratorSpec = get_spec(generator.kind)
-    params: ParamMap = params_with_defaults(generator.kind, generator.params)
-    if params != generator.params:
-        scene.add_nodes(
-            [replace(group, generator=replace(generator, params=params))]
-        )
-        group = scene.nodes[group_id]
-        generator = group.generator
-        assert generator is not None
+    spec = get_spec(generator.kind)
     context: BuildContext = BuildContext(nodes=scene.nodes, group_id=group_id)
-    slots: list[GeneratedSlot] = apply_orient_to_slots(
-        spec.build_transforms(params, context), params
-    )
+    slots: list[GeneratedSlot] = spec.build_transforms(generator.params, context)
     slots = apply_modifier_stack(slots, generator.modifiers, context)
     scene.remove_nodes(mesh_child_ids(scene.nodes, group_id))
     children: list[Node] = []
@@ -113,43 +96,16 @@ def bake_group(scene: Scene, group_id: str) -> None:
     scene.add_nodes([replace(group, generator=None)])
 
 
-def set_generator_param(
-    scene: Scene,
-    group_id: str,
-    key: str,
-    value: ParamValue,
-) -> None:
-    """update one generator param and regenerate children"""
+def set_generator_params(scene: Scene, group_id: str, params: Any) -> None:
+    """replace the generator params dataclass and regenerate children"""
     group: Node = scene.nodes[group_id]
     generator: Generator | None = group.generator
     if generator is None:
         raise ValueError(f"group {group_id} has no generator")
-    spec: GeneratorSpec = get_spec(generator.kind)
-    field: ParamField = field_for(spec, key)
-    clamped: ParamValue = clamp_param(field, value)
-    params: ParamMap = params_with_defaults(generator.kind, generator.params)
-    params[key] = clamped
-    scene.add_nodes([replace(group, generator=replace(generator, params=params))])
+    scene.add_nodes(
+        [replace(group, generator=replace(generator, params=params))]
+    )
     regenerate_group(scene, group_id)
-
-
-def step_generator_param(
-    scene: Scene,
-    group_id: str,
-    key: str,
-    direction: int,
-) -> None:
-    """nudge one generator param by its field step and regenerate"""
-    group: Node = scene.nodes[group_id]
-    generator: Generator | None = group.generator
-    if generator is None:
-        raise ValueError(f"group {group_id} has no generator")
-    spec: GeneratorSpec = get_spec(generator.kind)
-    field: ParamField = field_for(spec, key)
-    params: ParamMap = params_with_defaults(generator.kind, generator.params)
-    current: ParamValue = params[key]
-    stepped: float = float(current) + field.step * float(direction)
-    set_generator_param(scene, group_id, key, stepped)
 
 
 def require_generator(scene: Scene, group_id: str) -> Generator:

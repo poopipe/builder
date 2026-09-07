@@ -66,6 +66,7 @@ from builder.ui.inspector import (
     update_inspector,
 )
 from builder.ui.modifiers_panel import (
+    ModifierRowRects,
     draw_modifiers_panel,
     sync_modifiers_focus,
     update_modifiers_panel,
@@ -317,7 +318,7 @@ class Application:
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
         modifiers_buttons: list[Button] = []
-        modifiers_rows: list[ParamRowRects] = []
+        modifiers_rows: list[ModifierRowRects] = []
         if group is not None and not browser_open:
             group_id: str = group.id
             inspector_buttons, inspector_rows = update_inspector(

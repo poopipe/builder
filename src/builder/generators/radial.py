@@ -2,154 +2,85 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from dataclasses import dataclass
 
 from pyray import Vector3
 
 from builder.distribution.grids import radial_grid_transforms
 from builder.generators.generator_types import (
+    Axis,
     BuildContext,
+    Facing,
     GeneratedSlot,
     GeneratorSpec,
-    ParamField,
-    ParamMap,
-    ParamValue,
-    axis_choices,
-    distribution_group,
-    facing_none_center,
-    orient_defaults,
-    orient_fields,
-    orientation_group,
-    spacing_group,
 )
-from builder.generators.orient import slots_from_transforms
+from builder.generators.orient import apply_orients, slots_from_transforms
+from builder.generators.param_types import (
+    EnumParam,
+    Float3Param,
+    FloatParam,
+    IntParam,
+)
 
 
-def radial_facing(params: Mapping[str, ParamValue]) -> bool:
-    """resolve facing, migrating legacy face_center when needed"""
-    if "facing" in params:
-        return int(params["facing"]) == 1
-    return bool(int(params.get("face_center", 0)))
+@dataclass(frozen=True)
+class RadialParams:
+    """recipe values for a radial generator"""
 
-
-def radial_from_params(
-    params: Mapping[str, ParamValue],
-    _: BuildContext,
-) -> list[GeneratedSlot]:
-    """build radial slots from a param map"""
-    return slots_from_transforms(
-        radial_grid_transforms(
-            Vector3(0.0, 0.0, 0.0),
-            radius=float(params["radius"]),
-            spacing=float(params["spacing"]),
-            face_center=radial_facing(params),
-            axis=int(params.get("axis", 1)),
-            count_height=int(params.get("count_height", 1)),
-            spacing_height=float(params.get("spacing_height", 2.0)),
-            count_radius=int(params.get("count_radius", 1)),
-            spacing_radius=float(params.get("spacing_radius", 2.0)),
-            build_from=int(params.get("build_from", 1)),
-        )
+    axis: EnumParam = EnumParam(Axis.Y, label="Axis")
+    radius: FloatParam = FloatParam(5.0, label="Outer radius", minimum=0.1, maximum=50.0)
+    spacing: FloatParam = FloatParam(
+        30.0, label="Spacing deg", step=5.0, minimum=1.0, maximum=180.0
+    )
+    count_radius: IntParam = IntParam(1, label="Count radius", minimum=1, maximum=512)
+    spacing_radius: FloatParam = FloatParam(
+        2.0, label="Spacing radius", minimum=0.1, maximum=50.0
+    )
+    count_height: IntParam = IntParam(1, label="Count height", minimum=1, maximum=512)
+    spacing_height: FloatParam = FloatParam(
+        2.0, label="Spacing height", minimum=0.1, maximum=50.0
+    )
+    facing: EnumParam = EnumParam(
+        Facing.center,
+        label="Facing",
+        options=(Facing.none, Facing.center),
+    )
+    build_from: EnumParam = EnumParam(Axis.Y, label="Build from")
+    orient: Float3Param = Float3Param(
+        label="Orient",
+        label_x="Yaw",
+        label_y="Pitch",
+        label_z="Roll",
+        step=5.0,
+        minimum=-180.0,
+        maximum=180.0,
     )
 
 
-radial_defaults: ParamMap = {
-    "axis": 1,
-    "radius": 5.0,
-    "spacing": 30.0,
-    "count_radius": 1,
-    "spacing_radius": 2.0,
-    "count_height": 1,
-    "spacing_height": 2.0,
-    "facing": 1,
-    "build_from": 1,
-    **orient_defaults,
-}
+def radial_from_params(params: RadialParams, _: BuildContext) -> list[GeneratedSlot]:
+    """build radial slots from typed params"""
+    slots: list[GeneratedSlot] = slots_from_transforms(
+        radial_grid_transforms(
+            Vector3(0.0, 0.0, 0.0),
+            radius=params.radius.value,
+            spacing=params.spacing.value,
+            face_center=params.facing.value is Facing.center,
+            axis=int(params.axis.value),
+            count_height=params.count_height.value,
+            spacing_height=params.spacing_height.value,
+            count_radius=params.count_radius.value,
+            spacing_radius=params.spacing_radius.value,
+            build_from=int(params.build_from.value),
+        )
+    )
+    return apply_orients(
+        slots, orient=params.orient, point_orient=params.orient
+    )
+
 
 radial_spec: GeneratorSpec = GeneratorSpec(
     kind="radial",
     label="Radial",
-    fields=(
-        ParamField(
-            "axis",
-            "Axis",
-            "enum",
-            1.0,
-            options=axis_choices,
-            group=distribution_group,
-        ),
-        ParamField(
-            "radius",
-            "Outer radius",
-            "float",
-            0.5,
-            minimum=0.1,
-            maximum=50.0,
-            group=distribution_group,
-        ),
-        ParamField(
-            "count_height",
-            "Count height",
-            "int",
-            1.0,
-            minimum=1.0,
-            maximum=512.0,
-            group=distribution_group,
-        ),
-        ParamField(
-            "count_radius",
-            "Count radius",
-            "int",
-            1.0,
-            minimum=1.0,
-            maximum=512.0,
-            group=distribution_group,
-        ),
-        ParamField(
-            "build_from",
-            "Build from",
-            "enum",
-            1.0,
-            options=axis_choices,
-            group=distribution_group,
-        ),
-        ParamField(
-            "spacing",
-            "Spacing deg",
-            "float",
-            5.0,
-            minimum=1.0,
-            maximum=180.0,
-            group=spacing_group,
-        ),
-        ParamField(
-            "spacing_height",
-            "Spacing height",
-            "float",
-            0.25,
-            minimum=0.1,
-            maximum=50.0,
-            group=spacing_group,
-        ),
-        ParamField(
-            "spacing_radius",
-            "Spacing radius",
-            "float",
-            0.25,
-            minimum=0.1,
-            maximum=50.0,
-            group=spacing_group,
-        ),
-        ParamField(
-            "facing",
-            "Facing",
-            "enum",
-            1.0,
-            options=facing_none_center,
-            group=orientation_group,
-        ),
-        *orient_fields,
-    ),
-    defaults=radial_defaults,
     build_transforms=radial_from_params,
+    params_type=RadialParams,
 )

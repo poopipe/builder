@@ -6,6 +6,8 @@ General:
 - never use PowerShell. on this machine the Cursor Shell tool always wraps commands in PowerShell, so do not use the Shell tool at all — not even with `cmd /c`. use Read / Write / StrReplace / Grep / Glob / Delete instead. if a command must be run (pyright, app launch, build), ask me to run it and paste the output
 - no mutable module-level globals; pass state explicitly (immutable constants are fine)
 - do not obfuscate ownership with forwarding properties or thin wrappers that re-expose nested state under a flatter name (eg. `selected_ids` that only returns `self.nodes.selected_ids`). access the owning object directly so it is obvious what the data belongs to
+- no redundant indirection: do not invent aliases, parallel catalogs, or normalize helpers that only restate something already usable (eg. building `axis_choices` from `Axis`, or `param_options` that unpacks an enum the caller could use). use the source value at the call site; if the API cannot accept it, change the API
+- no magic-name / sniffing designs: do not wire behaviour by `hasattr`, string field names, or silent conventions that guess which data applies (eg. `if role == "point" and hasattr(params, "point_orient")`). the link between data and behaviour must be explicit and typed at the call site — if the shape is wrong, fix the types, do not invent a helper that papers over it
 
 Style:
 - the _method convention is stupid - it's not actually private so there is no point pretending it is.  just name the methods

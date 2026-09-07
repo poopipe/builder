@@ -2,125 +2,70 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from dataclasses import dataclass
 
 from pyray import Vector3
 
 from builder.distribution.grids import grid_transforms
 from builder.generators.generator_types import (
+    Axis,
     BuildContext,
     GeneratedSlot,
     GeneratorSpec,
-    ParamField,
-    ParamMap,
-    ParamValue,
-    axis_choices,
-    distribution_group,
-    orient_defaults,
-    orient_fields,
-    spacing_group,
 )
-from builder.generators.orient import slots_from_transforms
+from builder.generators.orient import apply_orients, slots_from_transforms
+from builder.generators.param_types import (
+    EnumParam,
+    Float3Param,
+    FloatParam,
+    IntParam,
+)
 
 
-def grid_from_params(
-    params: Mapping[str, ParamValue],
-    _: BuildContext,
-) -> list[GeneratedSlot]:
-    """build grid slots from a param map"""
-    return slots_from_transforms(
-        grid_transforms(
-            Vector3(0.0, 0.0, 0.0),
-            count_x=int(params["count_x"]),
-            count_y=int(params["count_y"]),
-            count_z=int(params["count_z"]),
-            spacing_x=float(params["spacing_x"]),
-            spacing_y=float(params["spacing_y"]),
-            spacing_z=float(params["spacing_z"]),
-            build_from=int(params.get("build_from", 1)),
-        )
+@dataclass(frozen=True)
+class GridParams:
+    """recipe values for a grid generator"""
+
+    count_x: IntParam = IntParam(3, label="Count X", minimum=1, maximum=512)
+    count_y: IntParam = IntParam(1, label="Count Y", minimum=1, maximum=512)
+    count_z: IntParam = IntParam(3, label="Count Z", minimum=1, maximum=512)
+    spacing_x: FloatParam = FloatParam(2.0, label="Spacing X", minimum=0.1, maximum=50.0)
+    spacing_y: FloatParam = FloatParam(2.0, label="Spacing Y", minimum=0.1, maximum=50.0)
+    spacing_z: FloatParam = FloatParam(2.0, label="Spacing Z", minimum=0.1, maximum=50.0)
+    build_from: EnumParam = EnumParam(Axis.Y, label="Build from")
+    orient: Float3Param = Float3Param(
+        label="Orient",
+        label_x="Yaw",
+        label_y="Pitch",
+        label_z="Roll",
+        step=5.0,
+        minimum=-180.0,
+        maximum=180.0,
     )
 
 
-grid_defaults: ParamMap = {
-    "count_x": 3,
-    "count_y": 1,
-    "count_z": 3,
-    "spacing_x": 2.0,
-    "spacing_y": 2.0,
-    "spacing_z": 2.0,
-    "build_from": 1,
-    **orient_defaults,
-}
+def grid_from_params(params: GridParams, _: BuildContext) -> list[GeneratedSlot]:
+    """build grid slots from typed params"""
+    slots: list[GeneratedSlot] = slots_from_transforms(
+        grid_transforms(
+            Vector3(0.0, 0.0, 0.0),
+            count_x=params.count_x.value,
+            count_y=params.count_y.value,
+            count_z=params.count_z.value,
+            spacing_x=params.spacing_x.value,
+            spacing_y=params.spacing_y.value,
+            spacing_z=params.spacing_z.value,
+            build_from=int(params.build_from.value),
+        )
+    )
+    return apply_orients(
+        slots, orient=params.orient, point_orient=params.orient
+    )
+
 
 grid_spec: GeneratorSpec = GeneratorSpec(
     kind="grid",
     label="Grid",
-    fields=(
-        ParamField(
-            "count_x",
-            "Count X",
-            "int",
-            1.0,
-            minimum=1.0,
-            maximum=512.0,
-            group=distribution_group,
-        ),
-        ParamField(
-            "count_y",
-            "Count Y",
-            "int",
-            1.0,
-            minimum=1.0,
-            maximum=512.0,
-            group=distribution_group,
-        ),
-        ParamField(
-            "count_z",
-            "Count Z",
-            "int",
-            1.0,
-            minimum=1.0,
-            maximum=512.0,
-            group=distribution_group,
-        ),
-        ParamField(
-            "build_from",
-            "Build from",
-            "enum",
-            1.0,
-            options=axis_choices,
-            group=distribution_group,
-        ),
-        ParamField(
-            "spacing_x",
-            "Spacing X",
-            "float",
-            0.25,
-            minimum=0.1,
-            maximum=50.0,
-            group=spacing_group,
-        ),
-        ParamField(
-            "spacing_y",
-            "Spacing Y",
-            "float",
-            0.25,
-            minimum=0.1,
-            maximum=50.0,
-            group=spacing_group,
-        ),
-        ParamField(
-            "spacing_z",
-            "Spacing Z",
-            "float",
-            0.25,
-            minimum=0.1,
-            maximum=50.0,
-            group=spacing_group,
-        ),
-        *orient_fields,
-    ),
-    defaults=grid_defaults,
     build_transforms=grid_from_params,
+    params_type=GridParams,
 )

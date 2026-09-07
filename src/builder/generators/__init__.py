@@ -6,8 +6,7 @@ from builder.generators.regenerate import (
     bake_group,
     regenerate_group,
     selected_parametric_group,
-    set_generator_param,
-    step_generator_param,
+    set_generator_params,
 )
 
 __all__ = [
@@ -20,6 +19,5 @@ __all__ = [
     "get_spec",
     "regenerate_group",
     "selected_parametric_group",
-    "set_generator_param",
-    "step_generator_param",
+    "set_generator_params",
 ]
