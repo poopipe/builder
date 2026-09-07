@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 from pyray import Transform, Vector3, Vector4, quaternion_identity
@@ -21,6 +22,13 @@ class MeshId:
     name: str
 
 
+class NodeRole(IntEnum):
+    none = 0
+    bezier_point = 1
+    bezier_handle_in = 2
+    bezier_handle_out = 3
+
+
 @dataclass(frozen=True)
 class Node:
     """a scene node; mesh_id none means transform-only group
@@ -35,13 +43,7 @@ class Node:
     mesh_id: MeshId | None
     generator: Generator | None = None
     name: str = ""
-    role: str = ""
-
-
-# spline control hierarchy
-role_bezier_point: str = "bezier_point"
-role_bezier_handle_in: str = "bezier_handle_in"
-role_bezier_handle_out: str = "bezier_handle_out"
+    role: NodeRole = NodeRole.none
 
 
 def transform_at(translation: Vector3) -> Transform:

@@ -11,16 +11,12 @@ from builder.generators.generator_types import (
     Generator,
     MeshPattern,
     Modifier,
-    ParamMap,
-    ParamValue,
+    SlotRole,
 )
 from builder.generators.mesh_pattern import mesh_for_index
-from builder.generators.registry import clamp_param, get_spec
+from builder.generators.registry import get_spec
 from builder.modifiers.apply import apply_modifier_stack
-from builder.modifiers.registry import (
-    modifier_field_for,
-    modifier_params_with_defaults,
-)
+from builder.modifiers.registry import known_modifier_kind
 from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
@@ -48,7 +44,7 @@ def selected_parametric_group(scene: Scene) -> Node | None:
 
 def pattern_for_slot(generator: Generator, slot: GeneratedSlot) -> MeshPattern:
     """return the mesh pattern for a slot role"""
-    if slot.role == "point" and generator.point_meshes is not None:
+    if slot.role is SlotRole.point and generator.point_meshes is not None:
         return generator.point_meshes
     return generator.meshes
 
@@ -70,7 +66,7 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
     children: list[Node] = []
     index: int
     slot: GeneratedSlot
-    role_index: dict[str, int] = {"default": 0, "point": 0, "edge": 0}
+    role_index: dict[SlotRole, int] = {role: 0 for role in SlotRole}
     for slot in slots:
         index = role_index[slot.role]
         role_index[slot.role] = index + 1
@@ -151,46 +147,22 @@ def set_generator_modifiers(
     regenerate_group(scene, group_id)
 
 
-def set_modifier_param(
+def set_modifier_params(
     scene: Scene,
     group_id: str,
     index: int,
-    key: str,
-    value: ParamValue,
+    params: Any,
 ) -> None:
-    """update one param on one modifier and regenerate"""
-    group: Node = scene.nodes[group_id]
+    """replace one modifier's params dataclass and regenerate"""
     generator: Generator = require_generator(scene, group_id)
     if index < 0 or index >= len(generator.modifiers):
         raise IndexError(f"modifier index {index} out of range")
     modifier: Modifier = generator.modifiers[index]
-    field = modifier_field_for(modifier.kind, key)
-    clamped: ParamValue = clamp_param(field, value)
-    params: ParamMap = modifier_params_with_defaults(modifier.kind, modifier.params)
-    params[key] = clamped
+    if not known_modifier_kind(modifier.kind):
+        raise KeyError(f"unknown modifier kind: {modifier.kind}")
     updated: list[Modifier] = list(generator.modifiers)
     updated[index] = replace(modifier, params=params)
     set_generator_modifiers(scene, group_id, tuple(updated))
-
-
-def step_modifier_param(
-    scene: Scene,
-    group_id: str,
-    index: int,
-    key: str,
-    direction: int,
-) -> None:
-    """nudge one modifier param by its field step and regenerate"""
-    group: Node = scene.nodes[group_id]
-    generator: Generator = require_generator(scene, group_id)
-    if index < 0 or index >= len(generator.modifiers):
-        raise IndexError(f"modifier index {index} out of range")
-    modifier: Modifier = generator.modifiers[index]
-    field = modifier_field_for(modifier.kind, key)
-    params: ParamMap = modifier_params_with_defaults(modifier.kind, modifier.params)
-    current: ParamValue = params[key]
-    stepped: float = float(current) + field.step * float(direction)
-    set_modifier_param(scene, group_id, index, key, stepped)
 
 
 def spline_generator_id(nodes: dict[str, Node], node_id: str) -> str | None:

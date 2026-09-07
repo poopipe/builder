@@ -24,7 +24,7 @@ from pyray import (
     measure_text_ex,
 )
 
-from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
+from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind, MeshCatalog
 from builder.scene.scene_types import MeshId
 from builder.ui.theme import (
     ui_button_gap,
@@ -56,11 +56,13 @@ class MeshRow:
 
 def mesh_asset_detail(asset: MeshAsset) -> str:
     """short secondary line for a catalog asset"""
-    if asset.kind == "builtin":
-        return "builtin"
-    if asset.source_path is None:
-        return "fbx"
-    return Path(asset.source_path).name
+    match asset.kind:
+        case MeshAssetKind.builtin:
+            return MeshAssetKind.builtin.name
+        case MeshAssetKind.fbx:
+            if asset.source_path is None:
+                return MeshAssetKind.fbx.name
+            return Path(asset.source_path).name
 
 
 def update_mesh_panel(

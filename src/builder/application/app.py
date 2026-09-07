@@ -54,7 +54,9 @@ from builder.generators.regenerate import selected_parametric_group
 from builder.scene.scene_types import MeshId, Node
 from builder.ui.file_browser import (
     BrowserRow,
+    FileBrowserCancel,
     FileBrowserFrameResult,
+    FileBrowserPurpose,
     draw_file_browser,
     update_file_browser,
 )
@@ -66,7 +68,7 @@ from builder.ui.inspector import (
     update_inspector,
 )
 from builder.ui.modifiers_panel import (
-    ModifierRowRects,
+    ModifierPanelRow,
     draw_modifiers_panel,
     sync_modifiers_focus,
     update_modifiers_panel,
@@ -318,7 +320,7 @@ class Application:
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
         modifiers_buttons: list[Button] = []
-        modifiers_rows: list[ModifierRowRects] = []
+        modifiers_rows: list[ModifierPanelRow] = []
         if group is not None and not browser_open:
             group_id: str = group.id
             inspector_buttons, inspector_rows = update_inspector(
@@ -363,20 +365,24 @@ class Application:
                     get_screen_height(),
                 )
             )
-            if browser_result == "cancelled":
-                remember_browser_directory(self, self.ui.file_browser)
-                self.ui.file_browser = None
-                self.ui.status = "Cancelled"
-            elif browser_result is not None:
-                purpose: str = self.ui.file_browser.purpose
-                remember_browser_directory(self, self.ui.file_browser)
-                self.ui.file_browser = None
-                if purpose == "open_scene":
-                    apply_open_scene_path(self, browser_result)
-                elif purpose == "save_scene":
-                    apply_save_scene_path(self, browser_result)
-                else:
-                    apply_import_mesh_path(self, browser_result)
+            match browser_result:
+                case FileBrowserCancel.cancelled:
+                    remember_browser_directory(self, self.ui.file_browser)
+                    self.ui.file_browser = None
+                    self.ui.status = "Cancelled"
+                case Path() as chosen:
+                    purpose: FileBrowserPurpose = self.ui.file_browser.purpose
+                    remember_browser_directory(self, self.ui.file_browser)
+                    self.ui.file_browser = None
+                    match purpose:
+                        case FileBrowserPurpose.open_scene:
+                            apply_open_scene_path(self, chosen)
+                        case FileBrowserPurpose.save_scene:
+                            apply_save_scene_path(self, chosen)
+                        case FileBrowserPurpose.import_mesh:
+                            apply_import_mesh_path(self, chosen)
+                case None:
+                    pass
 
         mouse: Vector2 = get_mouse_position()
         ui_over: bool = browser_open or (

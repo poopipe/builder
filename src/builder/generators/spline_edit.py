@@ -20,9 +20,7 @@ from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
 from builder.scene.scene_types import (
     Node,
-    role_bezier_handle_in,
-    role_bezier_handle_out,
-    role_bezier_point,
+    NodeRole,
     transform_at,
 )
 
@@ -30,7 +28,7 @@ default_handle_length: float = 1.5
 default_point_step: float = 4.0
 
 
-def make_handle(parent_id: str, role: str, label: str, offset: Vector3) -> Node:
+def make_handle(parent_id: str, role: NodeRole, label: str, offset: Vector3) -> Node:
     """return a bezier handle child node"""
     return Node(
         id=new_node_id(),
@@ -83,15 +81,17 @@ def add_spline_point(scene: Scene, group_id: str) -> str:
         )
         if vector3_length(out_offset) < 1e-6:
             out_offset = Vector3(default_handle_length, 0.0, 0.0)
-        if child_with_role(scene.nodes, last.id, role_bezier_handle_out) is None:
+        if child_with_role(scene.nodes, last.id, NodeRole.bezier_handle_out) is None:
             to_add.append(
-                make_handle(last.id, role_bezier_handle_out, "Out", out_offset)
+                make_handle(last.id, NodeRole.bezier_handle_out, "Out", out_offset)
             )
-        if closed and child_with_role(scene.nodes, last.id, role_bezier_handle_in) is None:
+        if closed and child_with_role(
+            scene.nodes, last.id, NodeRole.bezier_handle_in
+        ) is None:
             to_add.append(
                 make_handle(
                     last.id,
-                    role_bezier_handle_in,
+                    NodeRole.bezier_handle_in,
                     "In",
                     vector3_scale(out_offset, -1.0),
                 )
@@ -105,7 +105,7 @@ def add_spline_point(scene: Scene, group_id: str) -> str:
             transform=transform_at(new_pos),
             mesh_id=None,
             name=f"Point {len(points)}",
-            role=role_bezier_point,
+            role=NodeRole.bezier_point,
         )
     )
     back: Vector3 = vector3_scale(
@@ -114,12 +114,12 @@ def add_spline_point(scene: Scene, group_id: str) -> str:
     )
     if vector3_length(back) < 1e-6:
         back = Vector3(-default_handle_length, 0.0, 0.0)
-    to_add.append(make_handle(point_id, role_bezier_handle_in, "In", back))
+    to_add.append(make_handle(point_id, NodeRole.bezier_handle_in, "In", back))
     if closed:
         to_add.append(
             make_handle(
                 point_id,
-                role_bezier_handle_out,
+                NodeRole.bezier_handle_out,
                 "Out",
                 vector3_scale(back, -1.0),
             )

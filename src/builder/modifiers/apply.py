@@ -7,11 +7,7 @@ from builder.generators.generator_types import (
     GeneratedSlot,
     Modifier,
 )
-from builder.modifiers.registry import (
-    get_modifier_spec,
-    known_modifier_kind,
-    modifier_params_with_defaults,
-)
+from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 
 
 def apply_modifier_stack(
@@ -27,6 +23,7 @@ def apply_modifier_stack(
             continue
         if not known_modifier_kind(modifier.kind):
             continue
-        params = modifier_params_with_defaults(modifier.kind, modifier.params)
-        current = get_modifier_spec(modifier.kind).apply(current, params, context)
+        current = get_modifier_spec(modifier.kind).apply(
+            current, modifier.params, context
+        )
     return current

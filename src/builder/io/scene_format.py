@@ -12,7 +12,6 @@ from builder.generators.generator_types import (
     MeshPattern,
     MeshSequenceMode,
     Modifier,
-    ParamMap,
 )
 from builder.generators.param_types import (
     BoolParam,
@@ -23,9 +22,9 @@ from builder.generators.param_types import (
     IntParam,
 )
 from builder.generators.registry import get_spec
-from builder.modifiers.registry import known_modifier_kind
+from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
-from builder.scene.scene_types import MeshId, Node
+from builder.scene.scene_types import MeshId, Node, NodeRole
 
 scene_format_version: int = 6
 scene_file_suffix: str = ".scene"
@@ -100,23 +99,28 @@ def transform_from_json(data: Any) -> Transform:
     )
 
 
+def enum_from_name[E: IntEnum](enum_type: type[E], raw: Any, *, label: str) -> E:
+    """decode an IntEnum member from its scene name"""
+    if not isinstance(raw, str):
+        raise ValueError(f"{label} must be a string name")
+    try:
+        return enum_type[raw]
+    except KeyError as error:
+        raise ValueError(f"unknown {label} {raw!r}") from error
+
+
 def mesh_pattern_to_json(pattern: MeshPattern) -> dict[str, Any]:
     """encode a mesh pattern"""
     return {
         "mesh_ids": [mesh_id.name for mesh_id in pattern.mesh_ids],
-        "mode": pattern.mode,
+        "mode": pattern.mode.name,
         "seed": pattern.seed,
     }
 
 
 def mesh_pattern_from_json(data: dict[str, Any]) -> MeshPattern:
-    """decode a mesh pattern, accepting the legacy single 'mesh_id' string"""
+    """decode a mesh pattern"""
     ids_raw: Any = data.get("mesh_ids")
-    if ids_raw is None:
-        legacy: Any = data.get("mesh_id")
-        if not isinstance(legacy, str) or legacy == "":
-            raise ValueError("generator requires 'mesh_ids' or legacy 'mesh_id'")
-        return MeshPattern(mesh_ids=(MeshId(legacy),), mode="repeat", seed=0)
     if not isinstance(ids_raw, list):
         raise ValueError("generator.mesh_ids must be an array")
     mesh_ids: list[MeshId] = []
@@ -125,11 +129,10 @@ def mesh_pattern_from_json(data: dict[str, Any]) -> MeshPattern:
         if not isinstance(entry, str) or entry == "":
             raise ValueError("generator.mesh_ids entries must be non-empty strings")
         mesh_ids.append(MeshId(entry))
-    mode_raw: Any = data.get("mode", "repeat")
-    if mode_raw not in ("repeat", "pingpong", "random"):
-        raise ValueError("generator.mode must be repeat, pingpong, or random")
-    mode: MeshSequenceMode = mode_raw
-    seed_raw: Any = data.get("seed", 0)
+    mode: MeshSequenceMode = enum_from_name(
+        MeshSequenceMode, data.get("mode"), label="generator.mode"
+    )
+    seed_raw: Any = data.get("seed")
     if isinstance(seed_raw, bool) or not isinstance(seed_raw, int):
         raise ValueError("generator.seed must be an integer")
     return MeshPattern(mesh_ids=tuple(mesh_ids), mode=mode, seed=seed_raw)
@@ -142,62 +145,37 @@ def vec3_to_json(param: Float3Param | Int3Param) -> dict[str, float | int]:
     return {"x": float(param.x), "y": float(param.y), "z": float(param.z)}
 
 
-def float3_from_json(
-    data: Any, *, fallback: Float3Param = Float3Param()
-) -> Float3Param:
-    """decode float3 components, accepting legacy yaw/pitch/roll keys"""
-    if data is None:
-        return fallback
+def float3_from_json(data: Any, *, template: Float3Param) -> Float3Param:
+    """decode float3 components; template keeps labels and clamp_range"""
     if not isinstance(data, dict):
         raise ValueError("float3 must be an object")
-    x_raw: Any = data.get("x", data.get("yaw", fallback.x))
-    y_raw: Any = data.get("y", data.get("pitch", fallback.y))
-    z_raw: Any = data.get("z", data.get("roll", fallback.z))
+    x_raw: Any = data.get("x")
+    y_raw: Any = data.get("y")
+    z_raw: Any = data.get("z")
     for label, value in (("x", x_raw), ("y", y_raw), ("z", z_raw)):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"float3.{label} must be a number")
-    return replace(
-        fallback,
-        x=float(x_raw),
-        y=float(y_raw),
-        z=float(z_raw),
-    )
+    return replace(template, x=float(x_raw), y=float(y_raw), z=float(z_raw))
 
 
-def int3_from_json(
-    data: Any, *, fallback: Int3Param = Int3Param()
-) -> Int3Param:
-    """decode int3 components"""
-    if data is None:
-        return fallback
+def int3_from_json(data: Any, *, template: Int3Param) -> Int3Param:
+    """decode int3 components; template keeps labels and clamp_range"""
     if not isinstance(data, dict):
         raise ValueError("int3 must be an object")
-    x_raw: Any = data.get("x", fallback.x)
-    y_raw: Any = data.get("y", fallback.y)
-    z_raw: Any = data.get("z", fallback.z)
+    x_raw: Any = data.get("x")
+    y_raw: Any = data.get("y")
+    z_raw: Any = data.get("z")
     for label, value in (("x", x_raw), ("y", y_raw), ("z", z_raw)):
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"int3.{label} must be an integer")
-    return replace(fallback, x=int(x_raw), y=int(y_raw), z=int(z_raw))
-
-
-def pop_legacy_orient_dict(params: dict[str, Any], prefix: str) -> dict[str, float]:
-    """pull legacy flat orient_* keys out of a params dict into an x/y/z object"""
-    yaw_key: str = f"{prefix}orient_yaw"
-    pitch_key: str = f"{prefix}orient_pitch"
-    roll_key: str = f"{prefix}orient_roll"
-    return {
-        "x": float(params.pop(yaw_key, 0.0)),
-        "y": float(params.pop(pitch_key, 0.0)),
-        "z": float(params.pop(roll_key, 0.0)),
-    }
+    return replace(template, x=int(x_raw), y=int(y_raw), z=int(z_raw))
 
 
 def modifier_to_json(modifier: Modifier) -> dict[str, Any]:
     """encode one modifier stack entry"""
     return {
         "kind": modifier.kind,
-        "params": dict(modifier.params),
+        "params": params_to_json(modifier.params),
         "enabled": modifier.enabled,
     }
 
@@ -207,23 +185,16 @@ def modifier_from_json(data: Any) -> Modifier | None:
     if not isinstance(data, dict):
         raise ValueError("modifier must be an object")
     kind: Any = data.get("kind")
-    params_raw: Any = data.get("params", {})
+    params_raw: Any = data.get("params")
     if not isinstance(kind, str) or kind == "":
         raise ValueError("modifier.kind must be a non-empty string")
     if not known_modifier_kind(kind):
         return None
     if not isinstance(params_raw, dict):
         raise ValueError("modifier.params must be an object")
-    params: ParamMap = {}
-    key: Any
-    value: Any
-    for key, value in params_raw.items():
-        if not isinstance(key, str):
-            raise ValueError("modifier.params keys must be strings")
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"modifier.params[{key!r}] must be a number")
-        params[key] = int(value) if isinstance(value, int) else float(value)
-    enabled_raw: Any = data.get("enabled", True)
+    spec = get_modifier_spec(kind)
+    params: Any = typed_params_from_json(spec.params_type, params_raw)
+    enabled_raw: Any = data.get("enabled")
     if not isinstance(enabled_raw, bool):
         raise ValueError("modifier.enabled must be a boolean")
     return Modifier(kind=kind, params=params, enabled=enabled_raw)
@@ -242,6 +213,11 @@ def param_field_default(params_type: type, field_name: str) -> Any:
     raise KeyError(field_name)
 
 
+def enum_member_from_json(enum_type: type[IntEnum], raw: Any) -> IntEnum:
+    """decode an IntEnum member from its scene name"""
+    return enum_from_name(enum_type, raw, label=enum_type.__name__)
+
+
 def params_to_json(params: Any) -> dict[str, Any]:
     """encode a params dataclass to a json object (values only)"""
     out: dict[str, Any] = {}
@@ -250,7 +226,7 @@ def params_to_json(params: Any) -> dict[str, Any]:
         if isinstance(value, Float3Param) or isinstance(value, Int3Param):
             out[field.name] = vec3_to_json(value)
         elif isinstance(value, EnumParam):
-            out[field.name] = int(value.value)
+            out[field.name] = value.value.name
         elif isinstance(value, BoolParam):
             out[field.name] = 1 if value.value else 0
         elif isinstance(value, IntParam):
@@ -275,14 +251,16 @@ def typed_params_from_json(params_type: type, data: dict[str, Any]) -> Any:
         annotation: Any = hints[field.name]
         default: Any = param_field_default(params_type, field.name)
         if annotation is Float3Param:
-            values[field.name] = float3_from_json(raw, fallback=default)
+            values[field.name] = float3_from_json(raw, template=default)
             continue
         if annotation is Int3Param:
-            values[field.name] = int3_from_json(raw, fallback=default)
+            values[field.name] = int3_from_json(raw, template=default)
             continue
         if annotation is EnumParam:
             enum_type: type[IntEnum] = type(default.value)
-            values[field.name] = replace(default, value=enum_type(int(raw)))
+            values[field.name] = replace(
+                default, value=enum_member_from_json(enum_type, raw)
+            )
             continue
         if annotation is BoolParam:
             values[field.name] = replace(default, value=bool(int(raw)))
@@ -297,20 +275,6 @@ def typed_params_from_json(params_type: type, data: dict[str, Any]) -> Any:
             f"unsupported param annotation for {field.name}: {annotation!r}"
         )
     return params_type(**values)
-
-
-def migrate_params_dict(kind: str, data: dict[str, Any], raw_params: dict[str, Any]) -> None:
-    """fold older scene shapes into nested typed params keys (in place)"""
-    if "orient" not in raw_params and "orient" in data:
-        raw_params["orient"] = data["orient"]
-    if "point_orient" not in raw_params and "point_orient" in data:
-        raw_params["point_orient"] = data["point_orient"]
-    if "orient" not in raw_params and "orient_yaw" in raw_params:
-        raw_params["orient"] = pop_legacy_orient_dict(raw_params, "")
-    if "point_orient" not in raw_params and "point_orient_yaw" in raw_params:
-        raw_params["point_orient"] = pop_legacy_orient_dict(raw_params, "point_")
-    if kind == "radial" and "facing" not in raw_params and "face_center" in raw_params:
-        raw_params["facing"] = 1 if int(raw_params["face_center"]) else 0
 
 
 def generator_to_json(generator: Generator) -> dict[str, Any]:
@@ -340,21 +304,17 @@ def generator_from_json(data: Any) -> Generator:
     if not isinstance(params_raw, dict):
         raise ValueError("generator.params must be an object")
     meshes_raw: Any = data.get("meshes")
-    pattern: MeshPattern = mesh_pattern_from_json(
-        meshes_raw if isinstance(meshes_raw, dict) else data
-    )
+    if not isinstance(meshes_raw, dict):
+        raise ValueError("generator.meshes must be an object")
+    pattern: MeshPattern = mesh_pattern_from_json(meshes_raw)
     point_meshes: MeshPattern | None = None
     point_raw: Any = data.get("point_meshes")
-    if isinstance(point_raw, dict):
+    if point_raw is not None:
+        if not isinstance(point_raw, dict):
+            raise ValueError("generator.point_meshes must be an object")
         point_meshes = mesh_pattern_from_json(point_raw)
-    if kind == "radial_grid":
-        kind = "radial"
-    elif kind == "ngon_grid":
-        kind = "ngon"
     spec = get_spec(kind)
-    raw_params: dict[str, Any] = dict(params_raw)
-    migrate_params_dict(kind, data, raw_params)
-    params: Any = typed_params_from_json(spec.params_type, raw_params)
+    params: Any = typed_params_from_json(spec.params_type, params_raw)
     modifiers: list[Modifier] = []
     modifiers_raw: Any = data.get("modifiers", [])
     if modifiers_raw is None:
@@ -379,14 +339,22 @@ def mesh_asset_to_json(asset: MeshAsset, relative_source: str | None) -> dict[st
     """encode a catalog asset; relative_source is used for fbx entries"""
     payload: dict[str, Any] = {
         "id": asset.mesh_id.name,
-        "kind": asset.kind,
+        "kind": asset.kind.name,
         "label": asset.label,
     }
-    if asset.kind == "fbx":
-        if relative_source is None:
-            raise ValueError(f"fbx asset {asset.mesh_id.name} has no source path")
-        payload["source"] = relative_source
+    match asset.kind:
+        case MeshAssetKind.fbx:
+            if relative_source is None:
+                raise ValueError(f"fbx asset {asset.mesh_id.name} has no source path")
+            payload["source"] = relative_source
+        case MeshAssetKind.builtin:
+            pass
     return payload
+
+
+def mesh_asset_kind_from_json(raw: Any) -> MeshAssetKind:
+    """decode a mesh asset kind from its scene name"""
+    return enum_from_name(MeshAssetKind, raw, label="mesh.kind")
 
 
 def mesh_asset_from_json(data: Any) -> MeshAsset:
@@ -398,17 +366,18 @@ def mesh_asset_from_json(data: Any) -> MeshAsset:
     label: Any = data.get("label")
     if not isinstance(mesh_name, str) or mesh_name == "":
         raise ValueError("mesh.id must be a non-empty string")
-    if kind_raw not in ("builtin", "fbx"):
-        raise ValueError("mesh.kind must be 'builtin' or 'fbx'")
-    kind: MeshAssetKind = kind_raw
+    kind: MeshAssetKind = mesh_asset_kind_from_json(kind_raw)
     if not isinstance(label, str) or label == "":
         raise ValueError("mesh.label must be a non-empty string")
     source: str | None = None
-    if kind == "fbx":
-        source_raw: Any = data.get("source")
-        if not isinstance(source_raw, str) or source_raw == "":
-            raise ValueError(f"fbx mesh {mesh_name} requires source")
-        source = source_raw
+    match kind:
+        case MeshAssetKind.fbx:
+            source_raw: Any = data.get("source")
+            if not isinstance(source_raw, str) or source_raw == "":
+                raise ValueError(f"fbx mesh {mesh_name} requires source")
+            source = source_raw
+        case MeshAssetKind.builtin:
+            pass
     return MeshAsset(
         mesh_id=MeshId(mesh_name),
         label=label,
@@ -427,11 +396,21 @@ def node_to_json(node: Node) -> dict[str, Any]:
     }
     if node.name != "":
         payload["name"] = node.name
-    if node.role != "":
-        payload["role"] = node.role
+    match node.role:
+        case NodeRole.none:
+            pass
+        case _:
+            payload["role"] = node.role.name
     if node.generator is not None:
         payload["generator"] = generator_to_json(node.generator)
     return payload
+
+
+def node_role_from_json(raw: Any) -> NodeRole:
+    """decode a node role; missing/empty means none"""
+    if raw is None or raw == "":
+        return NodeRole.none
+    return enum_from_name(NodeRole, raw, label="node.role")
 
 
 def node_from_json(data: Any) -> Node:
@@ -448,9 +427,7 @@ def node_from_json(data: Any) -> Node:
     name_raw: Any = data.get("name", "")
     if not isinstance(name_raw, str):
         raise ValueError("node.name must be a string")
-    role_raw: Any = data.get("role", "")
-    if not isinstance(role_raw, str):
-        raise ValueError("node.role must be a string")
+    role: NodeRole = node_role_from_json(data.get("role", ""))
     mesh_id: MeshId | None
     if mesh_name is None:
         mesh_id = None
@@ -468,7 +445,7 @@ def node_from_json(data: Any) -> Node:
         mesh_id=mesh_id,
         generator=generator,
         name=name_raw,
-        role=role_raw,
+        role=role,
     )
 
 
@@ -514,41 +491,39 @@ def document_to_json(
 
 def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
     """decode a scene document; returns (document, warnings)"""
-    warnings: list[str] = []
     if not isinstance(data, dict):
         raise ValueError("scene root must be an object")
-    version_raw: Any = data.get("version", scene_format_version)
+    version_raw: Any = data.get("version")
     if not isinstance(version_raw, int):
         raise ValueError("version must be an integer")
-    version: int = version_raw
-    if version != scene_format_version:
-        warnings.append(
-            f"scene version {version} differs from supported "
-            f"{scene_format_version}; loading anyway"
+    if version_raw != scene_format_version:
+        raise ValueError(
+            f"unsupported scene version {version_raw}; "
+            f"expected {scene_format_version}"
         )
-    active_raw: Any = data.get("active_mesh_id", "cube")
+    active_raw: Any = data.get("active_mesh_id")
     if not isinstance(active_raw, str) or active_raw == "":
         raise ValueError("active_mesh_id must be a non-empty string")
-    ui_raw: Any = data.get("ui", {})
+    ui_raw: Any = data.get("ui")
     if not isinstance(ui_raw, dict):
         raise ValueError("ui must be an object")
-    side_open: Any = ui_raw.get("side_panel_open", True)
-    meshes_open: Any = ui_raw.get("meshes_panel_open", True)
-    outliner_open: Any = ui_raw.get("outliner_open", True)
+    side_open: Any = ui_raw.get("side_panel_open")
+    meshes_open: Any = ui_raw.get("meshes_panel_open")
+    outliner_open: Any = ui_raw.get("outliner_open")
     if (
         not isinstance(side_open, bool)
         or not isinstance(meshes_open, bool)
         or not isinstance(outliner_open, bool)
     ):
         raise ValueError("ui panel flags must be booleans")
-    meshes_raw: Any = data.get("meshes", [])
-    nodes_raw: Any = data.get("nodes", [])
+    meshes_raw: Any = data.get("meshes")
+    nodes_raw: Any = data.get("nodes")
     if not isinstance(meshes_raw, list) or not isinstance(nodes_raw, list):
         raise ValueError("meshes and nodes must be arrays")
     meshes: list[MeshAsset] = [mesh_asset_from_json(entry) for entry in meshes_raw]
     nodes: list[Node] = [node_from_json(entry) for entry in nodes_raw]
     document: SceneDocument = SceneDocument(
-        version=version,
+        version=version_raw,
         active_mesh_id=MeshId(active_raw),
         ui=SceneUiState(
             side_panel_open=side_open,
@@ -558,7 +533,7 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
         meshes=tuple(meshes),
         nodes=tuple(nodes),
     )
-    return document, warnings
+    return document, []
 
 
 def dumps_document(

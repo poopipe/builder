@@ -1,10 +1,12 @@
-"""typed inspector controls reflected from generator params dataclasses"""
+"""typed inspector controls reflected from params dataclasses"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
 from enum import IntEnum
 from typing import Any, get_type_hints
+
+from pyray import Rectangle
 
 from builder.generators.param_types import (
     BoolParam,
@@ -14,6 +16,13 @@ from builder.generators.param_types import (
     Int3Param,
     IntParam,
     clamp_range,
+)
+from builder.ui.theme import (
+    ui_button_gap,
+    ui_button_height,
+    ui_font_size,
+    ui_pad,
+    ui_stepper_width,
 )
 
 
@@ -286,3 +295,95 @@ def enum_members(params: Any, control: EnumControl) -> tuple[IntEnum, ...]:
     """allowed enum members for an enum control"""
     param: EnumParam = getattr(params, control.name)
     return param.members()
+
+
+@dataclass(frozen=True)
+class ParamRowRects:
+    """hit targets for one reflected param row"""
+
+    key: str
+    label: Rectangle
+    minus: Rectangle
+    value: Rectangle
+    plus: Rectangle
+    option_rects: tuple[Rectangle, ...] = ()
+
+
+def layout_control_row(
+    control: ParamControl,
+    params: Any,
+    x: float,
+    y: float,
+    inner_w: float,
+) -> tuple[ParamRowRects, float]:
+    """place one param row and return it with the y below it"""
+    empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
+    row_key: str = control_key(control)
+    match control:
+        case BoolControl():
+            hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
+            row: ParamRowRects = ParamRowRects(
+                key=row_key,
+                label=hit,
+                minus=empty,
+                value=hit,
+                plus=empty,
+            )
+            return row, y + float(ui_button_height) + ui_pad
+        case EnumControl() as enum_control:
+            options: tuple[IntEnum, ...] = enum_members(params, enum_control)
+            enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+            controls_y: float = y + float(ui_font_size) + 4.0
+            option_count: int = max(1, len(options))
+            option_w: float = (
+                inner_w - ui_button_gap * (option_count - 1)
+            ) / option_count
+            option_rects: tuple[Rectangle, ...] = tuple(
+                Rectangle(
+                    x + (option_w + ui_button_gap) * index,
+                    controls_y,
+                    option_w,
+                    float(ui_button_height),
+                )
+                for index in range(len(options))
+            )
+            row = ParamRowRects(
+                key=row_key,
+                label=enum_label,
+                minus=empty,
+                value=empty,
+                plus=empty,
+                option_rects=option_rects,
+            )
+            return row, controls_y + float(ui_button_height) + ui_pad
+        case (
+            IntControl()
+            | FloatControl()
+            | Float3ComponentControl()
+            | Int3ComponentControl()
+        ):
+            label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
+            controls_y = y + float(ui_font_size) + 4.0
+            minus: Rectangle = Rectangle(
+                x, controls_y, float(ui_stepper_width), float(ui_button_height)
+            )
+            plus: Rectangle = Rectangle(
+                x + inner_w - float(ui_stepper_width),
+                controls_y,
+                float(ui_stepper_width),
+                float(ui_button_height),
+            )
+            value: Rectangle = Rectangle(
+                minus.x + minus.width + ui_button_gap,
+                controls_y,
+                plus.x - (minus.x + minus.width + ui_button_gap * 2),
+                float(ui_button_height),
+            )
+            row = ParamRowRects(
+                key=row_key,
+                label=label,
+                minus=minus,
+                value=value,
+                plus=plus,
+            )
+            return row, controls_y + float(ui_button_height) + ui_pad

@@ -22,8 +22,8 @@ def copy_transform(transform: Transform) -> Transform:
 
 
 def clone_modifier(modifier: Modifier) -> Modifier:
-    """copy a modifier, detaching its param map from the original"""
-    return replace(modifier, params=dict(modifier.params))
+    """copy a modifier; frozen params dataclasses are shared safely"""
+    return replace(modifier)
 
 
 def clone_generator(generator: Generator | None) -> Generator | None:

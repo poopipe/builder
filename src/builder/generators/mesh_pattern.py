@@ -8,7 +8,7 @@ from random import Random
 from builder.generators.generator_types import MeshPattern, MeshSequenceMode
 from builder.scene.scene_types import builtin_cube, MeshId
 
-mesh_sequence_modes: tuple[MeshSequenceMode, ...] = ("repeat", "pingpong", "random")
+mesh_sequence_modes: tuple[MeshSequenceMode, ...] = tuple(MeshSequenceMode)
 
 
 def mesh_for_index(pattern: MeshPattern, index: int) -> MeshId:
@@ -18,18 +18,20 @@ def mesh_for_index(pattern: MeshPattern, index: int) -> MeshId:
         return builtin_cube
     if count == 1:
         return pattern.mesh_ids[0]
-    if pattern.mode == "repeat":
-        return pattern.mesh_ids[index % count]
-    if pattern.mode == "pingpong":
-        # reflect without repeating the endpoints: A B C B A B C ...
-        period: int = 2 * count - 2
-        position: int = index % period
-        if position >= count:
-            position = period - position
-        return pattern.mesh_ids[position]
-    # random, but deterministic per (seed, index) so regen/reload is stable
-    mixed: int = (pattern.seed * 2654435761 + index * 40503) & 0xFFFFFFFF
-    return pattern.mesh_ids[Random(mixed).randrange(count)]
+    match pattern.mode:
+        case MeshSequenceMode.repeat:
+            return pattern.mesh_ids[index % count]
+        case MeshSequenceMode.pingpong:
+            # reflect without repeating the endpoints: A B C B A B C ...
+            period: int = 2 * count - 2
+            position: int = index % period
+            if position >= count:
+                position = period - position
+            return pattern.mesh_ids[position]
+        case MeshSequenceMode.random:
+            # deterministic per (seed, index) so regen/reload is stable
+            mixed: int = (pattern.seed * 2654435761 + index * 40503) & 0xFFFFFFFF
+            return pattern.mesh_ids[Random(mixed).randrange(count)]
 
 
 def next_mode(mode: MeshSequenceMode) -> MeshSequenceMode:

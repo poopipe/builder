@@ -21,13 +21,7 @@ from builder.distribution.grids import (
     rotation_looking_along,
 )
 from builder.generators.generator_types import BuildContext, GeneratedSlot, SlotRole
-from builder.scene.scene_types import (
-    Node,
-    role_bezier_handle_in,
-    role_bezier_handle_out,
-    role_bezier_point,
-    transform_at,
-)
+from builder.scene.scene_types import Node, NodeRole, transform_at
 from builder.scene.transforms import matrix_translation, world_matrix
 
 
@@ -65,12 +59,12 @@ def bezier_tangent(
 
 
 def child_with_role(
-    nodes: dict[str, Node], parent_id: str, role: str
+    nodes: dict[str, Node], parent_id: str, role: NodeRole
 ) -> Node | None:
     """return the first direct child with the given role"""
     node: Node
     for node in nodes.values():
-        if node.parent_id == parent_id and node.role == role:
+        if node.parent_id == parent_id and node.role is role:
             return node
     return None
 
@@ -80,7 +74,7 @@ def ordered_bezier_points(nodes: dict[str, Node], group_id: str) -> list[Node]:
     points: list[Node] = [
         node
         for node in nodes.values()
-        if node.parent_id == group_id and node.role == role_bezier_point
+        if node.parent_id == group_id and node.role is NodeRole.bezier_point
     ]
     points.sort(key=lambda node: (node.name, node.id))
     return points
@@ -101,7 +95,7 @@ def handle_local(
     nodes: dict[str, Node],
     group_id: str,
     point: Node,
-    role: str,
+    role: NodeRole,
     fallback: Vector3,
 ) -> Vector3:
     """return handle position in group-local space, or fallback when missing"""
@@ -193,8 +187,8 @@ def sample_segment(
         t: float = t_at_arc_length(cumulative, probe_ts, target)
         position: Vector3 = bezier_point(p0, p1, p2, p3, t)
         tangent: Vector3 = bezier_tangent(p0, p1, p2, p3, t)
-        role: SlotRole = "point" if sample == 0 else "edge"
-        facing: int = point_facing if role == "point" else edge_facing
+        role: SlotRole = SlotRole.point if sample == 0 else SlotRole.edge
+        facing: int = point_facing if role is SlotRole.point else edge_facing
         append_spline_slot(slots, position, tangent, up, facing, role)
 
 
@@ -226,11 +220,11 @@ def spline_slots_from_context(
     for point, position in zip(points, locals_points, strict=True):
         outs.append(
             handle_local(
-                nodes, group_id, point, role_bezier_handle_out, position
+                nodes, group_id, point, NodeRole.bezier_handle_out, position
             )
         )
         ins.append(
-            handle_local(nodes, group_id, point, role_bezier_handle_in, position)
+            handle_local(nodes, group_id, point, NodeRole.bezier_handle_in, position)
         )
 
     cylinder: AxisIndex = clamp_axis(axis)
@@ -265,7 +259,7 @@ def spline_slots_from_context(
             ),
             up,
             point_facing,
-            "point",
+            SlotRole.point,
         )
 
     slots: list[GeneratedSlot] = []

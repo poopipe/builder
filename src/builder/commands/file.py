@@ -9,7 +9,7 @@ from builder.commands.commands_types import Command
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.io.scene_format import scene_file_suffix
 from builder.io.scene_io import load_scene_from_path, save_scene_to_path
-from builder.meshes.mesh_catalog import MeshAsset, register_mesh_asset
+from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind, register_mesh_asset
 from builder.scene.scene_types import MeshId
 from builder.ui.file_browser import (
     FileBrowserPurpose,
@@ -51,9 +51,9 @@ def quit_app(context: CommandContext, _: None) -> None:
 def open_scene(context: CommandContext, _: None) -> None:
     """open the in-app browser to load a .scene"""
     context.ui.file_browser = make_open_browser(
-        remembered_browser_directory(context, "open_scene"),
+        remembered_browser_directory(context, FileBrowserPurpose.open_scene),
         scene_file_suffix,
-        purpose="open_scene",
+        purpose=FileBrowserPurpose.open_scene,
     )
     context.ui.status = "Open scene…"
 
@@ -79,10 +79,10 @@ def save_scene_as(context: CommandContext, _: None) -> None:
         current.name if current is not None else f"untitled{scene_file_suffix}"
     )
     context.ui.file_browser = make_save_browser(
-        remembered_browser_directory(context, "save_scene"),
+        remembered_browser_directory(context, FileBrowserPurpose.save_scene),
         scene_file_suffix,
         initial_name,
-        purpose="save_scene",
+        purpose=FileBrowserPurpose.save_scene,
     )
     context.ui.status = "Save scene as…"
 
@@ -117,7 +117,7 @@ def about(context: CommandContext, _: None) -> None:
 def import_mesh(context: CommandContext, _: None) -> None:
     """open the in-app browser to import an .fbx into the mesh catalog"""
     context.ui.file_browser = make_import_browser(
-        remembered_browser_directory(context, "import_mesh"),
+        remembered_browser_directory(context, FileBrowserPurpose.import_mesh),
         mesh_file_suffix,
     )
     context.ui.status = "Import mesh…"
@@ -133,12 +133,14 @@ def import_mesh_from_path(context: CommandContext, path: str | Path) -> None:
     asset: MeshAsset = MeshAsset(
         mesh_id=registered_id,
         label=imported.name,
-        kind="fbx",
+        kind=MeshAssetKind.fbx,
         source_path=imported.source_path,
     )
     register_mesh_asset(context.application.mesh_catalog, asset)
     context.application.active_mesh_id = registered_id
-    context.application.browser_directories["import_mesh"] = mesh_path.parent
+    context.application.browser_directories[FileBrowserPurpose.import_mesh] = (
+        mesh_path.parent
+    )
     if replacing:
         context.ui.status = (
             f"Replaced '{imported.name}' "

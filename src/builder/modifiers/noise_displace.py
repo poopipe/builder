@@ -2,18 +2,32 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import floor
 
 from pyray import Transform, Vector3, vector3_add
 
 from builder.generators.generator_types import (
+    Axis,
     BuildContext,
     GeneratedSlot,
-    ParamField,
-    ParamMap,
-    Axis,
 )
+from builder.generators.param_types import EnumParam, FloatParam, IntParam
 from builder.modifiers.modifier_types import ModifierSpec
+
+
+@dataclass(frozen=True)
+class NoiseDisplaceParams:
+    """recipe values for noise displace"""
+
+    axis: EnumParam = EnumParam(Axis.Y, label="Axis")
+    amplitude: FloatParam = FloatParam(
+        0.5, label="Amplitude", step=0.1, minimum=-50.0, maximum=50.0
+    )
+    scale: FloatParam = FloatParam(
+        2.0, label="Scale", step=0.25, minimum=0.1, maximum=100.0
+    )
+    seed: IntParam = IntParam(0, label="Seed", minimum=0, maximum=1_000_000)
 
 
 def hash2(ix: int, iy: int, seed: int) -> float:
@@ -75,14 +89,14 @@ def axis_offset(axis: int, amount: float) -> Vector3:
 
 def noise_displace_apply(
     slots: list[GeneratedSlot],
-    params: ParamMap,
+    params: NoiseDisplaceParams,
     _: BuildContext,
 ) -> list[GeneratedSlot]:
     """displace each slot along axis by amplitude * value noise"""
-    axis: int = max(0, min(2, int(params.get("axis", 1))))
-    amplitude: float = float(params.get("amplitude", 0.5))
-    scale: float = max(0.1, float(params.get("scale", 2.0)))
-    seed: int = int(params.get("seed", 0))
+    axis: int = int(params.axis.value)
+    amplitude: float = params.amplitude.value
+    scale: float = max(0.1, params.scale.value)
+    seed: int = params.seed.value
     ax0: int
     ax1: int
     ax0, ax1 = sample_axes(axis)
@@ -107,24 +121,9 @@ def noise_displace_apply(
     return result
 
 
-noise_displace_defaults: ParamMap = {
-    "axis": 1,
-    "amplitude": 0.5,
-    "scale": 2.0,
-    "seed": 0,
-}
-
 noise_displace_spec: ModifierSpec = ModifierSpec(
     kind="noise_displace",
     label="Noise displace",
-    fields=(
-        ParamField("axis", "Axis", "enum", 1.0, options=Axis),
-        ParamField(
-            "amplitude", "Amplitude", "float", 0.1, minimum=-50.0, maximum=50.0
-        ),
-        ParamField("scale", "Scale", "float", 0.25, minimum=0.1, maximum=100.0),
-        ParamField("seed", "Seed", "int", 1.0, minimum=0.0, maximum=1_000_000.0),
-    ),
-    defaults=noise_displace_defaults,
+    params_type=NoiseDisplaceParams,
     apply=noise_displace_apply,
 )

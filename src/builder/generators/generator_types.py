@@ -5,24 +5,26 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from pyray import Transform
 
 if TYPE_CHECKING:
     from builder.scene.scene_types import MeshId, Node
 
-type ParamValue = int | float
-type ParamMap = dict[str, ParamValue]
-type SlotRole = Literal["default", "point", "edge"]
+
+class SlotRole(IntEnum):
+    default = 0
+    point = 1
+    edge = 2
 
 
 @dataclass(frozen=True)
 class GeneratedSlot:
-    """one placed mesh instance from a generator build"""
+    """slot for future mesh placement"""
 
     transform: Transform
-    role: SlotRole = "default"
+    role: SlotRole = SlotRole.default
 
 
 @dataclass(frozen=True)
@@ -31,19 +33,6 @@ class BuildContext:
 
     nodes: Mapping[str, Node]
     group_id: str
-
-
-@dataclass(frozen=True)
-class ParamField:
-    """inspector descriptor for one editable value"""
-
-    key: str
-    label: str
-    value_type: Literal["int", "float", "bool", "enum"]
-    step: float
-    minimum: float | None = None
-    maximum: float | None = None
-    options: type[IntEnum] | tuple[IntEnum, ...] | None = None
 
 
 class Axis(IntEnum):
@@ -72,7 +61,10 @@ class GeneratorSpec:
     supports_point_meshes: bool = False
 
 
-type MeshSequenceMode = Literal["repeat", "pingpong", "random"]
+class MeshSequenceMode(IntEnum):
+    repeat = 0
+    pingpong = 1
+    random = 2
 
 
 @dataclass(frozen=True)
@@ -84,7 +76,7 @@ class MeshPattern:
     """
 
     mesh_ids: tuple[MeshId, ...]
-    mode: MeshSequenceMode = "repeat"
+    mode: MeshSequenceMode = MeshSequenceMode.repeat
     seed: int = 0
 
 
@@ -106,9 +98,10 @@ class Generator:
 class Modifier:
     """one step in a generator's post-process stack
 
+    params is a frozen dataclass declared by the modifier kind;
     may rewrite slot transforms or drop slots; must not invent new ones
     """
 
     kind: str
-    params: ParamMap
+    params: Any
     enabled: bool = True

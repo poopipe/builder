@@ -4,17 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
-from builder.generators.generator_types import (
-    BuildContext,
-    GeneratedSlot,
-    ParamField,
-    ParamMap,
-)
+from builder.generators.generator_types import BuildContext, GeneratedSlot
 
 
 type ApplyModifier = Callable[
-    [list[GeneratedSlot], ParamMap, BuildContext], list[GeneratedSlot]
+    [list[GeneratedSlot], Any, BuildContext], list[GeneratedSlot]
 ]
 
 
@@ -24,6 +20,5 @@ class ModifierSpec:
 
     kind: str
     label: str
-    fields: tuple[ParamField, ...]
-    defaults: ParamMap
+    params_type: type
     apply: ApplyModifier

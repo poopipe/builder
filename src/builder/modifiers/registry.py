@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from typing import Any
 
-from builder.generators.generator_types import Modifier, ParamField, ParamMap, ParamValue
+from builder.generators.generator_types import Modifier
 from builder.modifiers.modifier_types import ModifierSpec
+from builder.modifiers.modifier_template import template_translate_spec
 from builder.modifiers.noise_displace import noise_displace_spec
 
-modifier_specs: tuple[ModifierSpec, ...] = (noise_displace_spec,)
+modifier_specs: tuple[ModifierSpec, ...] = (
+    noise_displace_spec,
+    template_translate_spec,
+)
 
 
 def get_modifier_spec(kind: str) -> ModifierSpec:
@@ -29,25 +33,11 @@ def known_modifier_kind(kind: str) -> bool:
         return False
 
 
-def modifier_params_with_defaults(
-    kind: str, params: Mapping[str, ParamValue]
-) -> ParamMap:
-    """return defaults overlaid with stored params"""
-    completed: ParamMap = dict(get_modifier_spec(kind).defaults)
-    completed.update(params)
-    return completed
+def default_modifier_params(kind: str) -> Any:
+    """return a fresh default params dataclass for a kind"""
+    return get_modifier_spec(kind).params_type()
 
 
 def make_modifier(kind: str) -> Modifier:
     """return a new enabled modifier with default params"""
-    spec: ModifierSpec = get_modifier_spec(kind)
-    return Modifier(kind=kind, params=dict(spec.defaults), enabled=True)
-
-
-def modifier_field_for(kind: str, key: str) -> ParamField:
-    """return one param field from a modifier kind"""
-    field: ParamField
-    for field in get_modifier_spec(kind).fields:
-        if field.key == key:
-            return field
-    raise KeyError(f"unknown param {key!r} for modifier {kind}")
+    return Modifier(kind=kind, params=default_modifier_params(kind), enabled=True)

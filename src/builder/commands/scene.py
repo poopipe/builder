@@ -24,9 +24,7 @@ from builder.scene.selection import subtree_ids
 from builder.scene.scene_types import (
     MeshId,
     Node,
-    role_bezier_handle_in,
-    role_bezier_handle_out,
-    role_bezier_point,
+    NodeRole,
     transform_at,
 )
 from builder.scene.transforms import (
@@ -95,7 +93,7 @@ def default_spline_controls(group_id: str) -> list[Node]:
                 transform=transform_at(position),
                 mesh_id=None,
                 name=name,
-                role=role_bezier_point,
+                role=NodeRole.bezier_point,
             )
         )
         if handle_in is not None:
@@ -106,7 +104,7 @@ def default_spline_controls(group_id: str) -> list[Node]:
                     transform=transform_at(handle_in),
                     mesh_id=None,
                     name="In",
-                    role=role_bezier_handle_in,
+                    role=NodeRole.bezier_handle_in,
                 )
             )
         if handle_out is not None:
@@ -117,7 +115,7 @@ def default_spline_controls(group_id: str) -> list[Node]:
                     transform=transform_at(handle_out),
                     mesh_id=None,
                     name="Out",
-                    role=role_bezier_handle_out,
+                    role=NodeRole.bezier_handle_out,
                 )
             )
     return nodes

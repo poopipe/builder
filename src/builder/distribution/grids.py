@@ -418,8 +418,12 @@ def ngon_grid_transforms(
                     position: Vector3 = vector3_add(
                         p0, vector3_scale(edge_dir, t)
                     )
-                    role: SlotRole = "point" if sample == 0 else "edge"
-                    slot_facing: int = point_facing if role == "point" else facing
+                    role: SlotRole = (
+                        SlotRole.point if sample == 0 else SlotRole.edge
+                    )
+                    slot_facing: int = (
+                        point_facing if role is SlotRole.point else facing
+                    )
                     append_oriented_slot(
                         slots,
                         position,

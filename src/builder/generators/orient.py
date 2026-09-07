@@ -38,7 +38,7 @@ def apply_orients(
         GeneratedSlot(
             apply_orient_offset(
                 slot.transform,
-                point_orient if slot.role == "point" else orient,
+                point_orient if slot.role is SlotRole.point else orient,
             ),
             slot.role,
         )
@@ -48,7 +48,7 @@ def apply_orients(
 
 def slots_from_transforms(
     transforms: list[Transform],
-    role: SlotRole = "default",
+    role: SlotRole = SlotRole.default,
 ) -> list[GeneratedSlot]:
     """wrap plain transforms as slots with a shared role"""
     return [GeneratedSlot(transform, role) for transform in transforms]

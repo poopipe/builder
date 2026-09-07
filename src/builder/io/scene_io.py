@@ -19,6 +19,7 @@ from builder.io.scene_format import (
 )
 from builder.meshes.mesh_catalog import (
     MeshAsset,
+    MeshAssetKind,
     MeshCatalog,
     default_mesh_catalog,
     register_mesh_asset,
@@ -65,11 +66,15 @@ def relative_sources_for_save(
     sources: dict[str, str] = {}
     asset: MeshAsset
     for asset in document.meshes:
-        if asset.kind != "fbx":
-            continue
-        if asset.source_path is None:
-            raise ValueError(f"fbx asset '{asset.label}' has no source_path")
-        sources[asset.mesh_id.name] = relativize_path(Path(asset.source_path), root)
+        match asset.kind:
+            case MeshAssetKind.builtin:
+                continue
+            case MeshAssetKind.fbx:
+                if asset.source_path is None:
+                    raise ValueError(f"fbx asset '{asset.label}' has no source_path")
+                sources[asset.mesh_id.name] = relativize_path(
+                    Path(asset.source_path), root
+                )
     return sources
 
 
@@ -145,47 +150,56 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     fallbacks: dict[str, MeshId] = {}
     asset: MeshAsset
     for asset in document.meshes:
-        if asset.kind == "builtin":
-            register_mesh_asset(
-                catalog,
-                MeshAsset(
-                    mesh_id=asset.mesh_id,
-                    label=asset.label,
-                    kind="builtin",
-                    source_path=None,
-                ),
-            )
-            continue
-        assert asset.source_path is not None
-        absolute: Path = resolve_project_path(root, asset.source_path)
-        try:
-            imported: ImportedMesh = context.application.importer.import_path(absolute)
-            registered_id: MeshId = context.scene.register_imported_mesh(imported)
-            expected_id: MeshId = MeshId(mesh_id_for_import(imported))
-            if registered_id != asset.mesh_id and expected_id != asset.mesh_id:
-                warnings.append(
-                    f"mesh id changed for '{asset.label}': "
-                    f"file has {asset.mesh_id.name}, import produced {registered_id.name}"
+        match asset.kind:
+            case MeshAssetKind.builtin:
+                register_mesh_asset(
+                    catalog,
+                    MeshAsset(
+                        mesh_id=asset.mesh_id,
+                        label=asset.label,
+                        kind=MeshAssetKind.builtin,
+                        source_path=None,
+                    ),
                 )
-            # keep the id from the scene file so node references stay valid
-            if registered_id != asset.mesh_id:
-                context.scene.rebind_mesh_id(registered_id, asset.mesh_id)
-                registered_id = asset.mesh_id
-            register_mesh_asset(
-                catalog,
-                MeshAsset(
-                    mesh_id=registered_id,
-                    label=asset.label,
-                    kind="fbx",
-                    source_path=str(absolute),
-                ),
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
-            warnings.append(
-                f"missing or invalid mesh '{asset.label}' "
-                f"({asset.source_path}): {exc}; using cube"
-            )
-            fallbacks[asset.mesh_id.name] = builtin_cube
+            case MeshAssetKind.fbx:
+                assert asset.source_path is not None
+                absolute: Path = resolve_project_path(root, asset.source_path)
+                try:
+                    imported: ImportedMesh = context.application.importer.import_path(
+                        absolute
+                    )
+                    registered_id: MeshId = context.scene.register_imported_mesh(
+                        imported
+                    )
+                    expected_id: MeshId = MeshId(mesh_id_for_import(imported))
+                    if (
+                        registered_id != asset.mesh_id
+                        and expected_id != asset.mesh_id
+                    ):
+                        warnings.append(
+                            f"mesh id changed for '{asset.label}': "
+                            f"file has {asset.mesh_id.name}, "
+                            f"import produced {registered_id.name}"
+                        )
+                    # keep the id from the scene file so node references stay valid
+                    if registered_id != asset.mesh_id:
+                        context.scene.rebind_mesh_id(registered_id, asset.mesh_id)
+                        registered_id = asset.mesh_id
+                    register_mesh_asset(
+                        catalog,
+                        MeshAsset(
+                            mesh_id=registered_id,
+                            label=asset.label,
+                            kind=MeshAssetKind.fbx,
+                            source_path=str(absolute),
+                        ),
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    warnings.append(
+                        f"missing or invalid mesh '{asset.label}' "
+                        f"({asset.source_path}): {exc}; using cube"
+                    )
+                    fallbacks[asset.mesh_id.name] = builtin_cube
 
     nodes: list[Node] = [
         apply_mesh_fallbacks(node, fallbacks) for node in document.nodes

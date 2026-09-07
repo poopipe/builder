@@ -24,6 +24,7 @@ from builder.generators.generator_types import (
     Generator,
     GeneratorSpec,
     MeshPattern,
+    MeshSequenceMode,
 )
 from builder.generators.registry import get_spec
 from builder.generators.mesh_pattern import next_mode, remove_slot, set_slot
@@ -40,6 +41,7 @@ from builder.ui.param_ui import (
     Float3ComponentControl,
     Int3ComponentControl,
     ParamControl,
+    ParamRowRects,
     control_by_key,
     control_key,
     control_label,
@@ -47,6 +49,7 @@ from builder.ui.param_ui import (
     controls_from_params_type,
     enum_members,
     format_control,
+    layout_control_row,
     parse_control,
     read_control,
     write_control,
@@ -86,18 +89,6 @@ from builder.ui.widgets import (
 
 
 inspector_panel: str = "inspector"
-
-
-@dataclass(frozen=True)
-class ParamRowRects:
-    """hit targets for one inspector param row"""
-
-    key: str
-    label: Rectangle
-    minus: Rectangle
-    value: Rectangle
-    plus: Rectangle
-    option_rects: tuple[Rectangle, ...] = ()
 
 
 def apply_control_edit(
@@ -140,81 +131,6 @@ class ParamLayout:
     headers: tuple[GroupHeaderRect, ...]
     rows: tuple[ParamRowRects, ...]
     bottom: float
-
-
-def layout_control_row(
-    control: ParamControl,
-    params: Any,
-    x: float,
-    y: float,
-    inner_w: float,
-) -> tuple[ParamRowRects, float]:
-    """place one param row and return it with the y below it"""
-    empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
-    row_key: str = control_key(control)
-    match control:
-        case BoolControl():
-            hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
-            row: ParamRowRects = ParamRowRects(
-                key=row_key,
-                label=hit,
-                minus=empty,
-                value=hit,
-                plus=empty,
-            )
-            return row, y + float(ui_button_height) + ui_pad
-        case EnumControl() as enum_control:
-            options: tuple[IntEnum, ...] = enum_members(params, enum_control)
-            enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-            controls_y: float = y + float(ui_font_size) + 4.0
-            option_count: int = max(1, len(options))
-            option_w: float = (
-                inner_w - ui_button_gap * (option_count - 1)
-            ) / option_count
-            option_rects: tuple[Rectangle, ...] = tuple(
-                Rectangle(
-                    x + (option_w + ui_button_gap) * index,
-                    controls_y,
-                    option_w,
-                    float(ui_button_height),
-                )
-                for index in range(len(options))
-            )
-            row = ParamRowRects(
-                key=row_key,
-                label=enum_label,
-                minus=empty,
-                value=empty,
-                plus=empty,
-                option_rects=option_rects,
-            )
-            return row, controls_y + float(ui_button_height) + ui_pad
-        case IntControl() | FloatControl() | Float3ComponentControl() | Int3ComponentControl():
-            label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-            controls_y = y + float(ui_font_size) + 4.0
-            minus: Rectangle = Rectangle(
-                x, controls_y, float(ui_stepper_width), float(ui_button_height)
-            )
-            plus: Rectangle = Rectangle(
-                x + inner_w - float(ui_stepper_width),
-                controls_y,
-                float(ui_stepper_width),
-                float(ui_button_height),
-            )
-            value: Rectangle = Rectangle(
-                minus.x + minus.width + ui_button_gap,
-                controls_y,
-                plus.x - (minus.x + minus.width + ui_button_gap * 2),
-                float(ui_button_height),
-            )
-            row = ParamRowRects(
-                key=row_key,
-                label=label,
-                minus=minus,
-                value=value,
-                plus=plus,
-            )
-            return row, controls_y + float(ui_button_height) + ui_pad
 
 
 def layout_params(
@@ -397,66 +313,69 @@ def build_pattern_buttons(
 
     buttons.append(
         Button(
-            label=f"Mode: {pattern.mode}",
+            label=f"Mode: {pattern.mode.name}",
             on_click=cycle_mode,
             rect=Rectangle(x, y, inner_w, row_h),
         )
     )
     y += row_h + ui_button_gap
 
-    if pattern.mode == "random":
+    match pattern.mode:
+        case MeshSequenceMode.random:
 
-        def seed_minus() -> None:
-            clear()
-            set_generator_pattern(
-                scene,
-                group.id,
-                replace(pattern, seed=max(0, pattern.seed - 1)),
-                points=points,
-            )
+            def seed_minus() -> None:
+                clear()
+                set_generator_pattern(
+                    scene,
+                    group.id,
+                    replace(pattern, seed=max(0, pattern.seed - 1)),
+                    points=points,
+                )
 
-        def seed_plus() -> None:
-            clear()
-            set_generator_pattern(
-                scene,
-                group.id,
-                replace(pattern, seed=pattern.seed + 1),
-                points=points,
-            )
+            def seed_plus() -> None:
+                clear()
+                set_generator_pattern(
+                    scene,
+                    group.id,
+                    replace(pattern, seed=pattern.seed + 1),
+                    points=points,
+                )
 
-        def seed_reroll() -> None:
-            clear()
-            set_generator_pattern(
-                scene,
-                group.id,
-                replace(pattern, seed=randrange(0, 1_000_000)),
-                points=points,
-            )
+            def seed_reroll() -> None:
+                clear()
+                set_generator_pattern(
+                    scene,
+                    group.id,
+                    replace(pattern, seed=randrange(0, 1_000_000)),
+                    points=points,
+                )
 
-        value_x: float = x + step_w + ui_button_gap
-        value_w: float = inner_w - (step_w + ui_button_gap) * 2
-        buttons.append(
-            Button(
-                label="-",
-                on_click=seed_minus,
-                rect=Rectangle(x, y, step_w, row_h),
+            value_x: float = x + step_w + ui_button_gap
+            value_w: float = inner_w - (step_w + ui_button_gap) * 2
+            buttons.append(
+                Button(
+                    label="-",
+                    on_click=seed_minus,
+                    rect=Rectangle(x, y, step_w, row_h),
+                )
             )
-        )
-        buttons.append(
-            Button(
-                label=f"Seed {pattern.seed}",
-                on_click=seed_reroll,
-                rect=Rectangle(value_x, y, value_w, row_h),
+            buttons.append(
+                Button(
+                    label=f"Seed {pattern.seed}",
+                    on_click=seed_reroll,
+                    rect=Rectangle(value_x, y, value_w, row_h),
+                )
             )
-        )
-        buttons.append(
-            Button(
-                label="+",
-                on_click=seed_plus,
-                rect=Rectangle(x + inner_w - step_w, y, step_w, row_h),
+            buttons.append(
+                Button(
+                    label="+",
+                    on_click=seed_plus,
+                    rect=Rectangle(x + inner_w - step_w, y, step_w, row_h),
+                )
             )
-        )
-        y += row_h + ui_button_gap
+            y += row_h + ui_button_gap
+        case MeshSequenceMode.repeat | MeshSequenceMode.pingpong:
+            pass
 
     slot: int
     mesh_id: MeshId

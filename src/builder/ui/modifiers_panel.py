@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import IntEnum
+from typing import Any
 
 from pyray import (
     Font,
@@ -18,28 +19,40 @@ from pyray import (
     is_mouse_button_pressed,
 )
 
-from builder.generators.generator_types import (
-    Generator,
-    Modifier,
-    ParamField,
-    ParamValue,
-)
-from builder.generators.registry import format_param, option_members, parse_param
+from builder.generators.generator_types import Generator, Modifier
 from builder.generators.regenerate import (
     set_generator_modifiers,
-    set_modifier_param,
-    step_modifier_param,
+    set_modifier_params,
 )
 from builder.modifiers.modifier_types import ModifierSpec
 from builder.modifiers.registry import (
     get_modifier_spec,
     known_modifier_kind,
     make_modifier,
-    modifier_field_for,
-    modifier_params_with_defaults,
 )
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
+from builder.ui.param_ui import (
+    BoolControl,
+    EnumControl,
+    Float3ComponentControl,
+    FloatControl,
+    Int3ComponentControl,
+    IntControl,
+    ParamControl,
+    ParamRowRects,
+    control_by_key,
+    control_key,
+    control_label,
+    control_step,
+    controls_from_params_type,
+    enum_members,
+    format_control,
+    layout_control_row,
+    parse_control,
+    read_control,
+    write_control,
+)
 from builder.ui.text_field import (
     FieldId,
     TextAction,
@@ -74,84 +87,26 @@ modifiers_panel: str = "modifiers"
 
 
 @dataclass(frozen=True)
-class ModifierRowRects:
-    """hit targets for one modifiers-panel row"""
+class ModifierEnableRow:
+    """hit target for one modifier enable checkbox"""
 
     key: str
-    label: Rectangle
-    minus: Rectangle
-    value: Rectangle
-    plus: Rectangle
-    is_bool: bool = False
-    is_enum: bool = False
-    option_rects: tuple[Rectangle, ...] = ()
-    modifier_index: int | None = None
+    rect: Rectangle
+    modifier_index: int
+    label: str
 
 
-def layout_field_row(
-    field: ParamField, x: float, y: float, inner_w: float
-) -> tuple[ModifierRowRects, float]:
-    """place one modifier ParamField row and return it with the y below it"""
-    empty: Rectangle = Rectangle(0.0, 0.0, 0.0, 0.0)
-    if field.value_type == "bool":
-        hit: Rectangle = Rectangle(x, y, inner_w, float(ui_button_height))
-        row: ModifierRowRects = ModifierRowRects(
-            key=field.key,
-            label=hit,
-            minus=empty,
-            value=hit,
-            plus=empty,
-            is_bool=True,
-        )
-        return row, y + float(ui_button_height) + ui_pad
-    if field.value_type == "enum":
-        options: tuple[IntEnum, ...] = option_members(field)
-        enum_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-        controls_y: float = y + float(ui_font_size) + 4.0
-        option_count: int = max(1, len(options))
-        option_w: float = (
-            inner_w - ui_button_gap * (option_count - 1)
-        ) / option_count
-        option_rects: tuple[Rectangle, ...] = tuple(
-            Rectangle(
-                x + (option_w + ui_button_gap) * index,
-                controls_y,
-                option_w,
-                float(ui_button_height),
-            )
-            for index in range(len(options))
-        )
-        row = ModifierRowRects(
-            key=field.key,
-            label=enum_label,
-            minus=empty,
-            value=empty,
-            plus=empty,
-            is_enum=True,
-            option_rects=option_rects,
-        )
-        return row, controls_y + float(ui_button_height) + ui_pad
-    label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
-    controls_y = y + float(ui_font_size) + 4.0
-    minus: Rectangle = Rectangle(
-        x, controls_y, float(ui_stepper_width), float(ui_button_height)
-    )
-    plus: Rectangle = Rectangle(
-        x + inner_w - float(ui_stepper_width),
-        controls_y,
-        float(ui_stepper_width),
-        float(ui_button_height),
-    )
-    value: Rectangle = Rectangle(
-        minus.x + minus.width + ui_button_gap,
-        controls_y,
-        plus.x - (minus.x + minus.width + ui_button_gap * 2),
-        float(ui_button_height),
-    )
-    row = ModifierRowRects(
-        key=field.key, label=label, minus=minus, value=value, plus=plus
-    )
-    return row, controls_y + float(ui_button_height) + ui_pad
+@dataclass(frozen=True)
+class ModifierParamRow:
+    """one reflected param control inside a modifier entry"""
+
+    focus_key: str
+    modifier_index: int
+    control: ParamControl
+    row: ParamRowRects
+
+
+type ModifierPanelRow = ModifierEnableRow | ModifierParamRow
 
 
 def sync_modifiers_focus(ui: UiState, group: Node | None) -> None:
@@ -163,7 +118,7 @@ def sync_modifiers_focus(ui: UiState, group: Node | None) -> None:
 
 
 def parse_mod_focus_key(key: str) -> tuple[int, str] | None:
-    """parse mod:{index}:{param} focus keys"""
+    """parse mod:{index}:{control_key} focus keys"""
     if not key.startswith("mod:"):
         return None
     parts: list[str] = key.split(":", 2)
@@ -175,22 +130,25 @@ def parse_mod_focus_key(key: str) -> tuple[int, str] | None:
         return None
 
 
-def focus_modifier_field(
+def focus_modifier_control(
     ui: UiState,
     group: Node,
-    field: ParamField,
+    control: ParamControl,
     focus_key: str,
-    value: ParamValue,
+    params: Any,
 ) -> None:
-    """begin typed editing for one modifier param"""
-    if field.value_type in ("bool", "enum"):
-        return
+    """begin typed editing for one modifier control"""
+    match control:
+        case BoolControl() | EnumControl():
+            return
+        case _:
+            pass
     ui.focus = FieldId(panel=modifiers_panel, key=focus_key, owner=group.id)
-    ui.edit = begin_edit(format_param(field, value))
+    ui.edit = begin_edit(format_control(control, read_control(params, control)))
 
 
 def commit_modifiers_draft(scene: Scene, ui: UiState, group: Node) -> None:
-    """apply the typed draft to its modifier param"""
+    """apply the typed draft to its modifier control"""
     if ui.focus is None or ui.edit is None:
         return
     generator: Generator | None = group.generator
@@ -200,19 +158,27 @@ def commit_modifiers_draft(scene: Scene, ui: UiState, group: Node) -> None:
     if mod_ref is None:
         return
     index: int
-    param_key: str
-    index, param_key = mod_ref
+    control_id: str
+    index, control_id = mod_ref
     if index < 0 or index >= len(generator.modifiers):
         return
-    field: ParamField = modifier_field_for(generator.modifiers[index].kind, param_key)
-    parsed: ParamValue | None = parse_param(field, ui.edit.text)
+    modifier: Modifier = generator.modifiers[index]
+    if not known_modifier_kind(modifier.kind):
+        return
+    controls: tuple[ParamControl, ...] = controls_from_params_type(
+        get_modifier_spec(modifier.kind).params_type
+    )
+    control: ParamControl = control_by_key(controls, control_id)
+    parsed: Any | None = parse_control(control, ui.edit.text)
     if parsed is None:
         return
-    set_modifier_param(scene, group.id, index, param_key, parsed)
+    set_modifier_params(
+        scene, group.id, index, write_control(modifier.params, control, parsed)
+    )
 
 
 def focus_modifier_key(scene: Scene, ui: UiState, group_id: str, key: str) -> None:
-    """move editing to another modifier param of the same group"""
+    """move editing to another modifier control of the same group"""
     node: Node | None = scene.nodes.get(group_id)
     generator: Generator | None = node.generator if node is not None else None
     if node is None or generator is None:
@@ -223,17 +189,20 @@ def focus_modifier_key(scene: Scene, ui: UiState, group_id: str, key: str) -> No
         ui.clear_focus()
         return
     index: int
-    param_key: str
-    index, param_key = mod_ref
+    control_id: str
+    index, control_id = mod_ref
     if index < 0 or index >= len(generator.modifiers):
         ui.clear_focus()
         return
     modifier: Modifier = generator.modifiers[index]
-    field: ParamField = modifier_field_for(modifier.kind, param_key)
-    value: ParamValue = modifier_params_with_defaults(modifier.kind, modifier.params)[
-        param_key
-    ]
-    focus_modifier_field(ui, node, field, key, value)
+    if not known_modifier_kind(modifier.kind):
+        ui.clear_focus()
+        return
+    controls: tuple[ParamControl, ...] = controls_from_params_type(
+        get_modifier_spec(modifier.kind).params_type
+    )
+    control: ParamControl = control_by_key(controls, control_id)
+    focus_modifier_control(ui, node, control, key, modifier.params)
 
 
 def handle_modifiers_typing(
@@ -271,7 +240,7 @@ def update_modifiers_panel(
     ui: UiState,
     area: Rectangle,
     group: Node,
-) -> tuple[list[Button], list[ModifierRowRects]]:
+) -> tuple[list[Button], list[ModifierPanelRow]]:
     """handle modifiers panel input; return buttons and row geometry"""
     generator: Generator | None = group.generator
     if generator is None:
@@ -283,10 +252,15 @@ def update_modifiers_panel(
     for mod_index, mod_entry in enumerate(generator.modifiers):
         if not known_modifier_kind(mod_entry.kind):
             continue
-        mod_field: ParamField
-        for mod_field in get_modifier_spec(mod_entry.kind).fields:
-            if mod_field.value_type not in ("bool", "enum"):
-                text_keys.append(f"mod:{mod_index}:{mod_field.key}")
+        control: ParamControl
+        for control in controls_from_params_type(
+            get_modifier_spec(mod_entry.kind).params_type
+        ):
+            match control:
+                case BoolControl() | EnumControl():
+                    continue
+                case _:
+                    text_keys.append(f"mod:{mod_index}:{control_key(control)}")
     handle_modifiers_typing(scene, ui, group, text_keys)
 
     x: float = area.x + ui_pad
@@ -295,7 +269,7 @@ def update_modifiers_panel(
     step_w: float = float(ui_stepper_width)
     y: float = area.y + ui_pad + float(ui_font_size) + ui_pad
     buttons: list[Button] = []
-    rows: list[ModifierRowRects] = []
+    rows: list[ModifierPanelRow] = []
     mouse: Vector2 = get_mouse_position()
     clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
 
@@ -307,10 +281,26 @@ def update_modifiers_panel(
             generator.modifiers + (make_modifier("noise_displace"),),
         )
 
+    def on_add_translate() -> None:
+        ui.clear_focus()
+        set_generator_modifiers(
+            scene,
+            group.id,
+            generator.modifiers + (make_modifier("template_translate"),),
+        )
+
     buttons.append(
         Button(
             label="+ Noise displace",
             on_click=on_add_noise,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="+ Translate (template)",
+            on_click=on_add_translate,
             rect=Rectangle(x, y, inner_w, row_h),
         )
     )
@@ -322,7 +312,6 @@ def update_modifiers_panel(
         if not known_modifier_kind(modifier.kind):
             continue
         mod_spec: ModifierSpec = get_modifier_spec(modifier.kind)
-        label: str = mod_spec.label
 
         def toggle_enabled(i: int = index, current: Modifier = modifier) -> None:
             ui.clear_focus()
@@ -354,14 +343,11 @@ def update_modifiers_panel(
 
         enable_rect: Rectangle = Rectangle(x, y, inner_w, row_h)
         rows.append(
-            ModifierRowRects(
-                key=f"modenable:{index}:{label}",
-                label=enable_rect,
-                minus=Rectangle(0.0, 0.0, 0.0, 0.0),
-                value=enable_rect,
-                plus=Rectangle(0.0, 0.0, 0.0, 0.0),
-                is_bool=True,
+            ModifierEnableRow(
+                key=f"modenable:{index}",
+                rect=enable_rect,
                 modifier_index=index,
+                label=mod_spec.label,
             )
         )
         if clicked and is_point_in_rect(mouse.x, mouse.y, enable_rect):
@@ -380,57 +366,117 @@ def update_modifiers_panel(
         buttons.append(Button(label="x", on_click=remove_mod, rect=remove_rect))
         y += row_h + ui_button_gap
 
-        params: dict[str, ParamValue] = modifier_params_with_defaults(
-            modifier.kind, modifier.params
+        controls: tuple[ParamControl, ...] = controls_from_params_type(
+            mod_spec.params_type
         )
-        field: ParamField
-        for field in mod_spec.fields:
-            focus_key: str = f"mod:{index}:{field.key}"
-            row: ModifierRowRects
-            row, y = layout_field_row(field, x, y, inner_w)
-            row = replace(row, key=focus_key, modifier_index=index)
-            rows.append(row)
+        for control in controls:
+            focus_key: str = f"mod:{index}:{control_key(control)}"
+            layout_row: ParamRowRects
+            layout_row, y = layout_control_row(
+                control, modifier.params, x, y, inner_w
+            )
+            rows.append(
+                ModifierParamRow(
+                    focus_key=focus_key,
+                    modifier_index=index,
+                    control=control,
+                    row=replace(layout_row, key=focus_key),
+                )
+            )
 
-            if row.is_bool:
-                if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
-                    set_modifier_param(
-                        scene,
-                        group.id,
-                        index,
-                        field.key,
-                        0 if int(params[field.key]) else 1,
+            match control:
+                case BoolControl() as bool_control:
+                    if clicked and is_point_in_rect(
+                        mouse.x, mouse.y, layout_row.value
+                    ):
+                        current_bool: bool = bool(
+                            read_control(modifier.params, bool_control)
+                        )
+                        set_modifier_params(
+                            scene,
+                            group.id,
+                            index,
+                            write_control(
+                                modifier.params, bool_control, not current_bool
+                            ),
+                        )
+                case EnumControl() as enum_control:
+                    if clicked:
+                        options: tuple[IntEnum, ...] = enum_members(
+                            modifier.params, enum_control
+                        )
+                        option_index: int
+                        option_rect: Rectangle
+                        for option_index, option_rect in enumerate(
+                            layout_row.option_rects
+                        ):
+                            if is_point_in_rect(mouse.x, mouse.y, option_rect):
+                                ui.clear_focus()
+                                set_modifier_params(
+                                    scene,
+                                    group.id,
+                                    index,
+                                    write_control(
+                                        modifier.params,
+                                        enum_control,
+                                        options[option_index],
+                                    ),
+                                )
+                                break
+                case (
+                    IntControl()
+                    | FloatControl()
+                    | Float3ComponentControl()
+                    | Int3ComponentControl()
+                ) as stepped:
+                    def step_minus(
+                        i: int = index,
+                        c: ParamControl = stepped,
+                        p: Any = modifier.params,
+                    ) -> None:
+                        ui.clear_focus()
+                        current: Any = read_control(p, c)
+                        set_modifier_params(
+                            scene,
+                            group.id,
+                            i,
+                            write_control(
+                                p,
+                                c,
+                                float(current) - control_step(p, c),
+                            ),
+                        )
+
+                    def step_plus(
+                        i: int = index,
+                        c: ParamControl = stepped,
+                        p: Any = modifier.params,
+                    ) -> None:
+                        ui.clear_focus()
+                        current = read_control(p, c)
+                        set_modifier_params(
+                            scene,
+                            group.id,
+                            i,
+                            write_control(
+                                p,
+                                c,
+                                float(current) + control_step(p, c),
+                            ),
+                        )
+
+                    buttons.append(
+                        Button(label="-", on_click=step_minus, rect=layout_row.minus)
                     )
-                continue
-            if row.is_enum:
-                if clicked:
-                    options: tuple[IntEnum, ...] = option_members(field)
-                    option_index: int
-                    option_rect: Rectangle
-                    for option_index, option_rect in enumerate(row.option_rects):
-                        if is_point_in_rect(mouse.x, mouse.y, option_rect):
-                            ui.clear_focus()
-                            set_modifier_param(
-                                scene,
-                                group.id,
-                                index,
-                                field.key,
-                                int(options[option_index]),
-                            )
-                            break
-                continue
-
-            def step_minus(i: int = index, k: str = field.key) -> None:
-                ui.clear_focus()
-                step_modifier_param(scene, group.id, i, k, -1)
-
-            def step_plus(i: int = index, k: str = field.key) -> None:
-                ui.clear_focus()
-                step_modifier_param(scene, group.id, i, k, 1)
-
-            buttons.append(Button(label="-", on_click=step_minus, rect=row.minus))
-            buttons.append(Button(label="+", on_click=step_plus, rect=row.plus))
-            if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
-                focus_modifier_field(ui, group, field, focus_key, params[field.key])
+                    buttons.append(
+                        Button(label="+", on_click=step_plus, rect=layout_row.plus)
+                    )
+                    if clicked and is_point_in_rect(
+                        mouse.x, mouse.y, layout_row.value
+                    ):
+                        focus_modifier_control(
+                            ui, group, stepped, focus_key, modifier.params
+                        )
 
     update_buttons(buttons, area)
 
@@ -442,10 +488,19 @@ def update_modifiers_panel(
                 on_control = True
                 break
         on_value: bool = False
-        for row in rows:
-            if is_point_in_rect(mouse.x, mouse.y, row.value):
-                on_value = True
-                break
+        panel_row: ModifierPanelRow
+        for panel_row in rows:
+            match panel_row:
+                case ModifierEnableRow(rect=rect):
+                    if is_point_in_rect(mouse.x, mouse.y, rect):
+                        on_value = True
+                case ModifierParamRow(row=row):
+                    if is_point_in_rect(mouse.x, mouse.y, row.value):
+                        on_value = True
+                    option_rect: Rectangle
+                    for option_rect in row.option_rects:
+                        if is_point_in_rect(mouse.x, mouse.y, option_rect):
+                            on_value = True
         if not on_control and not on_value:
             ui.clear_focus()
 
@@ -458,7 +513,7 @@ def draw_modifiers_panel(
     ui: UiState,
     group: Node,
     buttons: list[Button],
-    rows: list[ModifierRowRects],
+    rows: list[ModifierPanelRow],
 ) -> None:
     """draw the modifiers column for a parametric group"""
     generator: Generator | None = group.generator
@@ -478,83 +533,89 @@ def draw_modifiers_panel(
         0,
         ui_color_text,
     )
-    row: ModifierRowRects
-    for row in rows:
-        if row.key.startswith("modenable:"):
-            enable_label: str = (
-                row.key.split(":", 2)[2] if row.key.count(":") >= 2 else "Modifier"
-            )
-            checked: bool = False
-            if (
-                row.modifier_index is not None
-                and 0 <= row.modifier_index < len(generator.modifiers)
+    panel_row: ModifierPanelRow
+    for panel_row in rows:
+        match panel_row:
+            case ModifierEnableRow(
+                rect=rect, modifier_index=mod_i, label=enable_label
             ):
-                checked = generator.modifiers[row.modifier_index].enabled
-            draw_checkbox_with_label(font, row.value, enable_label, checked=checked)
-            continue
-
-        mod_ref: tuple[int, str] | None = parse_mod_focus_key(row.key)
-        if mod_ref is None:
-            continue
-        mod_i: int
-        param_key: str
-        mod_i, param_key = mod_ref
-        if mod_i < 0 or mod_i >= len(generator.modifiers):
-            continue
-        modifier: Modifier = generator.modifiers[mod_i]
-        if not known_modifier_kind(modifier.kind):
-            continue
-        field: ParamField = modifier_field_for(modifier.kind, param_key)
-        value: ParamValue = modifier_params_with_defaults(
-            modifier.kind, modifier.params
-        )[param_key]
-        if row.is_bool:
-            draw_checkbox_with_label(
-                font,
-                row.value,
-                field.label,
-                checked=bool(int(value)),
-            )
-            continue
-        draw_text_ex(
-            font,
-            field.label,
-            Vector2(row.label.x, row.label.y),
-            float(ui_font_size),
-            0,
-            ui_color_text,
-        )
-        if row.is_enum:
-            options: tuple[IntEnum, ...] = option_members(field)
-            option_index: int
-            option_rect: Rectangle
-            for option_index, option_rect in enumerate(row.option_rects):
-                member: IntEnum = options[option_index]
-                draw_radio_option(
-                    font,
-                    option_rect,
-                    member.name.capitalize(),
-                    selected=int(value) == int(member),
+                checked: bool = False
+                if 0 <= mod_i < len(generator.modifiers):
+                    checked = generator.modifiers[mod_i].enabled
+                draw_checkbox_with_label(
+                    font, rect, enable_label, checked=checked
                 )
-            continue
-        edit: TextEdit | None = ui.focused_edit(modifiers_panel, row.key, group.id)
-        if edit is not None:
-            draw_text_field(
-                font,
-                row.value,
-                edit.text,
-                focused=True,
-                caret=edit.caret,
-                mark=edit.mark,
-            )
-            continue
-        draw_text_field(
-            font,
-            row.value,
-            format_param(field, value),
-            focused=False,
-            center_unfocused=True,
-        )
+            case ModifierParamRow(
+                focus_key=focus_key,
+                modifier_index=mod_i,
+                control=control,
+                row=row,
+            ):
+                if mod_i < 0 or mod_i >= len(generator.modifiers):
+                    continue
+                modifier: Modifier = generator.modifiers[mod_i]
+                if not known_modifier_kind(modifier.kind):
+                    continue
+                value: Any = read_control(modifier.params, control)
+                match control:
+                    case BoolControl():
+                        draw_checkbox_with_label(
+                            font,
+                            row.value,
+                            control_label(modifier.params, control),
+                            checked=bool(value),
+                        )
+                    case EnumControl() as enum_control:
+                        draw_text_ex(
+                            font,
+                            control_label(modifier.params, control),
+                            Vector2(row.label.x, row.label.y),
+                            float(ui_font_size),
+                            0,
+                            ui_color_text,
+                        )
+                        options: tuple[IntEnum, ...] = enum_members(
+                            modifier.params, enum_control
+                        )
+                        option_index: int
+                        option_rect: Rectangle
+                        for option_index, option_rect in enumerate(row.option_rects):
+                            member: IntEnum = options[option_index]
+                            draw_radio_option(
+                                font,
+                                option_rect,
+                                member.name.capitalize(),
+                                selected=int(value) == int(member),
+                            )
+                    case _:
+                        draw_text_ex(
+                            font,
+                            control_label(modifier.params, control),
+                            Vector2(row.label.x, row.label.y),
+                            float(ui_font_size),
+                            0,
+                            ui_color_text,
+                        )
+                        edit: TextEdit | None = ui.focused_edit(
+                            modifiers_panel, focus_key, group.id
+                        )
+                        if edit is not None:
+                            draw_text_field(
+                                font,
+                                row.value,
+                                edit.text,
+                                focused=True,
+                                caret=edit.caret,
+                                mark=edit.mark,
+                            )
+                        else:
+                            draw_text_field(
+                                font,
+                                row.value,
+                                format_control(control, value),
+                                focused=False,
+                                center_unfocused=True,
+                            )
 
     button: Button
     for button in buttons:

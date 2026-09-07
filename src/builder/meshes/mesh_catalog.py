@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from enum import IntEnum
 
 from builder.scene.scene_types import (
     MeshId,
@@ -14,7 +14,10 @@ from builder.scene.scene_types import (
     builtin_torus,
 )
 
-type MeshAssetKind = Literal["builtin", "fbx"]
+
+class MeshAssetKind(IntEnum):
+    builtin = 0
+    fbx = 1
 
 
 @dataclass(frozen=True)
@@ -37,11 +40,13 @@ class MeshCatalog:
 def default_mesh_catalog() -> MeshCatalog:
     """return a catalog containing built-in meshes"""
     assets: tuple[MeshAsset, ...] = (
-        MeshAsset(mesh_id=builtin_cube, label="Cube", kind="builtin"),
-        MeshAsset(mesh_id=builtin_cylinder, label="Cylinder", kind="builtin"),
-        MeshAsset(mesh_id=builtin_cone, label="Cone", kind="builtin"),
-        MeshAsset(mesh_id=builtin_torus, label="Torus", kind="builtin"),
-        MeshAsset(mesh_id=builtin_sphere, label="Sphere", kind="builtin"),
+        MeshAsset(mesh_id=builtin_cube, label="Cube", kind=MeshAssetKind.builtin),
+        MeshAsset(
+            mesh_id=builtin_cylinder, label="Cylinder", kind=MeshAssetKind.builtin
+        ),
+        MeshAsset(mesh_id=builtin_cone, label="Cone", kind=MeshAssetKind.builtin),
+        MeshAsset(mesh_id=builtin_torus, label="Torus", kind=MeshAssetKind.builtin),
+        MeshAsset(mesh_id=builtin_sphere, label="Sphere", kind=MeshAssetKind.builtin),
     )
     return MeshCatalog(entries={asset.mesh_id: asset for asset in assets})
 
