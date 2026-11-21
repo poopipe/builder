@@ -7,12 +7,13 @@ from typing import Protocol
 
 from builder.heightfield.heightfield_types import (
     Heightfield,
-    HeightmapLayer,
+    catalog_ids_for_heightfield,
     heightfield_layout,
     normalize_heightfield,
 )
 from builder.heightfield.heightmap_catalog import (
     HeightmapCatalog,
+    HeightmapId,
     ensure_heightmap_buffer,
 )
 from builder.scene.scene import Scene
@@ -97,9 +98,9 @@ def preload_heightfield_buffers(
     catalog: HeightmapCatalog, heightfield: Heightfield
 ) -> None:
     """ensure cpu height buffers are resident for sampling and gpu upload"""
-    layer: HeightmapLayer
-    for layer in heightfield.layers:
-        ensure_heightmap_buffer(catalog, layer.heightmap_id)
+    heightmap_id: HeightmapId
+    for heightmap_id in catalog_ids_for_heightfield(heightfield):
+        ensure_heightmap_buffer(catalog, heightmap_id)
 
 
 def regenerate_heightfield(

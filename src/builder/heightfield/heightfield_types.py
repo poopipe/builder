@@ -26,13 +26,73 @@ class VertexSpacing(IntEnum):
     m4 = 4
 
 
+class HeightBlendMode(IntEnum):
+    """how an edit layer combines with the accumulated height"""
+
+    add = 1
+    subtract = 2
+    multiply = 3
+    max = 4
+    min = 5
+
+
+class HeightLayerSourceType(IntEnum):
+    """where a layer height or mask bitmap comes from"""
+
+    catalog = 1
+    paint = 2
+    procedural = 3
+
+
+class ProceduralHeightType(IntEnum):
+    """procedural bitmap generators (stub set for data model)"""
+
+    constant = 1
+
+
 @dataclass(frozen=True)
-class HeightmapLayer:
-    """one heightmap contributing to sampled height (signed float32 sample space)"""
+class CatalogHeightSource:
+    """height or mask samples from a catalog heightmap"""
 
     heightmap_id: HeightmapId
+
+
+@dataclass(frozen=True)
+class PaintHeightSource:
+    """mutable paint raster stored as a catalog heightmap id"""
+
+    heightmap_id: HeightmapId
+
+
+@dataclass(frozen=True)
+class ProceduralHeightSource:
+    """procedural samples regenerated from params"""
+
+    procedural_type: ProceduralHeightType = ProceduralHeightType.constant
+    constant_value: float = 0.0
+
+
+HeightLayerSource = CatalogHeightSource | PaintHeightSource | ProceduralHeightSource
+
+
+@dataclass(frozen=True)
+class HeightEditLayer:
+    """one non-destructive edit layer above the base heightmap"""
+
+    name: str
+    height: HeightLayerSource
+    enabled: bool = True
+    blend: HeightBlendMode = HeightBlendMode.add
+    opacity: FloatParam = FloatParam(
+        1.0, label="Opacity", step=0.05, minimum=0.0, maximum=1.0
+    )
+    mask: HeightLayerSource | None = None
     amplitude: float = 1.0
     offset: float = 0.0
+    uv_scale_u: float = 1.0
+    uv_scale_v: float = 1.0
+    uv_offset_u: float = 0.0
+    uv_offset_v: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -40,6 +100,7 @@ class Heightfield:
     """tiled heightfield recipe on a group node
 
     author size (metres) and vertex spacing; tiles are derived
+    base is the immutable loaded heightmap; edit_layers blend on top
     """
 
     size_x: FloatParam = FloatParam(
@@ -55,7 +116,10 @@ class Heightfield:
         minimum=float(heightfield_size_multiple),
     )
     spacing: EnumParam = EnumParam(VertexSpacing.m1, label="Spacing")
-    layers: tuple[HeightmapLayer, ...] = ()
+    base_amplitude: FloatParam = FloatParam(1.0, label="Base Amplitude")
+    base_offset: FloatParam = FloatParam(0.0, label="Base Offset")
+    base: HeightmapId | None = None
+    edit_layers: tuple[HeightEditLayer, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -145,3 +209,37 @@ def heightfield_resolution(heightfield: Heightfield) -> tuple[int, int]:
 def default_heightfield() -> Heightfield:
     """return a small flat heightfield for placement"""
     return normalize_heightfield(Heightfield())
+
+
+def height_layer_source_type(source: HeightLayerSource) -> HeightLayerSourceType:
+    """discriminant for a height layer source"""
+    match source:
+        case CatalogHeightSource():
+            return HeightLayerSourceType.catalog
+        case PaintHeightSource():
+            return HeightLayerSourceType.paint
+        case ProceduralHeightSource():
+            return HeightLayerSourceType.procedural
+
+
+def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapId, ...]:
+    """catalog ids referenced by a height or mask source"""
+    match source:
+        case CatalogHeightSource(heightmap_id=heightmap_id):
+            return (heightmap_id,)
+        case PaintHeightSource(heightmap_id=heightmap_id):
+            return (heightmap_id,)
+        case ProceduralHeightSource() | None:
+            return ()
+
+
+def catalog_ids_for_heightfield(heightfield: Heightfield) -> tuple[HeightmapId, ...]:
+    """all catalog heightmap ids referenced by base and edit layers"""
+    ids: list[HeightmapId] = []
+    if heightfield.base is not None:
+        ids.append(heightfield.base)
+    layer: HeightEditLayer
+    for layer in heightfield.edit_layers:
+        ids.extend(catalog_ids_for_source(layer.height))
+        ids.extend(catalog_ids_for_source(layer.mask))
+    return tuple(ids)

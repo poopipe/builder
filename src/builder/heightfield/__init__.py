@@ -1,9 +1,16 @@
 """tiled heightfield surfaces"""
 
 from builder.heightfield.heightfield_types import (
+    CatalogHeightSource,
+    HeightBlendMode,
+    HeightEditLayer,
+    HeightLayerSource,
+    HeightLayerSourceType,
     Heightfield,
     HeightfieldLayout,
-    HeightmapLayer,
+    PaintHeightSource,
+    ProceduralHeightSource,
+    ProceduralHeightType,
     VertexSpacing,
     default_heightfield,
     heightfield_layout,
@@ -12,9 +19,16 @@ from builder.heightfield.heightfield_types import (
 )
 
 __all__ = [
+    "CatalogHeightSource",
+    "HeightBlendMode",
+    "HeightEditLayer",
+    "HeightLayerSource",
+    "HeightLayerSourceType",
     "Heightfield",
     "HeightfieldLayout",
-    "HeightmapLayer",
+    "PaintHeightSource",
+    "ProceduralHeightSource",
+    "ProceduralHeightType",
     "VertexSpacing",
     "default_heightfield",
     "heightfield_layout",

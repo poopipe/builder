@@ -24,8 +24,12 @@ class UiState:
     status: str = "Ready"
     side_panel_open: bool = True
     meshes_panel_open: bool = True
+    height_layers_panel_open: bool = True
     outliner_open: bool = True
     meshes_panel_scroll: float = 0.0
+    height_layers_panel_scroll: float = 0.0
+    # selected edit layer index; none means base row
+    height_layers_selected_index: int | None = None
     outliner_scroll: float = 0.0
     # ids of collapsed outliner groups; not persisted with the scene
     outliner_collapsed: set[str] = field(default_factory=set)
@@ -49,6 +53,8 @@ class UiState:
     file_browser: FileBrowserState | None = None
     # group id waiting for a heightmap pick from the file browser
     heightfield_layer_target: str | None = None
+    # when set with heightfield_layer_target, import replaces that edit layer texture
+    heightfield_layer_replace_index: int | None = None
     # staged heightfield size until Apply size is pressed
     heightfield_size_draft: HeightfieldSizeDraft | None = None
 
@@ -59,6 +65,10 @@ class UiState:
     def toggle_meshes_panel(self) -> None:
         """show or hide the mesh catalog panel"""
         self.meshes_panel_open = not self.meshes_panel_open
+
+    def toggle_height_layers_panel(self) -> None:
+        """show or hide the height layers panel"""
+        self.height_layers_panel_open = not self.height_layers_panel_open
 
     def toggle_outliner(self) -> None:
         """show or hide the scene outliner panel"""

@@ -66,6 +66,7 @@ class LayoutRects:
     inspector: Rectangle
     modifiers: Rectangle
     meshes: Rectangle
+    height_layers: Rectangle
     status: Rectangle
 
 
@@ -75,30 +76,41 @@ def compute_layout(
     panel_width: int = ui_side_panel_width,
     outliner_width: int = 0,
     meshes_width: int = 0,
+    height_layers_width: int = 0,
     inspector_width: int = 0,
     modifiers_width: int = 0,
 ) -> LayoutRects:
     """split the window into menu, side panels, viewport, and status bar
 
-    columns left to right: tools, outliner, viewport, inspector, modifiers, meshes
+    columns left to right: tools, outliner, viewport, inspector, modifiers,
+    meshes, height layers
     """
     menu_h: int = ui_menu_bar_height
     status_h: int = ui_status_bar_height
     panel_w: int = max(0, panel_width)
     outliner_w: int = max(0, outliner_width)
     meshes_w: int = max(0, meshes_width)
+    height_layers_w: int = max(0, height_layers_width)
     inspector_w: int = max(0, inspector_width)
     modifiers_w: int = max(0, modifiers_width)
     body_y: int = menu_h
     body_h: int = max(0, height - menu_h - status_h)
     viewport_w: int = max(
-        0, width - panel_w - outliner_w - meshes_w - inspector_w - modifiers_w
+        0,
+        width
+        - panel_w
+        - outliner_w
+        - meshes_w
+        - height_layers_w
+        - inspector_w
+        - modifiers_w,
     )
     outliner_x: float = float(panel_w)
     viewport_x: float = float(panel_w + outliner_w)
     inspector_x: float = viewport_x + float(viewport_w)
     modifiers_x: float = inspector_x + float(inspector_w)
     meshes_x: float = modifiers_x + float(modifiers_w)
+    height_layers_x: float = meshes_x + float(meshes_w)
     return LayoutRects(
         menu=Rectangle(0, 0, float(width), float(menu_h)),
         panel=Rectangle(0, float(body_y), float(panel_w), float(body_h)),
@@ -127,6 +139,12 @@ def compute_layout(
             float(body_h),
         ),
         meshes=Rectangle(meshes_x, float(body_y), float(meshes_w), float(body_h)),
+        height_layers=Rectangle(
+            height_layers_x,
+            float(body_y),
+            float(height_layers_w),
+            float(body_h),
+        ),
         status=Rectangle(
             0,
             float(height - status_h),

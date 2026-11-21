@@ -7,6 +7,7 @@ from pyray import Color
 ui_menu_bar_height = 36
 ui_side_panel_width = 180
 ui_meshes_panel_width = 200
+ui_height_layers_panel_width = 220
 ui_inspector_panel_width = 220
 ui_modifiers_panel_width = 220
 ui_outliner_panel_width = 220

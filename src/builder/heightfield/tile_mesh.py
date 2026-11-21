@@ -86,7 +86,7 @@ def build_tile_heights(
         for local_x in range(tile_verts):
             global_x: int = origin_i + local_x
             u: float = 0.0 if layout.res_x <= 1 else float(global_x) / float(layout.res_x - 1)
-            heights.append(sample_height(catalog, heightfield.layers, u, v))
+            heights.append(sample_height(catalog, heightfield, u, v))
     return heights
 
 
@@ -95,7 +95,7 @@ def field_height_range(
     heightfield: Heightfield,
 ) -> tuple[float, float]:
     """min/max world height from layer buffer bounds (not a full vert scan)"""
-    return layer_height_bounds(catalog, heightfield.layers)
+    return layer_height_bounds(catalog, heightfield)
 
 
 def upload_tile_mesh(

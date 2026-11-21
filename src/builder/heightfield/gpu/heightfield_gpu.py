@@ -22,6 +22,13 @@ from pyray import (
     vector3_transform,
 )
 
+from builder.heightfield.gpu.composite import (
+    HeightCompositeCache,
+    R32RenderTarget,
+    create_height_composite_cache,
+    release_r32_target,
+    unload_height_composite_cache,
+)
 from builder.heightfield.gpu.grid_mesh import (
     ensure_lod_grid,
     prewarm_lod_grids,
@@ -83,6 +90,8 @@ class HeightfieldGpuEntry:
     texture: HeightTexture
     layout: HeightfieldLayout
     spacing: float
+    # owned composite result when edit layers are active; None for raw base
+    result_target: R32RenderTarget | None = None
     # flat tile-local instance matrices (layout-sized); None until built
     tile_matrices: Any | None = None
     tile_matrix_key: tuple[int, int, int, float, float, float] | None = None
@@ -99,6 +108,7 @@ class HeightfieldGpuState:
 
     terrain: TerrainShader
     material: Material
+    composite: HeightCompositeCache
     # (spacing, lod, edge_mask) -> prepared grid (shares material)
     grids: dict[tuple[float, int, int], PreparedMesh] = field(
         default_factory=dict
@@ -112,7 +122,11 @@ def create_heightfield_gpu_state() -> HeightfieldGpuState:
     terrain: TerrainShader = load_terrain_shader()
     material: Material = load_material_default()
     material.shader = terrain.shader
-    return HeightfieldGpuState(terrain=terrain, material=material)
+    return HeightfieldGpuState(
+        terrain=terrain,
+        material=material,
+        composite=create_height_composite_cache(),
+    )
 
 
 def invalidate_tile_draw_cache(entry: HeightfieldGpuEntry) -> None:
@@ -129,6 +143,8 @@ def drop_heightfield_entry(state: HeightfieldGpuState, group_id: str) -> None:
     entry: HeightfieldGpuEntry | None = state.entries.pop(group_id, None)
     if entry is not None:
         release_height_texture(entry.texture)
+        release_r32_target(entry.result_target)
+        entry.result_target = None
         invalidate_tile_draw_cache(entry)
 
 
@@ -182,12 +198,19 @@ def ensure_heightfield_gpu(
         return existing
     if existing is not None:
         release_height_texture(existing.texture)
+        release_r32_target(existing.result_target)
+        existing.result_target = None
         invalidate_tile_draw_cache(existing)
-    texture: HeightTexture = make_height_texture(catalog, heightfield)
+    texture: HeightTexture
+    result_target: R32RenderTarget | None
+    texture, result_target = make_height_texture(
+        catalog, heightfield, state.composite
+    )
     entry: HeightfieldGpuEntry = HeightfieldGpuEntry(
         texture=texture,
         layout=layout,
         spacing=spacing,
+        result_target=result_target,
     )
     state.entries[group_id] = entry
     ensure_spacing_grids(state, spacing)
@@ -509,4 +532,5 @@ def unload_heightfield_gpu(state: HeightfieldGpuState) -> None:
         drop_heightfield_entry(state, group_id)
     release_all_lod_grids(state.grids)
     state.warmed_spacings.clear()
+    unload_height_composite_cache(state.composite)
     unload_terrain_shader(state.terrain)

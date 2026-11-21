@@ -6,7 +6,11 @@ from pathlib import Path
 
 from builder.commands.command_context import CommandContext
 from builder.commands.commands_types import Command
-from builder.heightfield.heightfield_types import HeightmapLayer
+from builder.heightfield.heightfield_types import (
+    CatalogHeightSource,
+    HeightBlendMode,
+    HeightEditLayer,
+)
 from builder.heightfield.heightmap_catalog import (
     heightmap_id_for_path,
     import_heightmap_image,
@@ -181,7 +185,9 @@ def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
     from dataclasses import replace
 
     group_id: str | None = context.ui.heightfield_layer_target
+    replace_index: int | None = context.ui.heightfield_layer_replace_index
     context.ui.heightfield_layer_target = None
+    context.ui.heightfield_layer_replace_index = None
     context.application.journal.record(
         "import_heightmap", path=path, group_id=group_id
     )
@@ -210,14 +216,39 @@ def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
             heightmap_id,
             image_path.stem,
         )
-        layers: tuple[HeightmapLayer, ...] = group.heightfield.layers + (
-            HeightmapLayer(heightmap_id=heightmap_id, amplitude=1.0, offset=0.0),
-        )
+        heightfield = group.heightfield
+        status_verb: str
+        if (
+            replace_index is not None
+            and 0 <= replace_index < len(heightfield.edit_layers)
+        ):
+            layers: list[HeightEditLayer] = list(heightfield.edit_layers)
+            layers[replace_index] = replace(
+                layers[replace_index],
+                height=CatalogHeightSource(heightmap_id=heightmap_id),
+                name=asset.label,
+            )
+            updated = replace(heightfield, edit_layers=tuple(layers))
+            status_verb = "Replaced"
+        elif heightfield.base is None:
+            updated = replace(heightfield, base=heightmap_id)
+            status_verb = "Set base"
+        else:
+            edit_layer: HeightEditLayer = HeightEditLayer(
+                name=asset.label,
+                height=CatalogHeightSource(heightmap_id=heightmap_id),
+                blend=HeightBlendMode.add,
+            )
+            updated = replace(
+                heightfield,
+                edit_layers=heightfield.edit_layers + (edit_layer,),
+            )
+            status_verb = "Added"
         set_heightfield(
             context.scene,
             context.application.heightmap_catalog,
             group_id,
-            replace(group.heightfield, layers=layers),
+            updated,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         log_exception("import heightmap failed", exc)
@@ -227,7 +258,7 @@ def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
         image_path.parent
     )
     context.ui.status = (
-        f"Added heightmap '{asset.label}' "
+        f"{status_verb} heightmap '{asset.label}' "
         f"({asset.width}x{asset.height} {asset.sample_type.name})"
     )
 

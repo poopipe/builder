@@ -78,6 +78,12 @@ from builder.ui.modifiers_panel import (
     sync_modifiers_focus,
     update_modifiers_panel,
 )
+from builder.ui.height_layers_panel import (
+    LayerFloatRow,
+    LayerListRow,
+    draw_height_layers_panel,
+    update_height_layers_panel,
+)
 from builder.ui.mesh_panel import MeshRow, draw_mesh_panel, update_mesh_panel
 from builder.ui.outliner import (
     OutlinerRow,
@@ -98,6 +104,7 @@ from builder.ui.theme import (
     ui_button_min_width,
     ui_color_bg,
     ui_font_size,
+    ui_height_layers_panel_width,
     ui_inspector_panel_width,
     ui_meshes_panel_width,
     ui_modifiers_panel_width,
@@ -238,6 +245,9 @@ class Application:
         panel_width: int = ui_side_panel_width if self.ui.side_panel_open else 0
         outliner_width: int = ui_outliner_panel_width if self.ui.outliner_open else 0
         meshes_width: int = ui_meshes_panel_width if self.ui.meshes_panel_open else 0
+        height_layers_width: int = (
+            ui_height_layers_panel_width if self.ui.height_layers_panel_open else 0
+        )
         inspector_width: int = ui_inspector_panel_width if group is not None else 0
         modifiers_width: int = (
             ui_modifiers_panel_width
@@ -250,6 +260,7 @@ class Application:
             panel_width=panel_width,
             outliner_width=outliner_width,
             meshes_width=meshes_width,
+            height_layers_width=height_layers_width,
             inspector_width=inspector_width,
             modifiers_width=modifiers_width,
         )
@@ -385,6 +396,31 @@ class Application:
                 bind_entry(self, CommandEntry(cmd_import_mesh, None)),
             )
 
+        height_layer_rows: list[LayerListRow] = []
+        height_layer_float_rows: list[LayerFloatRow] = []
+        height_layer_buttons: list[Button] = []
+        height_layers_blend_label: Rectangle | None = None
+        height_layers_empty: str | None = None
+        heightfield_group: Node | None = selected_heightfield_group(
+            self.scene.nodes
+        )
+        if self.ui.height_layers_panel_open and not browser_open:
+            (
+                height_layer_rows,
+                height_layer_float_rows,
+                height_layer_buttons,
+                height_layers_blend_label,
+                height_layers_empty,
+            ) = update_height_layers_panel(
+                self.scene,
+                self.application.heightmap_catalog,
+                self.ui,
+                layout.height_layers,
+                heightfield_group,
+                journal=self.application.journal,
+            )
+            heightfield_group = selected_heightfield_group(self.scene.nodes)
+
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
         modifiers_buttons: list[Button] = []
@@ -444,6 +480,7 @@ class Application:
                     remember_browser_directory(self, self.ui.file_browser)
                     self.ui.file_browser = None
                     self.ui.heightfield_layer_target = None
+                    self.ui.heightfield_layer_replace_index = None
                     self.ui.status = "Cancelled"
                 case Path() as chosen:
                     purpose: FileBrowserPurpose = self.ui.file_browser.purpose
@@ -475,6 +512,10 @@ class Application:
             or (
                 self.ui.meshes_panel_open
                 and is_point_in_rect(mouse.x, mouse.y, layout.meshes)
+            )
+            or (
+                self.ui.height_layers_panel_open
+                and is_point_in_rect(mouse.x, mouse.y, layout.height_layers)
             )
             or (
                 group is not None
@@ -529,6 +570,18 @@ class Application:
             )
         if self.ui.meshes_panel_open:
             draw_mesh_panel(self.font, layout.meshes, mesh_rows, mesh_buttons)
+        if self.ui.height_layers_panel_open:
+            draw_height_layers_panel(
+                self.font,
+                layout.height_layers,
+                self.ui,
+                heightfield_group,
+                height_layer_rows,
+                height_layer_float_rows,
+                height_layer_buttons,
+                height_layers_blend_label,
+                height_layers_empty,
+            )
         if group is not None:
             draw_inspector(
                 self.font,

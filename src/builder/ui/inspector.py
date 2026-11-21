@@ -33,8 +33,8 @@ from builder.generators.regenerate import (
     set_generator_params,
     set_generator_pattern,
 )
-from builder.heightfield.heightfield_types import Heightfield, HeightmapLayer
-from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.heightfield_types import HeightEditLayer, Heightfield
+from builder.heightfield.heightmap_catalog import HeightmapCatalog, HeightmapId
 from builder.heightfield.regenerate import HeightfieldSceneHost, set_heightfield
 from builder.session_journal import SessionJournal, log_exception
 from builder.ui.param_ui import (
@@ -600,119 +600,60 @@ def build_pattern_buttons(
     return buttons, y
 
 
-def set_heightfield_layer(
+def set_heightfield_edit_layers(
     host: HeightfieldSceneHost,
     catalog: HeightmapCatalog,
     ui: UiState,
     group_id: str,
     heightfield: Heightfield,
-    layers: tuple[HeightmapLayer, ...],
+    edit_layers: tuple[HeightEditLayer, ...],
     journal: SessionJournal | None = None,
 ) -> None:
-    """replace heightfield layers and regenerate; surface layout errors"""
+    """replace heightfield edit layers and regenerate; surface layout errors"""
     if journal is not None:
         journal.record(
-            "heightfield_layers",
+            "heightfield_edit_layers",
             group_id=group_id,
-            layer_count=len(layers),
+            layer_count=len(edit_layers),
         )
     try:
         set_heightfield(
             host,
             catalog,
             group_id,
-            replace(heightfield, layers=layers),
+            replace(heightfield, edit_layers=edit_layers),
         )
     except ValueError as exc:
         log_exception("heightfield layer edit failed", exc)
         ui.status = str(exc)
 
 
-class LayerFloatField(IntEnum):
-    """type-in float fields on a heightmap layer"""
-
-    amplitude = 1
-    offset = 2
-
-
-def layer_float_focus_key(layer_index: int, field: LayerFloatField) -> str:
-    """focus id for one heightmap layer float field"""
-    return f"layer:{layer_index}:{field.name}"
-
-
-def parse_layer_float_focus_key(key: str) -> tuple[int, LayerFloatField] | None:
-    """return layer index and field for a layer float focus key, or none"""
-    parts: list[str] = key.split(":")
-    if len(parts) != 3 or parts[0] != "layer":
-        return None
-    try:
-        layer_index: int = int(parts[1])
-        field: LayerFloatField = LayerFloatField[parts[2]]
-    except (ValueError, KeyError):
-        return None
-    return layer_index, field
-
-
-def format_layer_float(value: float) -> str:
-    """format a layer float for the type-in field"""
-    return f"{float(value):.4g}"
-
-
-def parse_layer_float(text: str) -> float | None:
-    """parse typed layer float text, or none if invalid"""
-    stripped: str = text.strip()
-    if stripped == "":
-        return None
-    try:
-        return float(stripped)
-    except ValueError:
-        return None
-
-
-def layer_float_value(
-    layer: HeightmapLayer, field: LayerFloatField
-) -> float:
-    """read one layer float field"""
-    match field:
-        case LayerFloatField.amplitude:
-            return layer.amplitude
-        case LayerFloatField.offset:
-            return layer.offset
-
-
-def layer_float_label(field: LayerFloatField) -> str:
-    """inspector label for a layer float field"""
-    match field:
-        case LayerFloatField.amplitude:
-            return "Amplitude"
-        case LayerFloatField.offset:
-            return "Offset"
-
-
-def set_layer_float(
+def set_heightfield_base(
     host: HeightfieldSceneHost,
     catalog: HeightmapCatalog,
     ui: UiState,
     group_id: str,
     heightfield: Heightfield,
-    layer_index: int,
-    field: LayerFloatField,
-    value: float,
+    base: HeightmapId | None,
     journal: SessionJournal | None = None,
 ) -> None:
-    """set one layer float field and regenerate"""
-    if layer_index < 0 or layer_index >= len(heightfield.layers):
-        return
-    layers: list[HeightmapLayer] = list(heightfield.layers)
-    current: HeightmapLayer = layers[layer_index]
-    match field:
-        case LayerFloatField.amplitude:
-            layers[layer_index] = replace(current, amplitude=value)
-        case LayerFloatField.offset:
-            layers[layer_index] = replace(current, offset=value)
-    set_heightfield_layer(
-        host, catalog, ui, group_id, heightfield, tuple(layers), journal=journal
-    )
+    """replace heightfield base map and regenerate"""
+    if journal is not None:
+        journal.record(
+            "heightfield_base",
+            group_id=group_id,
+            base="" if base is None else base.name,
+        )
+    try:
+        set_heightfield(
+            host,
+            catalog,
+            group_id,
+            replace(heightfield, base=base),
+        )
+    except ValueError as exc:
+        log_exception("heightfield base edit failed", exc)
+        ui.status = str(exc)
 
 
 def update_heightfield_inspector(
@@ -739,26 +680,8 @@ def update_heightfield_inspector(
         for row in rows
         if not isinstance(control_by_key(controls, row.key), EnumControl)
     ]
-    layer_i: int
-    for layer_i in range(len(heightfield.layers)):
-        text_keys.append(
-            layer_float_focus_key(layer_i, LayerFloatField.amplitude)
-        )
-        text_keys.append(layer_float_focus_key(layer_i, LayerFloatField.offset))
 
     def seed_focus_text(focus_key: str, hf: Heightfield) -> str:
-        layer_ref: tuple[int, LayerFloatField] | None = parse_layer_float_focus_key(
-            focus_key
-        )
-        if layer_ref is not None:
-            layer_index: int
-            field: LayerFloatField
-            layer_index, field = layer_ref
-            if 0 <= layer_index < len(hf.layers):
-                return format_layer_float(
-                    layer_float_value(hf.layers[layer_index], field)
-                )
-            return ""
         focus_control: ParamControl = control_by_key(controls, focus_key)
         return format_control(focus_control, read_control(hf, focus_control))
 
@@ -773,41 +696,24 @@ def update_heightfield_inspector(
                 case TextAction.cancel:
                     ui.clear_focus()
                 case TextAction.commit | TextAction.focus_next | TextAction.focus_prev:
-                    layer_ref = parse_layer_float_focus_key(ui.focus.key)
-                    if layer_ref is not None:
-                        layer_index, field = layer_ref
-                        parsed_float: float | None = parse_layer_float(ui.edit.text)
-                        if parsed_float is not None:
-                            set_layer_float(
+                    control: ParamControl = control_by_key(controls, ui.focus.key)
+                    parsed: Any | None = parse_control(control, ui.edit.text)
+                    if parsed is not None:
+                        if is_heightfield_size_control(control):
+                            stage_heightfield_size(
+                                ui, group.id, heightfield, control, float(parsed)
+                            )
+                        else:
+                            try_apply_heightfield_control_edit(
                                 host,
                                 catalog,
                                 ui,
                                 group.id,
                                 heightfield,
-                                layer_index,
-                                field,
-                                parsed_float,
+                                control,
+                                parsed,
                                 journal=journal,
                             )
-                    else:
-                        control: ParamControl = control_by_key(controls, ui.focus.key)
-                        parsed: Any | None = parse_control(control, ui.edit.text)
-                        if parsed is not None:
-                            if is_heightfield_size_control(control):
-                                stage_heightfield_size(
-                                    ui, group.id, heightfield, control, float(parsed)
-                                )
-                            else:
-                                try_apply_heightfield_control_edit(
-                                    host,
-                                    catalog,
-                                    ui,
-                                    group.id,
-                                    heightfield,
-                                    control,
-                                    parsed,
-                                    journal=journal,
-                                )
                     refreshed: Node | None = scene.nodes.get(group.id)
                     if refreshed is not None and refreshed.heightfield is not None:
                         heightfield = refreshed.heightfield
@@ -954,131 +860,56 @@ def update_heightfield_inspector(
         )
         y += row_h + ui_button_gap
 
-    layer_index: int
-    layer: HeightmapLayer
-    for layer_index, layer in enumerate(heightfield.layers):
-        label: str = catalog.entries[layer.heightmap_id].label if (
-            layer.heightmap_id in catalog.entries
-        ) else layer.heightmap_id.name
+    base_id: HeightmapId | None = heightfield.base
+    base_label: str
+    if base_id is None:
+        base_label = "Base: (none)"
+    elif base_id in catalog.entries:
+        base_label = f"Base: {catalog.entries[base_id].label}"
+    else:
+        base_label = f"Base: {base_id.name}"
 
-        def remove_layer(index: int = layer_index, hf: Heightfield = heightfield) -> None:
-            ui.clear_focus()
-            layers: list[HeightmapLayer] = list(hf.layers)
-            del layers[index]
-            set_heightfield_layer(
-                host, catalog, ui, group.id, hf, tuple(layers), journal=journal
-            )
-
-        buttons.append(
-            Button(
-                label=label,
-                on_click=lambda: None,
-                rect=Rectangle(x, y, inner_w - step_w - ui_button_gap, row_h),
-            )
+    def clear_base(hf: Heightfield = heightfield) -> None:
+        ui.clear_focus()
+        set_heightfield_base(
+            host, catalog, ui, group.id, hf, None, journal=journal
         )
+
+    buttons.append(
+        Button(
+            label=base_label,
+            on_click=lambda: None,
+            rect=Rectangle(x, y, inner_w - step_w - ui_button_gap, row_h),
+        )
+    )
+    if base_id is not None:
         buttons.append(
             Button(
                 label="x",
-                on_click=remove_layer,
+                on_click=clear_base,
                 rect=Rectangle(x + inner_w - step_w, y, step_w, row_h),
             )
         )
-        y += row_h + ui_button_gap
-
-        layer_field: LayerFloatField
-        for layer_field in (LayerFloatField.amplitude, LayerFloatField.offset):
-            field_key: str = layer_float_focus_key(layer_index, layer_field)
-            field_label_rect: Rectangle = Rectangle(
-                x, y, inner_w, float(ui_font_size)
-            )
-            field_controls_y: float = y + float(ui_font_size) + 4.0
-            field_minus_rect: Rectangle = Rectangle(
-                x, field_controls_y, step_w, row_h
-            )
-            field_plus_rect: Rectangle = Rectangle(
-                x + inner_w - step_w, field_controls_y, step_w, row_h
-            )
-            field_value_rect: Rectangle = Rectangle(
-                field_minus_rect.x + field_minus_rect.width + ui_button_gap,
-                field_controls_y,
-                field_plus_rect.x
-                - (
-                    field_minus_rect.x
-                    + field_minus_rect.width
-                    + ui_button_gap * 2
-                ),
-                row_h,
-            )
-            rows.append(
-                ParamRowRects(
-                    key=field_key,
-                    label=field_label_rect,
-                    minus=field_minus_rect,
-                    value=field_value_rect,
-                    plus=field_plus_rect,
-                )
-            )
-
-            def field_minus(
-                index: int = layer_index,
-                hf: Heightfield = heightfield,
-                f: LayerFloatField = layer_field,
-            ) -> None:
-                ui.clear_focus()
-                set_layer_float(
-                    host,
-                    catalog,
-                    ui,
-                    group.id,
-                    hf,
-                    index,
-                    f,
-                    layer_float_value(hf.layers[index], f) - 0.25,
-                    journal=journal,
-                )
-
-            def field_plus(
-                index: int = layer_index,
-                hf: Heightfield = heightfield,
-                f: LayerFloatField = layer_field,
-            ) -> None:
-                ui.clear_focus()
-                set_layer_float(
-                    host,
-                    catalog,
-                    ui,
-                    group.id,
-                    hf,
-                    index,
-                    f,
-                    layer_float_value(hf.layers[index], f) + 0.25,
-                    journal=journal,
-                )
-
-            buttons.append(
-                Button(label="-", on_click=field_minus, rect=field_minus_rect)
-            )
-            buttons.append(
-                Button(label="+", on_click=field_plus, rect=field_plus_rect)
-            )
-            if clicked and is_point_in_rect(mouse.x, mouse.y, field_value_rect):
-                ui.focus = FieldId(
-                    panel=inspector_panel, key=field_key, owner=group.id
-                )
-                ui.edit = begin_edit(
-                    format_layer_float(layer_float_value(layer, layer_field))
-                )
-            y = field_controls_y + row_h + ui_button_gap
+    y += row_h + ui_button_gap
 
     def open_heightmap_browser() -> None:
         ui.clear_focus()
         ui.heightfield_layer_target = group.id
+        ui.heightfield_layer_replace_index = None
         ui.file_browser = make_heightmap_browser(Path.cwd(), ".png")
-        ui.status = "Add heightmap…"
+        ui.status = (
+            "Set base heightmap…"
+            if heightfield.base is None
+            else "Add edit layer…"
+        )
 
     buttons.append(
         Button(
-            label="+ Heightmap (.png)",
+            label=(
+                "+ Base heightmap (.png)"
+                if heightfield.base is None
+                else "+ Edit layer (.png)"
+            ),
             on_click=open_heightmap_browser,
             rect=Rectangle(x, y, inner_w, row_h),
         )
@@ -1388,50 +1219,6 @@ def draw_inspector(
     )
     row: ParamRowRects
     for row in rows:
-        layer_draw: tuple[int, LayerFloatField] | None = parse_layer_float_focus_key(
-            row.key
-        )
-        if layer_draw is not None:
-            draw_layer_index: int
-            draw_field: LayerFloatField
-            draw_layer_index, draw_field = layer_draw
-            draw_value: float = 0.0
-            if (
-                group.heightfield is not None
-                and 0 <= draw_layer_index < len(group.heightfield.layers)
-            ):
-                draw_value = layer_float_value(
-                    group.heightfield.layers[draw_layer_index], draw_field
-                )
-            draw_text_ex(
-                font,
-                layer_float_label(draw_field),
-                Vector2(row.label.x, row.label.y),
-                float(ui_font_size),
-                0,
-                ui_color_text,
-            )
-            layer_edit: TextEdit | None = ui.focused_edit(
-                inspector_panel, row.key, group.id
-            )
-            if layer_edit is not None:
-                draw_text_field(
-                    font,
-                    row.value,
-                    layer_edit.text,
-                    focused=True,
-                    caret=layer_edit.caret,
-                    mark=layer_edit.mark,
-                )
-            else:
-                draw_text_field(
-                    font,
-                    row.value,
-                    format_layer_float(draw_value),
-                    focused=False,
-                    center_unfocused=True,
-                )
-            continue
         control: ParamControl = control_by_key(controls, row.key)
         value: Any = read_control(params, control)
         match control:

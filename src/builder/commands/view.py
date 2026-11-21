@@ -35,6 +35,12 @@ def toggle_meshes_panel(context: CommandContext, _: None) -> None:
     context.ui.status = f"Meshes panel {state}"
 
 
+def toggle_height_layers_panel(context: CommandContext, _: None) -> None:
+    context.ui.toggle_height_layers_panel()
+    state: str = "shown" if context.ui.height_layers_panel_open else "hidden"
+    context.ui.status = f"Height layers panel {state}"
+
+
 def toggle_outliner(context: CommandContext, _: None) -> None:
     context.ui.toggle_outliner()
     state: str = "shown" if context.ui.outliner_open else "hidden"
@@ -65,6 +71,9 @@ cmd_toggle_heightfield_wireframe: Command[None] = Command(
 cmd_focus_camera: Command[None] = Command("Focus camera", focus_camera)
 cmd_toggle_side_panel: Command[None] = Command("Panel", toggle_side_panel)
 cmd_toggle_meshes_panel: Command[None] = Command("Meshes", toggle_meshes_panel)
+cmd_toggle_height_layers_panel: Command[None] = Command(
+    "Height Layers", toggle_height_layers_panel
+)
 cmd_toggle_outliner: Command[None] = Command("Outliner", toggle_outliner)
 cmd_gizmo_translate: Command[GizmoMode] = Command("Move", set_gizmo_mode)
 cmd_gizmo_rotate: Command[GizmoMode] = Command("Rotate", set_gizmo_mode)

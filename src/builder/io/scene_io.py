@@ -70,6 +70,7 @@ def build_document(context: CommandContext) -> SceneDocument:
         ui=SceneUiState(
             side_panel_open=context.ui.side_panel_open,
             meshes_panel_open=context.ui.meshes_panel_open,
+            height_layers_panel_open=context.ui.height_layers_panel_open,
             outliner_open=context.ui.outliner_open,
         ),
         camera=SceneCameraState(
@@ -323,6 +324,7 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     context.application.active_mesh_id = active
     context.ui.side_panel_open = document.ui.side_panel_open
     context.ui.meshes_panel_open = document.ui.meshes_panel_open
+    context.ui.height_layers_panel_open = document.ui.height_layers_panel_open
     context.ui.outliner_open = document.ui.outliner_open
     context.scene.orbit.yaw = document.camera.yaw
     context.scene.orbit.pitch = document.camera.pitch

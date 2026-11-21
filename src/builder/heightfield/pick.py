@@ -34,7 +34,7 @@ def heightfield_local_bounds(
     layout: HeightfieldLayout = heightfield_layout(heightfield)
     height_min: float
     height_max: float
-    height_min, height_max = layer_height_bounds(catalog, heightfield.layers)
+    height_min, height_max = layer_height_bounds(catalog, heightfield)
     half_x: float = 0.5 * layout.size_x
     half_z: float = 0.5 * layout.size_z
     return BoundingBox(

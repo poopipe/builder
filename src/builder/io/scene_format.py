@@ -23,14 +23,25 @@ from builder.generators.param_types import (
 )
 from builder.generators.registry import get_spec
 from builder.heightfield.height_image_types import HeightSampleType
-from builder.heightfield.heightfield_types import Heightfield, HeightmapLayer
+from builder.heightfield.heightfield_types import (
+    CatalogHeightSource,
+    HeightBlendMode,
+    HeightEditLayer,
+    HeightLayerSource,
+    HeightLayerSourceType,
+    Heightfield,
+    PaintHeightSource,
+    ProceduralHeightSource,
+    ProceduralHeightType,
+    height_layer_source_type,
+)
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapId
 from builder.heightfield.regenerate import is_heightfield_tile_child
 from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 10
+scene_format_version: int = 12
 scene_file_suffix: str = ".scene"
 
 
@@ -40,6 +51,7 @@ class SceneUiState:
 
     side_panel_open: bool
     meshes_panel_open: bool
+    height_layers_panel_open: bool
     outliner_open: bool = True
 
 
@@ -250,7 +262,7 @@ def params_to_json(params: Any) -> dict[str, Any]:
         elif isinstance(value, FloatParam):
             out[field.name] = float(value.value)
         else:
-            # skip non-wrapper fields (eg. heightfield.layers)
+            # skip non-wrapper fields (eg. heightfield.base / edit_layers)
             continue
     return out
 
@@ -472,17 +484,149 @@ def node_from_json(data: Any) -> Node:
     )
 
 
+def height_layer_source_to_json(source: HeightLayerSource) -> dict[str, Any]:
+    """encode a height or mask source"""
+    source_type: HeightLayerSourceType = height_layer_source_type(source)
+    match source:
+        case CatalogHeightSource(heightmap_id=heightmap_id):
+            return {
+                "source_type": source_type.name,
+                "heightmap_id": heightmap_id.name,
+            }
+        case PaintHeightSource(heightmap_id=heightmap_id):
+            return {
+                "source_type": source_type.name,
+                "heightmap_id": heightmap_id.name,
+            }
+        case ProceduralHeightSource(
+            procedural_type=procedural_type, constant_value=constant_value
+        ):
+            return {
+                "source_type": source_type.name,
+                "procedural_type": procedural_type.name,
+                "constant_value": float(constant_value),
+            }
+
+
+def height_layer_source_from_json(data: Any, label: str) -> HeightLayerSource:
+    """decode a height or mask source"""
+    if not isinstance(data, dict):
+        raise ValueError(f"{label} must be an object")
+    type_raw: Any = data.get("source_type")
+    source_type: HeightLayerSourceType = enum_from_name(
+        HeightLayerSourceType, type_raw, label=f"{label}.source_type"
+    )
+    match source_type:
+        case HeightLayerSourceType.catalog:
+            map_id: Any = data.get("heightmap_id")
+            if not isinstance(map_id, str) or map_id == "":
+                raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            return CatalogHeightSource(heightmap_id=HeightmapId(map_id))
+        case HeightLayerSourceType.paint:
+            paint_id: Any = data.get("heightmap_id")
+            if not isinstance(paint_id, str) or paint_id == "":
+                raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            return PaintHeightSource(heightmap_id=HeightmapId(paint_id))
+        case HeightLayerSourceType.procedural:
+            proc_raw: Any = data.get("procedural_type")
+            procedural_type: ProceduralHeightType = enum_from_name(
+                ProceduralHeightType,
+                proc_raw,
+                label=f"{label}.procedural_type",
+            )
+            constant_raw: Any = data.get("constant_value", 0.0)
+            if isinstance(constant_raw, bool) or not isinstance(
+                constant_raw, (int, float)
+            ):
+                raise ValueError(f"{label}.constant_value must be a number")
+            return ProceduralHeightSource(
+                procedural_type=procedural_type,
+                constant_value=float(constant_raw),
+            )
+
+
+def require_layer_float(data: dict[str, Any], key: str, default: float) -> float:
+    """decode a numeric edit-layer float field"""
+    raw: Any = data.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"heightfield edit layer.{key} must be a number")
+    return float(raw)
+
+
+def height_edit_layer_to_json(layer: HeightEditLayer) -> dict[str, Any]:
+    """encode one edit layer"""
+    payload: dict[str, Any] = {
+        "name": layer.name,
+        "enabled": bool(layer.enabled),
+        "blend": layer.blend.name,
+        "opacity": float(layer.opacity.value),
+        "amplitude": float(layer.amplitude),
+        "offset": float(layer.offset),
+        "uv_scale_u": float(layer.uv_scale_u),
+        "uv_scale_v": float(layer.uv_scale_v),
+        "uv_offset_u": float(layer.uv_offset_u),
+        "uv_offset_v": float(layer.uv_offset_v),
+        "height": height_layer_source_to_json(layer.height),
+    }
+    if layer.mask is not None:
+        payload["mask"] = height_layer_source_to_json(layer.mask)
+    return payload
+
+
+def height_edit_layer_from_json(data: Any) -> HeightEditLayer:
+    """decode one edit layer"""
+    if not isinstance(data, dict):
+        raise ValueError("heightfield edit layer must be an object")
+    name_raw: Any = data.get("name")
+    if not isinstance(name_raw, str) or name_raw == "":
+        raise ValueError("heightfield edit layer.name must be a non-empty string")
+    enabled_raw: Any = data.get("enabled", True)
+    if not isinstance(enabled_raw, bool):
+        raise ValueError("heightfield edit layer.enabled must be a boolean")
+    blend: HeightBlendMode = enum_from_name(
+        HeightBlendMode, data.get("blend"), label="heightfield edit layer.blend"
+    )
+    opacity_raw: Any = data.get("opacity", 1.0)
+    if isinstance(opacity_raw, bool) or not isinstance(opacity_raw, (int, float)):
+        raise ValueError("heightfield edit layer.opacity must be a number")
+    height_raw: Any = data.get("height")
+    height: HeightLayerSource = height_layer_source_from_json(
+        height_raw, "heightfield edit layer.height"
+    )
+    mask: HeightLayerSource | None = None
+    if "mask" in data and data["mask"] is not None:
+        mask = height_layer_source_from_json(
+            data["mask"], "heightfield edit layer.mask"
+        )
+    return HeightEditLayer(
+        name=name_raw,
+        enabled=enabled_raw,
+        blend=blend,
+        opacity=FloatParam(
+            float(opacity_raw),
+            label="Opacity",
+            step=0.05,
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        height=height,
+        mask=mask,
+        amplitude=require_layer_float(data, "amplitude", 1.0),
+        offset=require_layer_float(data, "offset", 0.0),
+        uv_scale_u=require_layer_float(data, "uv_scale_u", 1.0),
+        uv_scale_v=require_layer_float(data, "uv_scale_v", 1.0),
+        uv_offset_u=require_layer_float(data, "uv_offset_u", 0.0),
+        uv_offset_v=require_layer_float(data, "uv_offset_v", 0.0),
+    )
+
+
 def heightfield_to_json(heightfield: Heightfield) -> dict[str, Any]:
     """encode a heightfield recipe"""
     return {
         "params": params_to_json(heightfield),
-        "layers": [
-            {
-                "heightmap_id": layer.heightmap_id.name,
-                "amplitude": float(layer.amplitude),
-                "offset": float(layer.offset),
-            }
-            for layer in heightfield.layers
+        "base": None if heightfield.base is None else heightfield.base.name,
+        "edit_layers": [
+            height_edit_layer_to_json(layer) for layer in heightfield.edit_layers
         ],
     }
 
@@ -494,32 +638,22 @@ def heightfield_from_json(data: Any) -> Heightfield:
     params_raw: Any = data.get("params")
     if not isinstance(params_raw, dict):
         raise ValueError("heightfield.params must be an object")
-    base: Heightfield = typed_params_from_json(Heightfield, params_raw)
-    layers_raw: Any = data.get("layers", [])
+    recipe: Heightfield = typed_params_from_json(Heightfield, params_raw)
+    base_raw: Any = data.get("base")
+    base: HeightmapId | None
+    if base_raw is None:
+        base = None
+    elif isinstance(base_raw, str) and base_raw != "":
+        base = HeightmapId(base_raw)
+    else:
+        raise ValueError("heightfield.base must be a non-empty string or null")
+    layers_raw: Any = data.get("edit_layers", [])
     if not isinstance(layers_raw, list):
-        raise ValueError("heightfield.layers must be an array")
-    layers: list[HeightmapLayer] = []
-    entry: Any
-    for entry in layers_raw:
-        if not isinstance(entry, dict):
-            raise ValueError("heightfield layer must be an object")
-        map_id: Any = entry.get("heightmap_id")
-        if not isinstance(map_id, str) or map_id == "":
-            raise ValueError("heightfield layer.heightmap_id must be a non-empty string")
-        amplitude: Any = entry.get("amplitude", 1.0)
-        offset: Any = entry.get("offset", 0.0)
-        if isinstance(amplitude, bool) or not isinstance(amplitude, (int, float)):
-            raise ValueError("heightfield layer.amplitude must be a number")
-        if isinstance(offset, bool) or not isinstance(offset, (int, float)):
-            raise ValueError("heightfield layer.offset must be a number")
-        layers.append(
-            HeightmapLayer(
-                heightmap_id=HeightmapId(map_id),
-                amplitude=float(amplitude),
-                offset=float(offset),
-            )
-        )
-    return replace(base, layers=tuple(layers))
+        raise ValueError("heightfield.edit_layers must be an array")
+    edit_layers: list[HeightEditLayer] = [
+        height_edit_layer_from_json(entry) for entry in layers_raw
+    ]
+    return replace(recipe, base=base, edit_layers=tuple(edit_layers))
 
 
 def heightmap_asset_to_json(
@@ -642,6 +776,7 @@ def document_to_json(
         "ui": {
             "side_panel_open": document.ui.side_panel_open,
             "meshes_panel_open": document.ui.meshes_panel_open,
+            "height_layers_panel_open": document.ui.height_layers_panel_open,
             "outliner_open": document.ui.outliner_open,
         },
         "camera": {
@@ -676,10 +811,12 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
         raise ValueError("ui must be an object")
     side_open: Any = ui_raw.get("side_panel_open")
     meshes_open: Any = ui_raw.get("meshes_panel_open")
+    height_layers_open: Any = ui_raw.get("height_layers_panel_open")
     outliner_open: Any = ui_raw.get("outliner_open")
     if (
         not isinstance(side_open, bool)
         or not isinstance(meshes_open, bool)
+        or not isinstance(height_layers_open, bool)
         or not isinstance(outliner_open, bool)
     ):
         raise ValueError("ui panel flags must be booleans")
@@ -716,6 +853,7 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
         ui=SceneUiState(
             side_panel_open=side_open,
             meshes_panel_open=meshes_open,
+            height_layers_panel_open=height_layers_open,
             outliner_open=outliner_open,
         ),
         camera=SceneCameraState(

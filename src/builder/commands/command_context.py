@@ -91,10 +91,12 @@ class UiContext(Protocol):
     status: str
     side_panel_open: bool
     meshes_panel_open: bool
+    height_layers_panel_open: bool
     outliner_open: bool
     meshes_panel_scroll: float
     file_browser: FileBrowserState | None
     heightfield_layer_target: str | None
+    heightfield_layer_replace_index: int | None
 
     def toggle_side_panel(self) -> None:
         """show or hide the context side panel"""
@@ -102,6 +104,10 @@ class UiContext(Protocol):
 
     def toggle_meshes_panel(self) -> None:
         """show or hide the mesh catalog panel"""
+        ...
+
+    def toggle_height_layers_panel(self) -> None:
+        """show or hide the height layers panel"""
         ...
 
     def toggle_outliner(self) -> None:
