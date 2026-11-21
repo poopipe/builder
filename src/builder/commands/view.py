@@ -41,6 +41,12 @@ def toggle_height_layers_panel(context: CommandContext, _: None) -> None:
     context.ui.status = f"Height layers panel {state}"
 
 
+def toggle_sculpt_panel(context: CommandContext, _: None) -> None:
+    context.ui.toggle_sculpt_panel()
+    state: str = "shown" if context.ui.sculpt_panel_open else "hidden"
+    context.ui.status = f"Sculpt panel {state}"
+
+
 def toggle_outliner(context: CommandContext, _: None) -> None:
     context.ui.toggle_outliner()
     state: str = "shown" if context.ui.outliner_open else "hidden"
@@ -74,6 +80,7 @@ cmd_toggle_meshes_panel: Command[None] = Command("Meshes", toggle_meshes_panel)
 cmd_toggle_height_layers_panel: Command[None] = Command(
     "Height Layers", toggle_height_layers_panel
 )
+cmd_toggle_sculpt_panel: Command[None] = Command("Sculpt", toggle_sculpt_panel)
 cmd_toggle_outliner: Command[None] = Command("Outliner", toggle_outliner)
 cmd_gizmo_translate: Command[GizmoMode] = Command("Move", set_gizmo_mode)
 cmd_gizmo_rotate: Command[GizmoMode] = Command("Rotate", set_gizmo_mode)

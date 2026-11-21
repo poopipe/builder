@@ -179,10 +179,10 @@ def ensure_heightfield_gpu(
     """create or refresh gpu resources when the recipe fingerprint changes"""
     layout: HeightfieldLayout = heightfield_layout(heightfield)
     spacing: float = layout.spacing
-    key: HeightTextureKey = height_texture_key(heightfield)
+    key: HeightTextureKey = height_texture_key(catalog, heightfield)
     scale: float
     bias: float
-    scale, bias = height_texture_uniforms(heightfield)
+    scale, bias = height_texture_uniforms(catalog, heightfield)
     existing: HeightfieldGpuEntry | None = state.entries.get(group_id)
     if existing is not None and existing.texture.key == key:
         matrix_key: tuple[int, int, int, float, float, float] = layout_matrix_key(

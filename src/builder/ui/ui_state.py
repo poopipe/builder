@@ -25,11 +25,16 @@ class UiState:
     side_panel_open: bool = True
     meshes_panel_open: bool = True
     height_layers_panel_open: bool = True
+    sculpt_panel_open: bool = True
     outliner_open: bool = True
     meshes_panel_scroll: float = 0.0
     height_layers_panel_scroll: float = 0.0
+    sculpt_panel_scroll: float = 0.0
     # selected edit layer index; none means base row
     height_layers_selected_index: int | None = None
+    sculpt_brush_kind: str = "add"
+    sculpt_radius: float = 32.0
+    sculpt_intensity: float = 0.25
     outliner_scroll: float = 0.0
     # ids of collapsed outliner groups; not persisted with the scene
     outliner_collapsed: set[str] = field(default_factory=set)
@@ -69,6 +74,10 @@ class UiState:
     def toggle_height_layers_panel(self) -> None:
         """show or hide the height layers panel"""
         self.height_layers_panel_open = not self.height_layers_panel_open
+
+    def toggle_sculpt_panel(self) -> None:
+        """show or hide the sculpt brush panel"""
+        self.sculpt_panel_open = not self.sculpt_panel_open
 
     def toggle_outliner(self) -> None:
         """show or hide the scene outliner panel"""

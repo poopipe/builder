@@ -33,6 +33,8 @@ from builder.heightfield.heightfield_types import (
     PaintHeightSource,
     ProceduralHeightSource,
     ProceduralHeightType,
+    SculptHeightMode,
+    SculptHeightSource,
     height_layer_source_type,
 )
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapId
@@ -41,7 +43,7 @@ from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 12
+scene_format_version: int = 17
 scene_file_suffix: str = ".scene"
 
 
@@ -52,17 +54,21 @@ class SceneUiState:
     side_panel_open: bool
     meshes_panel_open: bool
     height_layers_panel_open: bool
+    sculpt_panel_open: bool
     outliner_open: bool = True
 
 
 @dataclass(frozen=True)
 class SceneCameraState:
-    """orbit camera pose persisted with a scene"""
+    """orbit camera pose and navigation speeds persisted with a scene"""
 
     yaw: float
     pitch: float
     distance: float
     target: Vector3
+    zoom_speed: float
+    move_speed: float
+    view_distance: float
 
 
 @dataclass(frozen=True)
@@ -498,6 +504,17 @@ def height_layer_source_to_json(source: HeightLayerSource) -> dict[str, Any]:
                 "source_type": source_type.name,
                 "heightmap_id": heightmap_id.name,
             }
+        case SculptHeightSource(
+            heightmap_id=heightmap_id, mode=mode, coverage_id=coverage_id
+        ):
+            payload: dict[str, Any] = {
+                "source_type": source_type.name,
+                "heightmap_id": heightmap_id.name,
+                "mode": mode.name,
+            }
+            if coverage_id is not None:
+                payload["coverage_id"] = coverage_id.name
+            return payload
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -527,6 +544,32 @@ def height_layer_source_from_json(data: Any, label: str) -> HeightLayerSource:
             if not isinstance(paint_id, str) or paint_id == "":
                 raise ValueError(f"{label}.heightmap_id must be a non-empty string")
             return PaintHeightSource(heightmap_id=HeightmapId(paint_id))
+        case HeightLayerSourceType.sculpt:
+            sculpt_id: Any = data.get("heightmap_id")
+            if not isinstance(sculpt_id, str) or sculpt_id == "":
+                raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            mode: SculptHeightMode = enum_from_name(
+                SculptHeightMode, data.get("mode"), label=f"{label}.mode"
+            )
+            coverage: HeightmapId | None = None
+            cov_raw: Any = data.get("coverage_id")
+            if cov_raw is not None:
+                if not isinstance(cov_raw, str) or cov_raw == "":
+                    raise ValueError(
+                        f"{label}.coverage_id must be a non-empty string when set"
+                    )
+                coverage = HeightmapId(cov_raw)
+            if mode is SculptHeightMode.absolute and coverage is None:
+                raise ValueError(
+                    f"{label}.coverage_id is required for absolute sculpt mode"
+                )
+            if mode is SculptHeightMode.delta:
+                coverage = None
+            return SculptHeightSource(
+                heightmap_id=HeightmapId(sculpt_id),
+                mode=mode,
+                coverage_id=coverage,
+            )
         case HeightLayerSourceType.procedural:
             proc_raw: Any = data.get("procedural_type")
             procedural_type: ProceduralHeightType = enum_from_name(
@@ -777,6 +820,7 @@ def document_to_json(
             "side_panel_open": document.ui.side_panel_open,
             "meshes_panel_open": document.ui.meshes_panel_open,
             "height_layers_panel_open": document.ui.height_layers_panel_open,
+            "sculpt_panel_open": document.ui.sculpt_panel_open,
             "outliner_open": document.ui.outliner_open,
         },
         "camera": {
@@ -784,6 +828,9 @@ def document_to_json(
             "pitch": float(document.camera.pitch),
             "distance": float(document.camera.distance),
             "target": vec3_to_list(document.camera.target),
+            "zoom_speed": float(document.camera.zoom_speed),
+            "move_speed": float(document.camera.move_speed),
+            "view_distance": float(document.camera.view_distance),
         },
         "meshes": meshes_json,
         "heightmaps": heightmaps_json,
@@ -812,11 +859,13 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
     side_open: Any = ui_raw.get("side_panel_open")
     meshes_open: Any = ui_raw.get("meshes_panel_open")
     height_layers_open: Any = ui_raw.get("height_layers_panel_open")
+    sculpt_open: Any = ui_raw.get("sculpt_panel_open")
     outliner_open: Any = ui_raw.get("outliner_open")
     if (
         not isinstance(side_open, bool)
         or not isinstance(meshes_open, bool)
         or not isinstance(height_layers_open, bool)
+        or not isinstance(sculpt_open, bool)
         or not isinstance(outliner_open, bool)
     ):
         raise ValueError("ui panel flags must be booleans")
@@ -826,14 +875,31 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
     yaw_raw: Any = camera_raw.get("yaw")
     pitch_raw: Any = camera_raw.get("pitch")
     distance_raw: Any = camera_raw.get("distance")
+    zoom_speed_raw: Any = camera_raw.get("zoom_speed")
+    move_speed_raw: Any = camera_raw.get("move_speed")
+    view_distance_raw: Any = camera_raw.get("view_distance")
     if (
         not isinstance(yaw_raw, (int, float))
         or not isinstance(pitch_raw, (int, float))
         or not isinstance(distance_raw, (int, float))
+        or isinstance(yaw_raw, bool)
+        or isinstance(pitch_raw, bool)
+        or isinstance(distance_raw, bool)
     ):
         raise ValueError("camera yaw, pitch, and distance must be numbers")
     if float(distance_raw) <= 0.0:
         raise ValueError("camera distance must be positive")
+    if (
+        isinstance(zoom_speed_raw, bool)
+        or not isinstance(zoom_speed_raw, (int, float))
+        or isinstance(move_speed_raw, bool)
+        or not isinstance(move_speed_raw, (int, float))
+        or isinstance(view_distance_raw, bool)
+        or not isinstance(view_distance_raw, (int, float))
+    ):
+        raise ValueError(
+            "camera zoom_speed, move_speed, and view_distance must be numbers"
+        )
     camera_target: Vector3 = list_to_vec3(camera_raw.get("target"), "camera.target")
     meshes_raw: Any = data.get("meshes")
     heightmaps_raw: Any = data.get("heightmaps")
@@ -854,6 +920,7 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
             side_panel_open=side_open,
             meshes_panel_open=meshes_open,
             height_layers_panel_open=height_layers_open,
+            sculpt_panel_open=sculpt_open,
             outliner_open=outliner_open,
         ),
         camera=SceneCameraState(
@@ -861,6 +928,9 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
             pitch=float(pitch_raw),
             distance=float(distance_raw),
             target=camera_target,
+            zoom_speed=float(zoom_speed_raw),
+            move_speed=float(move_speed_raw),
+            view_distance=float(view_distance_raw),
         ),
         meshes=tuple(meshes),
         heightmaps=tuple(heightmaps),

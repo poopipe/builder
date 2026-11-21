@@ -42,6 +42,14 @@ class HeightLayerSourceType(IntEnum):
     catalog = 1
     paint = 2
     procedural = 3
+    sculpt = 4
+
+
+class SculptHeightMode(IntEnum):
+    """how a sculpt correction layer stores and composites metres"""
+
+    delta = 1
+    absolute = 2
 
 
 class ProceduralHeightType(IntEnum):
@@ -65,6 +73,16 @@ class PaintHeightSource:
 
 
 @dataclass(frozen=True)
+class SculptHeightSource:
+    """mutable sculpt correction raster (metres) over the stack below"""
+
+    heightmap_id: HeightmapId
+    mode: SculptHeightMode = SculptHeightMode.delta
+    # absolute mode coverage 0..1; unused (none) in delta mode
+    coverage_id: HeightmapId | None = None
+
+
+@dataclass(frozen=True)
 class ProceduralHeightSource:
     """procedural samples regenerated from params"""
 
@@ -72,7 +90,12 @@ class ProceduralHeightSource:
     constant_value: float = 0.0
 
 
-HeightLayerSource = CatalogHeightSource | PaintHeightSource | ProceduralHeightSource
+HeightLayerSource = (
+    CatalogHeightSource
+    | PaintHeightSource
+    | SculptHeightSource
+    | ProceduralHeightSource
+)
 
 
 @dataclass(frozen=True)
@@ -116,8 +139,8 @@ class Heightfield:
         minimum=float(heightfield_size_multiple),
     )
     spacing: EnumParam = EnumParam(VertexSpacing.m1, label="Spacing")
-    base_amplitude: FloatParam = FloatParam(1.0, label="Base Amplitude")
-    base_offset: FloatParam = FloatParam(0.0, label="Base Offset")
+    base_height_min: FloatParam = FloatParam(0.0, label="Height Min")
+    base_height_max: FloatParam = FloatParam(1.0, label="Height Max")
     base: HeightmapId | None = None
     edit_layers: tuple[HeightEditLayer, ...] = ()
 
@@ -218,6 +241,8 @@ def height_layer_source_type(source: HeightLayerSource) -> HeightLayerSourceType
             return HeightLayerSourceType.catalog
         case PaintHeightSource():
             return HeightLayerSourceType.paint
+        case SculptHeightSource():
+            return HeightLayerSourceType.sculpt
         case ProceduralHeightSource():
             return HeightLayerSourceType.procedural
 
@@ -229,6 +254,10 @@ def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapI
             return (heightmap_id,)
         case PaintHeightSource(heightmap_id=heightmap_id):
             return (heightmap_id,)
+        case SculptHeightSource(heightmap_id=heightmap_id, coverage_id=coverage_id):
+            if coverage_id is None:
+                return (heightmap_id,)
+            return (heightmap_id, coverage_id)
         case ProceduralHeightSource() | None:
             return ()
 

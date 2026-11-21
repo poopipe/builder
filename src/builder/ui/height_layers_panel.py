@@ -33,11 +33,13 @@ from builder.heightfield.heightfield_types import (
     Heightfield,
     PaintHeightSource,
     ProceduralHeightSource,
+    SculptHeightMode,
+    SculptHeightSource,
 )
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapCatalog
-from builder.heightfield.regenerate import HeightfieldSceneHost
+from builder.heightfield.regenerate import HeightfieldSceneHost, set_heightfield
 from builder.scene.scene_types import Node
-from builder.session_journal import SessionJournal
+from builder.session_journal import SessionJournal, log_exception
 from builder.ui.file_browser import make_heightmap_browser
 from builder.ui.inspector import set_heightfield_edit_layers
 from builder.ui.text_field import (
@@ -80,6 +82,13 @@ class LayerEditFloat(IntEnum):
     uv_offset_v = 7
 
 
+class BaseHeightFloat(IntEnum):
+    """type-in floats on the base height range"""
+
+    height_min = 1
+    height_max = 2
+
+
 @dataclass
 class LayerListRow:
     """one row in the layer list (base or edit)"""
@@ -97,15 +106,17 @@ class LayerListRow:
 class LayerFloatRow:
     """geometry for one ± / type-in float control"""
 
-    field: LayerEditFloat
+    field: LayerEditFloat | BaseHeightFloat
     label: Rectangle
     minus: Rectangle
     value: Rectangle
     plus: Rectangle
 
 
-def layer_float_key(field: LayerEditFloat) -> str:
-    """focus id for a selected-layer float"""
+def layer_float_key(field: LayerEditFloat | BaseHeightFloat) -> str:
+    """focus id for a selected-layer or base float"""
+    if isinstance(field, BaseHeightFloat):
+        return f"base:{field.name}"
     return f"edit:{field.name}"
 
 
@@ -116,6 +127,17 @@ def parse_layer_float_key(key: str) -> LayerEditFloat | None:
         return None
     try:
         return LayerEditFloat[parts[1]]
+    except KeyError:
+        return None
+
+
+def parse_base_height_float_key(key: str) -> BaseHeightFloat | None:
+    """decode a base height-range float focus key"""
+    parts: list[str] = key.split(":")
+    if len(parts) != 2 or parts[0] != "base":
+        return None
+    try:
+        return BaseHeightFloat[parts[1]]
     except KeyError:
         return None
 
@@ -136,13 +158,13 @@ def parse_layer_float(text: str) -> float | None:
         return None
 
 
-def layer_float_label(field: LayerEditFloat) -> str:
-    """panel label for a layer float"""
+def layer_float_label(field: LayerEditFloat | BaseHeightFloat) -> str:
+    """panel label for a layer or base float"""
     match field:
         case LayerEditFloat.amplitude:
-            return "Amplitude"
+            return "Amplitude (m)"
         case LayerEditFloat.offset:
-            return "Offset"
+            return "Offset (m)"
         case LayerEditFloat.opacity:
             return "Opacity"
         case LayerEditFloat.uv_scale_u:
@@ -153,6 +175,10 @@ def layer_float_label(field: LayerEditFloat) -> str:
             return "Offset U"
         case LayerEditFloat.uv_offset_v:
             return "Offset V"
+        case BaseHeightFloat.height_min:
+            return "Height Min"
+        case BaseHeightFloat.height_max:
+            return "Height Max"
 
 
 def layer_float_value(layer: HeightEditLayer, field: LayerEditFloat) -> float:
@@ -174,7 +200,7 @@ def layer_float_value(layer: HeightEditLayer, field: LayerEditFloat) -> float:
             return float(layer.uv_offset_v)
 
 
-def layer_float_step(field: LayerEditFloat) -> float:
+def layer_float_step(field: LayerEditFloat | BaseHeightFloat) -> float:
     """nudge step for ± buttons"""
     match field:
         case LayerEditFloat.opacity:
@@ -186,8 +212,41 @@ def layer_float_step(field: LayerEditFloat) -> float:
             | LayerEditFloat.uv_offset_v
         ):
             return 0.1
-        case LayerEditFloat.amplitude | LayerEditFloat.offset:
+        case (
+            LayerEditFloat.amplitude
+            | LayerEditFloat.offset
+            | BaseHeightFloat.height_min
+            | BaseHeightFloat.height_max
+        ):
             return 0.25
+
+
+def base_height_float_value(
+    heightfield: Heightfield, field: BaseHeightFloat
+) -> float:
+    """read one base height-range float"""
+    match field:
+        case BaseHeightFloat.height_min:
+            return float(heightfield.base_height_min.value)
+        case BaseHeightFloat.height_max:
+            return float(heightfield.base_height_max.value)
+
+
+def apply_base_height_float(
+    heightfield: Heightfield, field: BaseHeightFloat, value: float
+) -> Heightfield:
+    """return heightfield with one base height-range float replaced"""
+    match field:
+        case BaseHeightFloat.height_min:
+            return replace(
+                heightfield,
+                base_height_min=FloatParam(value, label="Height Min"),
+            )
+        case BaseHeightFloat.height_max:
+            return replace(
+                heightfield,
+                base_height_max=FloatParam(value, label="Height Max"),
+            )
 
 
 def apply_layer_float(
@@ -220,10 +279,16 @@ def apply_layer_float(
 def source_label(catalog: HeightmapCatalog, source: HeightLayerSource) -> str:
     """short label for a layer height source"""
     match source:
-        case CatalogHeightSource(heightmap_id=heightmap_id) | PaintHeightSource(
-            heightmap_id=heightmap_id
-        ):
+        case PaintHeightSource(heightmap_id=heightmap_id):
             asset: HeightmapAsset | None = catalog.entries.get(heightmap_id)
+            name: str = heightmap_id.name if asset is None else asset.label
+            return f"Paint: {name}"
+        case SculptHeightSource(heightmap_id=heightmap_id, mode=mode):
+            asset = catalog.entries.get(heightmap_id)
+            name = heightmap_id.name if asset is None else asset.label
+            return f"Sculpt {mode.name}: {name}"
+        case CatalogHeightSource(heightmap_id=heightmap_id):
+            asset = catalog.entries.get(heightmap_id)
             if asset is None:
                 return heightmap_id.name
             return asset.label
@@ -285,6 +350,34 @@ def set_selected_layer_float(
     )
 
 
+def set_base_height_float(
+    host: HeightfieldSceneHost,
+    catalog: HeightmapCatalog,
+    ui: UiState,
+    group_id: str,
+    heightfield: Heightfield,
+    field: BaseHeightFloat,
+    value: float,
+    journal: SessionJournal | None = None,
+) -> None:
+    """set base height min or max and regenerate"""
+    if journal is not None:
+        journal.record(
+            "heightfield_base_height",
+            group_id=group_id,
+            field=field.name,
+            value=value,
+        )
+    updated: Heightfield = apply_base_height_float(heightfield, field, value)
+    try:
+        set_heightfield(host, catalog, group_id, updated)
+    except ValueError as exc:
+        log_exception("heightfield base height edit failed", exc)
+        ui.status = str(exc)
+        return
+    ui.status = f"Base {layer_float_label(field)} = {value:g}"
+
+
 def update_height_layers_panel(
     host: HeightfieldSceneHost,
     catalog: HeightmapCatalog,
@@ -343,10 +436,16 @@ def update_height_layers_panel(
     layer: HeightEditLayer
     for layer_index, layer in enumerate(heightfield.edit_layers):
         enabled_mark: str = "" if layer.enabled else " (off)"
+        detail: str
+        match layer.height:
+            case SculptHeightSource(mode=sculpt_mode):
+                detail = f"sculpt/{sculpt_mode.name}"
+            case _:
+                detail = layer.blend.name
         entries.append(
             (
                 f"{layer.name}{enabled_mark}",
-                layer.blend.name,
+                detail,
                 layer_index,
             )
         )
@@ -391,14 +490,6 @@ def update_height_layers_panel(
         row_y += row_pitch
 
     y = list_rect.y + list_rect.height + ui_button_gap
-    selected_index: int | None = ui.height_layers_selected_index
-    if selected_index is None or selected_index < 0 or selected_index >= len(
-        heightfield.edit_layers
-    ):
-        update_buttons(buttons, area)
-        return list_rows, float_rows, buttons, blend_label, None
-
-    selected: HeightEditLayer = heightfield.edit_layers[selected_index]
 
     def replace_layers(new_layers: tuple[HeightEditLayer, ...]) -> None:
         set_heightfield_edit_layers(
@@ -411,83 +502,401 @@ def update_height_layers_panel(
             journal=journal,
         )
 
-    blend_label = Rectangle(x, y, inner_w, float(ui_font_size))
-    blend_controls_y: float = y + float(ui_font_size) + 4.0
-    blend_minus: Rectangle = Rectangle(x, blend_controls_y, step_w, row_h)
-    blend_plus: Rectangle = Rectangle(
-        x + inner_w - step_w, blend_controls_y, step_w, row_h
-    )
-    blend_value: Rectangle = Rectangle(
-        blend_minus.x + blend_minus.width + ui_button_gap,
-        blend_controls_y,
-        blend_plus.x
-        - (blend_minus.x + blend_minus.width + ui_button_gap * 2),
-        row_h,
-    )
+    def add_paint_layer() -> None:
+        from builder.heightfield.paint import append_paint_edit_layer
+        from builder.heightfield.regenerate import set_heightfield
 
-    def step_blend_prev() -> None:
         ui.clear_focus()
-        layers: list[HeightEditLayer] = list(heightfield.edit_layers)
-        layers[selected_index] = replace(
-            layers[selected_index], blend=prev_blend_mode(selected.blend)
+        cache_dir: Path = Path.cwd() / "heightmaps"
+        updated: Heightfield = append_paint_edit_layer(
+            catalog, heightfield, cache_dir=cache_dir
         )
-        replace_layers(tuple(layers))
+        set_heightfield(host, catalog, group_id, updated)
+        ui.height_layers_selected_index = len(updated.edit_layers) - 1
+        ui.status = "Added paint layer"
 
-    def step_blend_next() -> None:
+    def add_sculpt_layer() -> None:
+        from builder.heightfield.regenerate import set_heightfield
+        from builder.heightfield.sculpt import append_sculpt_edit_layer
+
         ui.clear_focus()
-        layers = list(heightfield.edit_layers)
-        layers[selected_index] = replace(
-            layers[selected_index], blend=next_blend_mode(selected.blend)
+        cache_dir = Path.cwd() / "heightmaps"
+        updated = append_sculpt_edit_layer(
+            catalog, heightfield, cache_dir=cache_dir
         )
-        replace_layers(tuple(layers))
+        set_heightfield(host, catalog, group_id, updated)
+        ui.height_layers_selected_index = len(updated.edit_layers) - 1
+        ui.status = "Added sculpt layer"
 
-    buttons.append(Button(label="-", on_click=step_blend_prev, rect=blend_minus))
     buttons.append(
         Button(
-            label=selected.blend.name,
-            on_click=lambda: None,
-            rect=blend_value,
+            label="+ Paint layer",
+            on_click=add_paint_layer,
+            rect=Rectangle(x, y, inner_w, row_h),
         )
     )
-    buttons.append(Button(label="+", on_click=step_blend_next, rect=blend_plus))
-    y = blend_controls_y + row_h + ui_button_gap
-
-    tex_label: str = f"Height: {source_label(catalog, selected.height)}"
+    y += row_h + ui_button_gap
     buttons.append(
         Button(
-            label=tex_label,
-            on_click=lambda: None,
+            label="+ Sculpt layer",
+            on_click=add_sculpt_layer,
             rect=Rectangle(x, y, inner_w, row_h),
         )
     )
     y += row_h + ui_button_gap
 
-    def open_browse() -> None:
-        ui.clear_focus()
-        ui.heightfield_layer_target = group_id
-        ui.heightfield_layer_replace_index = selected_index
-        ui.file_browser = make_heightmap_browser(Path.cwd(), ".png")
-        ui.status = "Replace layer heightmap…"
+    selected_index: int | None = ui.height_layers_selected_index
+    if selected_index is not None and (
+        selected_index < 0 or selected_index >= len(heightfield.edit_layers)
+    ):
+        update_buttons(buttons, area)
+        return list_rows, float_rows, buttons, blend_label, None
 
-    buttons.append(
-        Button(
-            label="Browse…",
-            on_click=open_browse,
-            rect=Rectangle(x, y, inner_w, row_h),
+    if selected_index is None:
+        base_fields: tuple[BaseHeightFloat, ...] = (
+            BaseHeightFloat.height_min,
+            BaseHeightFloat.height_max,
         )
-    )
-    y += row_h + ui_button_gap
+        base_keys: list[str] = [layer_float_key(f) for f in base_fields]
 
-    # text focus handling for float fields
-    float_fields: tuple[LayerEditFloat, ...] = (
-        LayerEditFloat.amplitude,
-        LayerEditFloat.offset,
-        LayerEditFloat.opacity,
-        LayerEditFloat.uv_scale_u,
-        LayerEditFloat.uv_scale_v,
-        LayerEditFloat.uv_offset_u,
-        LayerEditFloat.uv_offset_v,
-    )
+        if ui.focus is not None and ui.focus.panel == height_layers_panel:
+            if ui.focus.owner != group_id:
+                ui.clear_focus()
+            elif ui.edit is not None:
+                base_action: TextAction = handle_text_keys(ui.edit)
+                match base_action:
+                    case TextAction.editing:
+                        pass
+                    case TextAction.cancel:
+                        ui.clear_focus()
+                    case (
+                        TextAction.commit
+                        | TextAction.focus_next
+                        | TextAction.focus_prev
+                    ):
+                        base_focus: BaseHeightFloat | None = (
+                            parse_base_height_float_key(ui.focus.key)
+                        )
+                        if base_focus is not None:
+                            base_parsed: float | None = parse_layer_float(
+                                ui.edit.text
+                            )
+                            if base_parsed is not None:
+                                set_base_height_float(
+                                    host,
+                                    catalog,
+                                    ui,
+                                    group_id,
+                                    heightfield,
+                                    base_focus,
+                                    base_parsed,
+                                    journal=journal,
+                                )
+                        if base_action is TextAction.commit:
+                            ui.clear_focus()
+                        elif base_action is TextAction.focus_next:
+                            try:
+                                bki: int = base_keys.index(ui.focus.key)
+                            except ValueError:
+                                ui.clear_focus()
+                            else:
+                                next_base_key: str = base_keys[
+                                    (bki + 1) % len(base_keys)
+                                ]
+                                next_base: BaseHeightFloat | None = (
+                                    parse_base_height_float_key(next_base_key)
+                                )
+                                if next_base is not None:
+                                    live_base: Node | None = host.nodes.nodes.get(
+                                        group_id
+                                    )
+                                    live_hf: Heightfield = heightfield
+                                    if (
+                                        live_base is not None
+                                        and live_base.heightfield is not None
+                                    ):
+                                        live_hf = live_base.heightfield
+                                    ui.focus = FieldId(
+                                        panel=height_layers_panel,
+                                        key=next_base_key,
+                                        owner=group_id,
+                                    )
+                                    ui.edit = begin_edit(
+                                        format_layer_float(
+                                            base_height_float_value(
+                                                live_hf, next_base
+                                            )
+                                        )
+                                    )
+                        elif base_action is TextAction.focus_prev:
+                            try:
+                                bki = base_keys.index(ui.focus.key)
+                            except ValueError:
+                                ui.clear_focus()
+                            else:
+                                prev_base_key: str = base_keys[
+                                    (bki - 1) % len(base_keys)
+                                ]
+                                prev_base: BaseHeightFloat | None = (
+                                    parse_base_height_float_key(prev_base_key)
+                                )
+                                if prev_base is not None:
+                                    live_base = host.nodes.nodes.get(group_id)
+                                    live_hf = heightfield
+                                    if (
+                                        live_base is not None
+                                        and live_base.heightfield is not None
+                                    ):
+                                        live_hf = live_base.heightfield
+                                    ui.focus = FieldId(
+                                        panel=height_layers_panel,
+                                        key=prev_base_key,
+                                        owner=group_id,
+                                    )
+                                    ui.edit = begin_edit(
+                                        format_layer_float(
+                                            base_height_float_value(
+                                                live_hf, prev_base
+                                            )
+                                        )
+                                    )
+
+        live_base_group: Node | None = host.nodes.nodes.get(group_id)
+        if (
+            live_base_group is not None
+            and live_base_group.heightfield is not None
+        ):
+            heightfield = live_base_group.heightfield
+
+        base_field: BaseHeightFloat
+        for base_field in base_fields:
+            base_field_key: str = layer_float_key(base_field)
+            base_label_rect: Rectangle = Rectangle(
+                x, y, inner_w, float(ui_font_size)
+            )
+            base_controls_y: float = y + float(ui_font_size) + 4.0
+            base_minus: Rectangle = Rectangle(x, base_controls_y, step_w, row_h)
+            base_plus: Rectangle = Rectangle(
+                x + inner_w - step_w, base_controls_y, step_w, row_h
+            )
+            base_value: Rectangle = Rectangle(
+                base_minus.x + base_minus.width + ui_button_gap,
+                base_controls_y,
+                base_plus.x
+                - (base_minus.x + base_minus.width + ui_button_gap * 2),
+                row_h,
+            )
+            float_rows.append(
+                LayerFloatRow(
+                    field=base_field,
+                    label=base_label_rect,
+                    minus=base_minus,
+                    value=base_value,
+                    plus=base_plus,
+                )
+            )
+
+            def base_field_minus(
+                f: BaseHeightFloat = base_field,
+                hf: Heightfield = heightfield,
+            ) -> None:
+                ui.clear_focus()
+                current: float = base_height_float_value(hf, f)
+                set_base_height_float(
+                    host,
+                    catalog,
+                    ui,
+                    group_id,
+                    hf,
+                    f,
+                    current - layer_float_step(f),
+                    journal=journal,
+                )
+
+            def base_field_plus(
+                f: BaseHeightFloat = base_field,
+                hf: Heightfield = heightfield,
+            ) -> None:
+                ui.clear_focus()
+                current = base_height_float_value(hf, f)
+                set_base_height_float(
+                    host,
+                    catalog,
+                    ui,
+                    group_id,
+                    hf,
+                    f,
+                    current + layer_float_step(f),
+                    journal=journal,
+                )
+
+            buttons.append(
+                Button(label="-", on_click=base_field_minus, rect=base_minus)
+            )
+            buttons.append(
+                Button(label="+", on_click=base_field_plus, rect=base_plus)
+            )
+            if clicked and is_point_in_rect(mouse.x, mouse.y, base_value):
+                ui.focus = FieldId(
+                    panel=height_layers_panel,
+                    key=base_field_key,
+                    owner=group_id,
+                )
+                ui.edit = begin_edit(
+                    format_layer_float(
+                        base_height_float_value(heightfield, base_field)
+                    )
+                )
+            y = base_controls_y + row_h + ui_button_gap
+
+        update_buttons(buttons, area)
+        if clicked and is_point_in_rect(mouse.x, mouse.y, area):
+            on_control: bool = any(
+                is_point_in_rect(mouse.x, mouse.y, button.rect)
+                for button in buttons
+            )
+            on_value: bool = any(
+                is_point_in_rect(mouse.x, mouse.y, row.value)
+                for row in float_rows
+            )
+            if not on_control and not on_value:
+                ui.clear_focus()
+        return list_rows, float_rows, buttons, blend_label, None
+
+    selected: HeightEditLayer = heightfield.edit_layers[selected_index]
+    is_sculpt: bool = isinstance(selected.height, SculptHeightSource)
+    is_paint: bool = isinstance(selected.height, PaintHeightSource)
+    float_fields: tuple[LayerEditFloat, ...]
+
+    if is_sculpt:
+        match selected.height:
+            case SculptHeightSource(mode=current_mode):
+                pass
+            case _:
+                current_mode = SculptHeightMode.delta
+
+        def toggle_sculpt_mode() -> None:
+            from builder.heightfield.regenerate import set_heightfield
+            from builder.heightfield.sculpt import set_sculpt_layer_mode
+
+            ui.clear_focus()
+            next_mode: SculptHeightMode = (
+                SculptHeightMode.absolute
+                if current_mode is SculptHeightMode.delta
+                else SculptHeightMode.delta
+            )
+            cache_dir = Path.cwd() / "heightmaps"
+            updated = set_sculpt_layer_mode(
+                catalog,
+                heightfield,
+                selected_index,
+                next_mode,
+                cache_dir=cache_dir,
+            )
+            set_heightfield(host, catalog, group_id, updated)
+            ui.status = f"Sculpt mode: {next_mode.name}"
+
+        buttons.append(
+            Button(
+                label=f"Mode: {current_mode.name}",
+                on_click=toggle_sculpt_mode,
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+        tex_label = f"Height: {source_label(catalog, selected.height)}"
+        buttons.append(
+            Button(
+                label=tex_label,
+                on_click=lambda: None,
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+        float_fields = (LayerEditFloat.opacity,)
+    else:
+        blend_label = Rectangle(x, y, inner_w, float(ui_font_size))
+        blend_controls_y: float = y + float(ui_font_size) + 4.0
+        blend_minus: Rectangle = Rectangle(x, blend_controls_y, step_w, row_h)
+        blend_plus: Rectangle = Rectangle(
+            x + inner_w - step_w, blend_controls_y, step_w, row_h
+        )
+        blend_value: Rectangle = Rectangle(
+            blend_minus.x + blend_minus.width + ui_button_gap,
+            blend_controls_y,
+            blend_plus.x
+            - (blend_minus.x + blend_minus.width + ui_button_gap * 2),
+            row_h,
+        )
+
+        def step_blend_prev() -> None:
+            ui.clear_focus()
+            layers: list[HeightEditLayer] = list(heightfield.edit_layers)
+            layers[selected_index] = replace(
+                layers[selected_index], blend=prev_blend_mode(selected.blend)
+            )
+            replace_layers(tuple(layers))
+
+        def step_blend_next() -> None:
+            ui.clear_focus()
+            layers = list(heightfield.edit_layers)
+            layers[selected_index] = replace(
+                layers[selected_index], blend=next_blend_mode(selected.blend)
+            )
+            replace_layers(tuple(layers))
+
+        buttons.append(
+            Button(label="-", on_click=step_blend_prev, rect=blend_minus)
+        )
+        buttons.append(
+            Button(
+                label=selected.blend.name,
+                on_click=lambda: None,
+                rect=blend_value,
+            )
+        )
+        buttons.append(
+            Button(label="+", on_click=step_blend_next, rect=blend_plus)
+        )
+        y = blend_controls_y + row_h + ui_button_gap
+
+        tex_label = f"Height: {source_label(catalog, selected.height)}"
+        buttons.append(
+            Button(
+                label=tex_label,
+                on_click=lambda: None,
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+
+        if not is_paint:
+
+            def open_browse() -> None:
+                ui.clear_focus()
+                ui.heightfield_layer_target = group_id
+                ui.heightfield_layer_replace_index = selected_index
+                ui.file_browser = make_heightmap_browser(Path.cwd(), ".png")
+                ui.status = "Replace layer heightmap…"
+
+            buttons.append(
+                Button(
+                    label="Browse…",
+                    on_click=open_browse,
+                    rect=Rectangle(x, y, inner_w, row_h),
+                )
+            )
+            y += row_h + ui_button_gap
+
+        float_fields = (
+            LayerEditFloat.amplitude,
+            LayerEditFloat.offset,
+            LayerEditFloat.opacity,
+            LayerEditFloat.uv_scale_u,
+            LayerEditFloat.uv_scale_v,
+            LayerEditFloat.uv_offset_u,
+            LayerEditFloat.uv_offset_v,
+        )
     text_keys: list[str] = [layer_float_key(f) for f in float_fields]
 
     if ui.focus is not None and ui.focus.panel == height_layers_panel:
@@ -817,20 +1226,28 @@ def draw_height_layers_panel(
             height_layers_panel, layer_float_key(float_row.field), owner
         )
         value_text: str = ""
-        if (
-            group is not None
-            and group.heightfield is not None
-            and ui.height_layers_selected_index is not None
-            and 0
-            <= ui.height_layers_selected_index
-            < len(group.heightfield.edit_layers)
-        ):
-            value_text = format_layer_float(
-                layer_float_value(
-                    group.heightfield.edit_layers[ui.height_layers_selected_index],
-                    float_row.field,
+        if group is not None and group.heightfield is not None:
+            if isinstance(float_row.field, BaseHeightFloat):
+                if ui.height_layers_selected_index is None:
+                    value_text = format_layer_float(
+                        base_height_float_value(
+                            group.heightfield, float_row.field
+                        )
+                    )
+            elif (
+                ui.height_layers_selected_index is not None
+                and 0
+                <= ui.height_layers_selected_index
+                < len(group.heightfield.edit_layers)
+            ):
+                value_text = format_layer_float(
+                    layer_float_value(
+                        group.heightfield.edit_layers[
+                            ui.height_layers_selected_index
+                        ],
+                        float_row.field,
+                    )
                 )
-            )
         if edit is not None:
             draw_text_field(
                 font,

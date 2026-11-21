@@ -53,6 +53,7 @@ from builder.heightfield.gpu.height_texture import (
     HeightTexture,
     HeightTextureKey,
     release_height_texture,
+    update_or_upload_height_texture,
     upload_height_texture,
 )
 from builder.heightfield.heightfield_types import (
@@ -64,11 +65,20 @@ from builder.heightfield.heightfield_types import (
     PaintHeightSource,
     ProceduralHeightSource,
     ProceduralHeightType,
+    SculptHeightMode,
+    SculptHeightSource,
 )
+from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.heightmap_catalog import (
     HeightmapBuffer,
     HeightmapCatalog,
     ensure_heightmap_buffer,
+)
+from builder.heightfield.sample import (
+    base_height_scale_bias,
+    base_sample_type,
+    layer_height_scale_bias,
+    layer_source_sample_type,
 )
 from builder.view.lighting import set_float
 
@@ -182,13 +192,20 @@ def ensure_ping_pong(
     return (cache.ping, cache.pong)
 
 
-def source_cache_key(source: HeightLayerSource) -> str:
-    """stable key for a cached source texture"""
+def source_cache_key(
+    catalog: HeightmapCatalog, source: HeightLayerSource
+) -> str:
+    """stable key for a cached source texture (includes paint revision)"""
     match source:
         case CatalogHeightSource(heightmap_id=heightmap_id):
-            return f"catalog:{heightmap_id.name}"
+            rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return f"catalog:{heightmap_id.name}:{rev}"
         case PaintHeightSource(heightmap_id=heightmap_id):
-            return f"paint:{heightmap_id.name}"
+            paint_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return f"paint:{heightmap_id.name}:{paint_rev}"
+        case SculptHeightSource(heightmap_id=heightmap_id, mode=mode):
+            sculpt_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return f"sculpt:{heightmap_id.name}:{mode.name}:{sculpt_rev}"
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -224,26 +241,51 @@ def upload_source_texture(
 ) -> Texture:
     """upload or reuse a source bitmap as an r32 texture"""
     ensure_solid_textures(cache)
-    key: str = source_cache_key(source)
+    key: str = source_cache_key(catalog, source)
     existing: HeightTexture | None = cache.source_textures.get(key)
     if existing is not None:
         return existing.texture
+    # reclaim older revisions of the same paint/catalog id (update in place)
+    key_prefix: str | None = None
+    match source:
+        case CatalogHeightSource(heightmap_id=heightmap_id):
+            key_prefix = f"catalog:{heightmap_id.name}:"
+        case PaintHeightSource(heightmap_id=heightmap_id):
+            key_prefix = f"paint:{heightmap_id.name}:"
+        case SculptHeightSource(heightmap_id=heightmap_id):
+            key_prefix = f"sculpt:{heightmap_id.name}:"
+        case _:
+            key_prefix = None
+    reusable: HeightTexture | None = None
+    if key_prefix is not None:
+        stale_key: str
+        for stale_key in list(cache.source_textures.keys()):
+            if stale_key.startswith(key_prefix) and stale_key != key:
+                stale: HeightTexture = cache.source_textures.pop(stale_key)
+                if reusable is None:
+                    reusable = stale
+                else:
+                    release_height_texture(stale)
     samples: list[float]
     width: int
     height: int
     match source:
-        case CatalogHeightSource(heightmap_id=heightmap_id) | PaintHeightSource(
-            heightmap_id=heightmap_id
+        case (
+            CatalogHeightSource(heightmap_id=heightmap_id)
+            | PaintHeightSource(heightmap_id=heightmap_id)
+            | SculptHeightSource(heightmap_id=heightmap_id)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
             )
             if buffer is None:
+                if reusable is not None:
+                    release_height_texture(reusable)
                 assert cache.solid_zero is not None
                 return cache.solid_zero.texture
             width = buffer.width
             height = buffer.height
-            samples = list(buffer.samples)
+            samples = buffer.samples
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -252,7 +294,8 @@ def upload_source_texture(
                     width = 1
                     height = 1
                     samples = [float(constant_value)]
-    uploaded: HeightTexture = upload_height_texture(
+    uploaded: HeightTexture = update_or_upload_height_texture(
+        reusable,
         width,
         height,
         samples,
@@ -281,6 +324,7 @@ def resolve_base_resolution(
 
 
 def source_key_parts(
+    catalog: HeightmapCatalog,
     source: HeightLayerSource | None,
 ) -> tuple[str, float, float]:
     """fingerprint fragment for one source"""
@@ -288,24 +332,50 @@ def source_key_parts(
         case None:
             return ("none", 0.0, 0.0)
         case CatalogHeightSource(heightmap_id=heightmap_id):
-            return (f"c:{heightmap_id.name}", 0.0, 0.0)
+            rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return (f"c:{heightmap_id.name}:{rev}", 0.0, 0.0)
         case PaintHeightSource(heightmap_id=heightmap_id):
-            return (f"p:{heightmap_id.name}", 0.0, 0.0)
+            paint_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return (f"p:{heightmap_id.name}:{paint_rev}", 0.0, 0.0)
+        case SculptHeightSource(
+            heightmap_id=heightmap_id, mode=mode, coverage_id=coverage_id
+        ):
+            sculpt_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            cov_name: str = "" if coverage_id is None else coverage_id.name
+            cov_rev: float = (
+                0.0
+                if coverage_id is None
+                else float(catalog.paint_revisions.get(coverage_id, 0))
+            )
+            return (
+                f"s:{heightmap_id.name}:{mode.name}:{cov_name}:{sculpt_rev}",
+                cov_rev,
+                0.0,
+            )
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
             return (f"pr:{procedural_type.name}", float(constant_value), 0.0)
 
 
-def composite_texture_key(heightfield: Heightfield) -> HeightTextureKey:
+def composite_texture_key(
+    catalog: HeightmapCatalog, heightfield: Heightfield
+) -> HeightTextureKey:
     """fingerprint for gpu composite / raw base"""
     parts: list[tuple[str, float, float]] = []
     base_name: str = "" if heightfield.base is None else heightfield.base.name
+    sample_type: HeightSampleType | None = base_sample_type(catalog, heightfield)
+    type_name: str = "" if sample_type is None else sample_type.name
+    base_rev: float = (
+        0.0
+        if heightfield.base is None
+        else float(catalog.paint_revisions.get(heightfield.base, 0))
+    )
     parts.append(
         (
-            f"base:{base_name}",
-            float(heightfield.base_amplitude.value),
-            float(heightfield.base_offset.value),
+            f"base:{base_name}:{type_name}",
+            float(heightfield.base_height_min.value),
+            float(heightfield.base_height_max.value) + base_rev * 1e-6,
         )
     )
     layer: HeightEditLayer
@@ -314,8 +384,10 @@ def composite_texture_key(heightfield: Heightfield) -> HeightTextureKey:
         if not layer.enabled:
             continue
         enabled = True
-        height_part: tuple[str, float, float] = source_key_parts(layer.height)
-        mask_part: tuple[str, float, float] = source_key_parts(layer.mask)
+        height_part: tuple[str, float, float] = source_key_parts(
+            catalog, layer.height
+        )
+        mask_part: tuple[str, float, float] = source_key_parts(catalog, layer.mask)
         parts.append(
             (
                 (
@@ -403,8 +475,11 @@ def make_raw_base_texture(
     catalog: HeightmapCatalog, heightfield: Heightfield, key: HeightTextureKey
 ) -> HeightTexture:
     """upload base samples with scale/bias deferred to the displace shader"""
-    scale: float = float(heightfield.base_amplitude.value)
-    bias: float = float(heightfield.base_offset.value)
+    scale: float
+    bias: float
+    scale, bias = base_height_scale_bias(
+        heightfield, base_sample_type(catalog, heightfield)
+    )
     if heightfield.base is None:
         return upload_height_texture(1, 1, [0.0], key, scale, bias)
     buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
@@ -415,7 +490,7 @@ def make_raw_base_texture(
     return upload_height_texture(
         buffer.width,
         buffer.height,
-        list(buffer.samples),
+        buffer.samples,
         key,
         scale,
         bias,
@@ -431,7 +506,7 @@ def composite_height_texture(
 
     when compositing, returns a dedicated result target the caller must free
     """
-    key: HeightTextureKey = composite_texture_key(heightfield)
+    key: HeightTextureKey = composite_texture_key(catalog, heightfield)
     enabled_layers: list[HeightEditLayer] = [
         layer for layer in heightfield.edit_layers if layer.enabled
     ]
@@ -457,7 +532,12 @@ def composite_height_texture(
             cache, catalog, CatalogHeightSource(heightmap_id=heightfield.base)
         )
 
-    # seed accum with base * amp + offset (blendMode < 0 = replace)
+    seed_amp: float
+    seed_bias: float
+    seed_amp, seed_bias = base_height_scale_bias(
+        heightfield, base_sample_type(catalog, heightfield)
+    )
+    # seed accum with base * amp + bias (blendMode < 0 = replace)
     draw_blend_pass(
         cache,
         ping,
@@ -467,15 +547,72 @@ def composite_height_texture(
         blend_mode=-1,
         use_mask=False,
         opacity=1.0,
-        layer_amp=float(heightfield.base_amplitude.value),
-        layer_bias=float(heightfield.base_offset.value),
+        layer_amp=seed_amp,
+        layer_bias=seed_bias,
     )
     read_target: R32RenderTarget = ping
     write_target: R32RenderTarget = pong
 
     layer: HeightEditLayer
     for layer in enabled_layers:
-        layer_tex: Texture = upload_source_texture(cache, catalog, layer.height)
+        match layer.height:
+            case SculptHeightSource(
+                heightmap_id=heightmap_id,
+                mode=sculpt_mode,
+                coverage_id=coverage_id,
+            ):
+                layer_tex = upload_source_texture(cache, catalog, layer.height)
+                if sculpt_mode is SculptHeightMode.delta:
+                    draw_blend_pass(
+                        cache,
+                        write_target,
+                        read_target.texture,
+                        layer_tex,
+                        cache.solid_one.texture,
+                        blend_mode=int(HeightBlendMode.add),
+                        use_mask=False,
+                        opacity=float(layer.opacity.value),
+                        layer_amp=1.0,
+                        layer_bias=0.0,
+                        uv_scale_u=float(layer.uv_scale_u),
+                        uv_scale_v=float(layer.uv_scale_v),
+                        uv_offset_u=float(layer.uv_offset_u),
+                        uv_offset_v=float(layer.uv_offset_v),
+                    )
+                else:
+                    cov_tex: Texture
+                    if coverage_id is None:
+                        cov_tex = cache.solid_zero.texture
+                    else:
+                        cov_tex = upload_source_texture(
+                            cache,
+                            catalog,
+                            SculptHeightSource(
+                                heightmap_id=coverage_id,
+                                mode=SculptHeightMode.delta,
+                            ),
+                        )
+                    draw_blend_pass(
+                        cache,
+                        write_target,
+                        read_target.texture,
+                        layer_tex,
+                        cov_tex,
+                        blend_mode=6,
+                        use_mask=True,
+                        opacity=float(layer.opacity.value),
+                        layer_amp=1.0,
+                        layer_bias=0.0,
+                        uv_scale_u=float(layer.uv_scale_u),
+                        uv_scale_v=float(layer.uv_scale_v),
+                        uv_offset_u=float(layer.uv_offset_u),
+                        uv_offset_v=float(layer.uv_offset_v),
+                    )
+                read_target, write_target = write_target, read_target
+                continue
+            case _:
+                pass
+        layer_tex = upload_source_texture(cache, catalog, layer.height)
         mask_tex: Texture
         use_mask: bool
         if layer.mask is None:
@@ -484,6 +621,11 @@ def composite_height_texture(
         else:
             mask_tex = upload_source_texture(cache, catalog, layer.mask)
             use_mask = True
+        layer_amp: float
+        layer_bias: float
+        layer_amp, layer_bias = layer_height_scale_bias(
+            layer, layer_source_sample_type(catalog, layer.height)
+        )
         draw_blend_pass(
             cache,
             write_target,
@@ -493,8 +635,8 @@ def composite_height_texture(
             blend_mode=blend_mode_uniform(layer.blend),
             use_mask=use_mask,
             opacity=float(layer.opacity.value),
-            layer_amp=float(layer.amplitude),
-            layer_bias=float(layer.offset),
+            layer_amp=layer_amp,
+            layer_bias=layer_bias,
             uv_scale_u=float(layer.uv_scale_u),
             uv_scale_v=float(layer.uv_scale_v),
             uv_offset_u=float(layer.uv_offset_u),

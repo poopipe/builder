@@ -43,11 +43,14 @@ class HeightmapAsset:
 
 @dataclass(frozen=True)
 class HeightmapBuffer:
-    """cpu height samples in row-major order as signed float32 values"""
+    """cpu height samples in row-major order as signed float32 values
+
+    samples is a mutable list so paint/sculpt stamps can write in place
+    """
 
     width: int
     height: int
-    samples: tuple[float, ...]
+    samples: list[float]
     sample_min: float
     sample_max: float
 
@@ -58,6 +61,8 @@ class HeightmapCatalog:
 
     entries: dict[HeightmapId, HeightmapAsset] = field(default_factory=dict)
     buffers: dict[HeightmapId, HeightmapBuffer] = field(default_factory=dict)
+    # content revision for paint (and any mutated) buffers — gpu cache invalidation
+    paint_revisions: dict[HeightmapId, int] = field(default_factory=dict)
     decode: DecodeHeightImage = field(default=default_decode_height_image)
 
 
@@ -75,6 +80,7 @@ def clear_heightmap_catalog(catalog: HeightmapCatalog) -> None:
     """remove every heightmap asset and buffer"""
     catalog.entries.clear()
     catalog.buffers.clear()
+    catalog.paint_revisions.clear()
 
 
 def heightmap_id_for_path(path: Path) -> HeightmapId:
@@ -86,9 +92,9 @@ def heightmap_id_for_path(path: Path) -> HeightmapId:
 
 
 def heightmap_buffer_from_samples(
-    width: int, height: int, samples: tuple[float, ...]
+    width: int, height: int, samples: list[float]
 ) -> HeightmapBuffer:
-    """build a buffer with precomputed sample bounds"""
+    """build a buffer with precomputed sample bounds; keeps the samples list"""
     if width <= 0 or height <= 0:
         raise ValueError("heightmap has no pixels")
     if len(samples) != width * height:
@@ -107,9 +113,7 @@ def heightmap_buffer_from_samples(
 def heightmap_buffer_from_decoded(image: DecodedHeightImage) -> HeightmapBuffer:
     """build a float buffer from packed decoded samples"""
     samples: list[float] = float_samples_from_decoded(image)
-    return heightmap_buffer_from_samples(
-        image.width, image.height, tuple(samples)
-    )
+    return heightmap_buffer_from_samples(image.width, image.height, samples)
 
 
 def load_or_build_height_raw(

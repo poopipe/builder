@@ -48,6 +48,7 @@ from builder.heightfield.gpu import (
     draw_heightfields,
     unload_heightfield_gpu,
 )
+from builder.heightfield.sculpt_stroke import draw_sculpt_brush_preview
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.heightfield.pick import HeightfieldPickHit, pick_nearest_heightfield
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
@@ -372,6 +373,8 @@ class Viewport:
         ui_blocks_mouse: bool,
         heightmap_catalog: HeightmapCatalog,
         text_focused: bool,
+        *,
+        block_left_click: bool = False,
     ) -> None:
         """orbit / pan / zoom / select / gizmo; keyboard fly when not typing"""
         self.apply_keyboard_fly(text_focused)
@@ -419,7 +422,7 @@ class Viewport:
                 regenerate_splines_touching(self.nodes, dragged)
             return
 
-        if (
+        if not block_left_click and (
             is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
             and pivot is not None
             and axes is not None
@@ -440,7 +443,10 @@ class Viewport:
                 )
                 return
 
-        if is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT):
+        if (
+            not block_left_click
+            and is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
+        ):
             self.handle_selection_click(ray, heightmap_catalog)
             return
 
@@ -500,7 +506,12 @@ class Viewport:
                 self.apply_orbit()
 
     def draw(
-        self, view_rect: Rectangle, heightmap_catalog: HeightmapCatalog
+        self,
+        view_rect: Rectangle,
+        heightmap_catalog: HeightmapCatalog,
+        *,
+        sculpt_preview_center: Vector3 | None = None,
+        sculpt_preview_radius: float = 0.0,
     ) -> None:
         """render the 3D scene into the viewport rectangle using scissor"""
         begin_scissor_mode(
@@ -535,6 +546,10 @@ class Viewport:
         # before restoring depth — otherwise EndMode3D draws them with depth on
         rl_draw_render_batch_active()
         rl_disable_depth_test()
+        if sculpt_preview_center is not None and sculpt_preview_radius > 0.0:
+            draw_sculpt_brush_preview(
+                sculpt_preview_center, sculpt_preview_radius
+            )
         pivot: Vector3 | None = selection_pivot(self.nodes, self.nodes.selected_ids)
         if pivot is not None:
             rotation: Quaternion = selection_rotation(

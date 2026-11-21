@@ -8,12 +8,16 @@ from pathlib import Path
 from builder.commands.command_context import CommandContext
 from builder.generators.generator_types import MeshPattern
 from builder.generators.regenerate import regenerate_group
+from builder.heightfield.height_raw_cache import write_height_raw_cache
 from builder.heightfield.heightmap_catalog import (
     HeightmapAsset,
+    HeightmapBuffer,
     clear_heightmap_catalog,
     ensure_heightmap_buffer,
     register_heightmap_asset,
 )
+from builder.heightfield.height_image_types import HeightSampleType
+from builder.heightfield.paint import decoded_f32_from_buffer
 from builder.heightfield.regenerate import regenerate_heightfield
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.io.scene_format import (
@@ -35,6 +39,8 @@ from builder.meshes.mesh_catalog import (
 )
 from builder.scene.scene_types import builtin_cube, MeshId, Node
 from builder.session_journal import log_exception
+from builder.ui.zoom_bar import clamp_zoom_speed
+from builder.view.orbit_move import clamp_move_speed, clamp_view_distance
 
 
 def project_root_for_scene(scene_path: Path) -> Path:
@@ -71,6 +77,7 @@ def build_document(context: CommandContext) -> SceneDocument:
             side_panel_open=context.ui.side_panel_open,
             meshes_panel_open=context.ui.meshes_panel_open,
             height_layers_panel_open=context.ui.height_layers_panel_open,
+            sculpt_panel_open=context.ui.sculpt_panel_open,
             outliner_open=context.ui.outliner_open,
         ),
         camera=SceneCameraState(
@@ -78,6 +85,9 @@ def build_document(context: CommandContext) -> SceneDocument:
             pitch=float(context.scene.orbit.pitch),
             distance=float(context.scene.orbit.distance),
             target=Vector3(float(target.x), float(target.y), float(target.z)),
+            zoom_speed=float(context.scene.orbit.zoom_speed),
+            move_speed=float(context.scene.orbit.move_speed),
+            view_distance=float(context.scene.orbit.view_distance),
         ),
         meshes=tuple(context.application.mesh_catalog.entries.values()),
         heightmaps=tuple(context.application.heightmap_catalog.entries.values()),
@@ -133,10 +143,27 @@ def heightmap_caches_for_save(
     return caches
 
 
+def flush_paint_heightmaps(context: CommandContext) -> None:
+    """write dirty paint (f32) buffers to their .hraw cache paths"""
+    asset: HeightmapAsset
+    for asset in context.application.heightmap_catalog.entries.values():
+        if asset.sample_type is not HeightSampleType.f32:
+            continue
+        buffer: HeightmapBuffer | None = (
+            context.application.heightmap_catalog.buffers.get(asset.heightmap_id)
+        )
+        if buffer is None:
+            continue
+        write_height_raw_cache(
+            Path(asset.cache_path), decoded_f32_from_buffer(buffer)
+        )
+
+
 def save_scene_to_path(context: CommandContext, scene_path: Path) -> None:
     """write the current session to a .scene file"""
     path: Path = scene_path.resolve()
     root: Path = project_root_for_scene(path)
+    flush_paint_heightmaps(context)
     document: SceneDocument = build_document(context)
     relative_sources: dict[str, str] = relative_sources_for_save(document, root)
     heightmap_sources: dict[str, str] = heightmap_sources_for_save(document, root)
@@ -325,6 +352,7 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     context.ui.side_panel_open = document.ui.side_panel_open
     context.ui.meshes_panel_open = document.ui.meshes_panel_open
     context.ui.height_layers_panel_open = document.ui.height_layers_panel_open
+    context.ui.sculpt_panel_open = document.ui.sculpt_panel_open
     context.ui.outliner_open = document.ui.outliner_open
     context.scene.orbit.yaw = document.camera.yaw
     context.scene.orbit.pitch = document.camera.pitch
@@ -333,6 +361,11 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
         document.camera.target.x,
         document.camera.target.y,
         document.camera.target.z,
+    )
+    context.scene.orbit.zoom_speed = clamp_zoom_speed(document.camera.zoom_speed)
+    context.scene.orbit.move_speed = clamp_move_speed(document.camera.move_speed)
+    context.scene.orbit.view_distance = clamp_view_distance(
+        document.camera.view_distance
     )
     context.scene.apply_orbit()
     context.application.scene_path = path

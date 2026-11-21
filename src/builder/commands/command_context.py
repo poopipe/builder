@@ -92,6 +92,7 @@ class UiContext(Protocol):
     side_panel_open: bool
     meshes_panel_open: bool
     height_layers_panel_open: bool
+    sculpt_panel_open: bool
     outliner_open: bool
     meshes_panel_scroll: float
     file_browser: FileBrowserState | None
@@ -108,6 +109,10 @@ class UiContext(Protocol):
 
     def toggle_height_layers_panel(self) -> None:
         """show or hide the height layers panel"""
+        ...
+
+    def toggle_sculpt_panel(self) -> None:
+        """show or hide the sculpt brush panel"""
         ...
 
     def toggle_outliner(self) -> None:

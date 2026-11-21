@@ -35,6 +35,7 @@ from builder.commands.view import (
     cmd_toggle_height_layers_panel,
     cmd_toggle_meshes_panel,
     cmd_toggle_outliner,
+    cmd_toggle_sculpt_panel,
     cmd_toggle_side_panel,
 )
 from builder.view.gizmo_types import GizmoMode
@@ -48,6 +49,7 @@ menu_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_toggle_side_panel, None),
     CommandEntry(cmd_toggle_meshes_panel, None),
     CommandEntry(cmd_toggle_height_layers_panel, None),
+    CommandEntry(cmd_toggle_sculpt_panel, None),
     CommandEntry(cmd_toggle_outliner, None),
     CommandEntry(cmd_gizmo_translate, GizmoMode.translate),
     CommandEntry(cmd_gizmo_rotate, GizmoMode.rotate),

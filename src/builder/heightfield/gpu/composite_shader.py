@@ -66,6 +66,8 @@ void main()
         outHeight = mix(a, max(a, b), m);
     } else if (blendMode == 5) {
         outHeight = mix(a, min(a, b), m);
+    } else if (blendMode == 6) {
+        outHeight = mix(a, b, m);
     }
     finalColor = vec4(outHeight, 0.0, 0.0, 1.0);
 }

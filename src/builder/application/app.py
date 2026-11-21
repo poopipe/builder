@@ -11,8 +11,10 @@ from pyray import (
     FilePathList,
     Font,
     KeyboardKey,
+    MouseButton,
     Rectangle,
     Vector2,
+    Vector3,
     begin_drawing,
     clear_background,
     close_window,
@@ -25,6 +27,9 @@ from pyray import (
     get_screen_width,
     init_window,
     is_file_dropped,
+    is_mouse_button_down,
+    is_mouse_button_pressed,
+    is_mouse_button_released,
     is_window_ready,
     load_dropped_files,
     set_config_flags,
@@ -78,6 +83,15 @@ from builder.ui.modifiers_panel import (
     sync_modifiers_focus,
     update_modifiers_panel,
 )
+from builder.heightfield.sculpt_stroke import (
+    FieldUvHit,
+    SculptStrokeState,
+    SculptToolTarget,
+    apply_sculpt_stamp,
+    begin_sculpt_stroke,
+    pick_field_uv,
+    selected_sculpt_tool_target,
+)
 from builder.ui.height_layers_panel import (
     LayerFloatRow,
     LayerListRow,
@@ -85,6 +99,12 @@ from builder.ui.height_layers_panel import (
     update_height_layers_panel,
 )
 from builder.ui.mesh_panel import MeshRow, draw_mesh_panel, update_mesh_panel
+from builder.ui.sculpt_panel import (
+    SculptBrushRow,
+    SculptFloatRow,
+    draw_sculpt_panel,
+    update_sculpt_panel,
+)
 from builder.ui.outliner import (
     OutlinerRow,
     draw_outliner,
@@ -110,6 +130,7 @@ from builder.ui.theme import (
     ui_modifiers_panel_width,
     ui_outliner_panel_width,
     ui_pad,
+    ui_sculpt_panel_width,
     ui_side_panel_width,
 )
 from builder.ui.transform_bar import (
@@ -154,6 +175,7 @@ from builder.ui.widgets import (
     update_buttons,
 )
 from builder.view.viewport import Viewport
+from builder.view.viewport_ray import viewport_world_ray
 
 
 def dropped_path_string(raw: Any) -> str:
@@ -192,6 +214,8 @@ class Application:
         self.ui: UiState = UiState(status=self.application.importer.status_message())
         self.font: Font = font
         self.commands: CommandRegistry = register_commands(all_commands())
+        self.sculpt_stroke: SculptStrokeState | None = None
+        self.sculpt_hover: FieldUvHit | None = None
 
     def command_button_items(
         self, entries: tuple[CommandItem, ...]
@@ -248,6 +272,9 @@ class Application:
         height_layers_width: int = (
             ui_height_layers_panel_width if self.ui.height_layers_panel_open else 0
         )
+        sculpt_width: int = (
+            ui_sculpt_panel_width if self.ui.sculpt_panel_open else 0
+        )
         inspector_width: int = ui_inspector_panel_width if group is not None else 0
         modifiers_width: int = (
             ui_modifiers_panel_width
@@ -261,6 +288,7 @@ class Application:
             outliner_width=outliner_width,
             meshes_width=meshes_width,
             height_layers_width=height_layers_width,
+            sculpt_width=sculpt_width,
             inspector_width=inspector_width,
             modifiers_width=modifiers_width,
         )
@@ -421,6 +449,14 @@ class Application:
             )
             heightfield_group = selected_heightfield_group(self.scene.nodes)
 
+        sculpt_brush_rows: list[SculptBrushRow] = []
+        sculpt_float_rows: list[SculptFloatRow] = []
+        sculpt_buttons: list[Button] = []
+        if self.ui.sculpt_panel_open and not browser_open:
+            sculpt_brush_rows, sculpt_float_rows, sculpt_buttons = update_sculpt_panel(
+                self.ui, layout.sculpt
+            )
+
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
         modifiers_buttons: list[Button] = []
@@ -518,6 +554,10 @@ class Application:
                 and is_point_in_rect(mouse.x, mouse.y, layout.height_layers)
             )
             or (
+                self.ui.sculpt_panel_open
+                and is_point_in_rect(mouse.x, mouse.y, layout.sculpt)
+            )
+            or (
                 group is not None
                 and is_point_in_rect(mouse.x, mouse.y, layout.inspector)
             )
@@ -528,16 +568,97 @@ class Application:
             )
             or is_point_in_rect(mouse.x, mouse.y, layout.status)
         )
+        sculpting: bool = False
+        sculpt_target: SculptToolTarget | None = None
+        self.sculpt_hover = None
+        if (
+            self.ui.sculpt_panel_open
+            and heightfield_group is not None
+            and heightfield_group.heightfield is not None
+        ):
+            sculpt_target = selected_sculpt_tool_target(
+                heightfield_group, self.ui.height_layers_selected_index
+            )
+            sculpting = sculpt_target is not None
+        if sculpting and not ui_over and sculpt_target is not None:
+            assert heightfield_group is not None
+            assert heightfield_group.heightfield is not None
+            ray = viewport_world_ray(self.scene.camera, mouse)
+            hit: FieldUvHit | None = pick_field_uv(
+                self.scene.nodes,
+                self.application.heightmap_catalog,
+                self.scene.draw_cache,
+                ray,
+                heightfield_group.id,
+            )
+            self.sculpt_hover = hit
+            if is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT):
+                if hit is not None:
+                    self.sculpt_stroke = begin_sculpt_stroke(
+                        self.application.heightmap_catalog,
+                        heightfield_group.heightfield,
+                        sculpt_target,
+                        heightfield_group.id,
+                        hit.u,
+                        hit.v,
+                    )
+                    apply_sculpt_stamp(
+                        self.application.heightmap_catalog,
+                        heightfield_group.heightfield,
+                        self.sculpt_stroke,
+                        self.ui.sculpt_brush_kind,
+                        hit.u,
+                        hit.v,
+                        self.ui.sculpt_radius,
+                        self.ui.sculpt_intensity,
+                    )
+                    self.ui.status = (
+                        f"Sculpt {self.ui.sculpt_brush_kind} "
+                        f"r={self.ui.sculpt_radius:g}"
+                    )
+                else:
+                    self.ui.status = "Sculpt: miss heightfield"
+            elif (
+                is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT)
+                and self.sculpt_stroke is not None
+                and hit is not None
+            ):
+                apply_sculpt_stamp(
+                    self.application.heightmap_catalog,
+                    heightfield_group.heightfield,
+                    self.sculpt_stroke,
+                    self.ui.sculpt_brush_kind,
+                    hit.u,
+                    hit.v,
+                    self.ui.sculpt_radius,
+                    self.ui.sculpt_intensity,
+                )
+            if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
+                self.sculpt_stroke = None
+        elif self.sculpt_stroke is not None:
+            self.sculpt_stroke = None
         self.scene.handle_input(
             layout.viewport,
             ui_over,
             self.application.heightmap_catalog,
             text_focused=self.ui.focus is not None,
+            block_left_click=sculpting and not ui_over,
         )
 
         begin_drawing()
         clear_background(ui_color_bg)
-        self.scene.draw(layout.viewport, self.application.heightmap_catalog)
+        preview_center: Vector3 | None = (
+            None if self.sculpt_hover is None else self.sculpt_hover.world_point
+        )
+        preview_radius: float = (
+            self.ui.sculpt_radius if self.sculpt_hover is not None else 0.0
+        )
+        self.scene.draw(
+            layout.viewport,
+            self.application.heightmap_catalog,
+            sculpt_preview_center=preview_center,
+            sculpt_preview_radius=preview_radius,
+        )
         draw_menu_bar(self.font, layout.menu, menu_buttons)
         if snap_bar is not None:
             draw_snap_bar(self.font, self.scene.gizmo, self.ui, snap_bar, snap_buttons)
@@ -581,6 +702,15 @@ class Application:
                 height_layer_buttons,
                 height_layers_blend_label,
                 height_layers_empty,
+            )
+        if self.ui.sculpt_panel_open:
+            draw_sculpt_panel(
+                self.font,
+                layout.sculpt,
+                self.ui,
+                sculpt_brush_rows,
+                sculpt_float_rows,
+                sculpt_buttons,
             )
         if group is not None:
             draw_inspector(

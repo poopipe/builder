@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from builder.generators.param_types import FloatParam
+from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.heightfield_types import (
     CatalogHeightSource,
     HeightBlendMode,
@@ -14,6 +15,7 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightType,
 )
 from builder.heightfield.heightmap_catalog import (
+    HeightmapAsset,
     HeightmapBuffer,
     HeightmapCatalog,
     HeightmapId,
@@ -52,8 +54,8 @@ class TestSampleEditStack(unittest.TestCase):
         catalog: HeightmapCatalog = HeightmapCatalog()
         heightfield: Heightfield = Heightfield(
             base=None,
-            base_amplitude=FloatParam(1.0, label="Base Amplitude"),
-            base_offset=FloatParam(2.0, label="Base Offset"),
+            base_height_min=FloatParam(2.0, label="Height Min"),
+            base_height_max=FloatParam(3.0, label="Height Max"),
             edit_layers=(
                 HeightEditLayer(
                     name="bump",
@@ -77,14 +79,14 @@ class TestSampleEditStack(unittest.TestCase):
         catalog.buffers[heightmap_id] = HeightmapBuffer(
             width=2,
             height=1,
-            samples=(1.0, 0.0),
+            samples=[1.0, 0.0],
             sample_min=0.0,
             sample_max=1.0,
         )
         heightfield: Heightfield = Heightfield(
             base=None,
-            base_amplitude=FloatParam(1.0, label="Base Amplitude"),
-            base_offset=FloatParam(0.0, label="Base Offset"),
+            base_height_min=FloatParam(0.0, label="Height Min"),
+            base_height_max=FloatParam(1.0, label="Height Max"),
             edit_layers=(
                 HeightEditLayer(
                     name="stripe",
@@ -112,6 +114,48 @@ class TestSampleEditStack(unittest.TestCase):
         )
         self.assertAlmostEqual(clamped_at_one, 0.0)
         self.assertNotAlmostEqual(at_half, clamped_at_one)
+
+    def test_u16_texture_centered_at_zero(self) -> None:
+        """u16 0..1 remaps to -1..1; mid-grey contributes only offset"""
+        catalog: HeightmapCatalog = HeightmapCatalog()
+        heightmap_id: HeightmapId = HeightmapId("tex")
+        catalog.entries[heightmap_id] = HeightmapAsset(
+            heightmap_id=heightmap_id,
+            label="tex",
+            source_path="tex.png",
+            cache_path="tex.hraw",
+            sample_type=HeightSampleType.u16,
+            width=2,
+            height=1,
+        )
+        # left=0.5 (center), right=1.0 (full +amp)
+        catalog.buffers[heightmap_id] = HeightmapBuffer(
+            width=2,
+            height=1,
+            samples=[0.5, 1.0],
+            sample_min=0.5,
+            sample_max=1.0,
+        )
+        heightfield: Heightfield = Heightfield(
+            base=None,
+            base_height_min=FloatParam(0.0, label="Height Min"),
+            base_height_max=FloatParam(0.0, label="Height Max"),
+            edit_layers=(
+                HeightEditLayer(
+                    name="tex",
+                    height=CatalogHeightSource(heightmap_id),
+                    blend=HeightBlendMode.add,
+                    amplitude=10.0,
+                    offset=2.0,
+                ),
+            ),
+        )
+        # left half → sample 0.5 → signed 0 → offset only
+        at_mid: float = sample_height(catalog, heightfield, 0.25, 0.0)
+        self.assertAlmostEqual(at_mid, 2.0)
+        # right half → sample 1.0 → signed 1 → offset + amplitude
+        at_hi: float = sample_height(catalog, heightfield, 0.75, 0.0)
+        self.assertAlmostEqual(at_hi, 12.0)
 
 
 class TestHeightfieldSceneJson(unittest.TestCase):
