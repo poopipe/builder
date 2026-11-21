@@ -18,6 +18,8 @@ from pyray import (
     close_window,
     end_drawing,
     ffi,
+    get_fps,
+    get_frame_time,
     get_mouse_position,
     get_screen_height,
     get_screen_width,
@@ -54,6 +56,7 @@ from builder.commands.scene import (
 from builder.generators.regenerate import selected_parametric_group
 from builder.heightfield.regenerate import selected_heightfield_group
 from builder.scene.scene_types import MeshId, Node
+from builder.session_journal import log_exception
 from builder.ui.file_browser import (
     BrowserRow,
     FileBrowserCancel,
@@ -110,6 +113,27 @@ from builder.ui.transform_bar import (
     update_transform_bar,
 )
 from builder.ui.ui_state import UiState
+from builder.ui.move_bar import (
+    MoveBarRects,
+    clear_move_focus,
+    draw_move_bar,
+    layout_move_bar,
+    update_move_bar,
+)
+from builder.ui.view_distance_bar import (
+    ViewDistanceBarRects,
+    clear_view_distance_focus,
+    draw_view_distance_bar,
+    layout_view_distance_bar,
+    update_view_distance_bar,
+)
+from builder.ui.zoom_bar import (
+    ZoomBarRects,
+    clear_zoom_focus,
+    draw_zoom_bar,
+    layout_zoom_bar,
+    update_zoom_bar,
+)
 from builder.ui.widgets import (
     Button,
     LayoutRects,
@@ -157,6 +181,7 @@ class Application:
     def __init__(self, scene: Viewport, font: Font) -> None:
         self.application: ApplicationState = ApplicationState()
         self.scene: Viewport = scene
+        self.scene.nodes.journal = self.application.journal
         self.ui: UiState = UiState(status=self.application.importer.status_message())
         self.font: Font = font
         self.commands: CommandRegistry = register_commands(all_commands())
@@ -187,8 +212,10 @@ class Application:
                 if not self.application.importer.has_valid_suffix(path):
                     continue
                 try:
+                    self.application.journal.record("import_mesh", path=path)
                     import_mesh_from_path(self, path)
                 except (OSError, RuntimeError, ValueError) as exc:
+                    log_exception("dropped mesh import failed", exc)
                     self.ui.status = f"Import failed: {exc}"
                 return
             sample: str = Path(seen[0]).name if seen else "?"
@@ -244,6 +271,12 @@ class Application:
         snap_bar: SnapBarRects | None = None
         snap_buttons: list[Button] = []
         transform_bar: TransformBarRects | None = None
+        zoom_bar: ZoomBarRects | None = None
+        zoom_buttons: list[Button] = []
+        move_bar: MoveBarRects | None = None
+        move_buttons: list[Button] = []
+        view_bar: ViewDistanceBarRects | None = None
+        view_buttons: list[Button] = []
         if not browser_open:
             menu_right: float = float(ui_pad)
             if menu_buttons:
@@ -258,6 +291,33 @@ class Application:
                 snap_buttons = update_snap_bar(self.scene.gizmo, self.ui, snap_bar)
                 menu_right = (
                     snap_bar.area.x + snap_bar.area.width + float(ui_button_gap)
+                )
+            # zoom/move/view sit in the left cluster after snap; transform stays right-aligned
+            zoom_bar = layout_zoom_bar(self.font, layout.menu, menu_right)
+            if zoom_bar is None:
+                clear_zoom_focus(self.ui)
+            else:
+                zoom_buttons = update_zoom_bar(self.scene.orbit, self.ui, zoom_bar)
+                menu_right = (
+                    zoom_bar.area.x + zoom_bar.area.width + float(ui_button_gap)
+                )
+            move_bar = layout_move_bar(self.font, layout.menu, menu_right)
+            if move_bar is None:
+                clear_move_focus(self.ui)
+            else:
+                move_buttons = update_move_bar(self.scene.orbit, self.ui, move_bar)
+                menu_right = (
+                    move_bar.area.x + move_bar.area.width + float(ui_button_gap)
+                )
+            view_bar = layout_view_distance_bar(self.font, layout.menu, menu_right)
+            if view_bar is None:
+                clear_view_distance_focus(self.ui)
+            else:
+                view_buttons = update_view_distance_bar(
+                    self.scene.orbit, self.ui, view_bar
+                )
+                menu_right = (
+                    view_bar.area.x + view_bar.area.width + float(ui_button_gap)
                 )
             transform_bar = layout_transform_bar(
                 self.font,
@@ -340,6 +400,7 @@ class Application:
                 self.application.active_mesh_id,
                 scene_context=self.scene,
                 heightmap_catalog=self.application.heightmap_catalog,
+                journal=self.application.journal,
             )
             # steppers/bake replace the group node; re-read the same id so the
             # drawn group stays consistent with rows even if selection changed
@@ -356,6 +417,7 @@ class Application:
                     self.ui,
                     layout.modifiers,
                     group,
+                    journal=self.application.journal,
                 )
                 refreshed = self.scene.nodes.nodes.get(group_id)
                 if refreshed is None or (
@@ -425,11 +487,16 @@ class Application:
             )
             or is_point_in_rect(mouse.x, mouse.y, layout.status)
         )
-        self.scene.handle_input(layout.viewport, ui_over)
+        self.scene.handle_input(
+            layout.viewport,
+            ui_over,
+            self.application.heightmap_catalog,
+            text_focused=self.ui.focus is not None,
+        )
 
         begin_drawing()
         clear_background(ui_color_bg)
-        self.scene.draw(layout.viewport)
+        self.scene.draw(layout.viewport, self.application.heightmap_catalog)
         draw_menu_bar(self.font, layout.menu, menu_buttons)
         if snap_bar is not None:
             draw_snap_bar(self.font, self.scene.gizmo, self.ui, snap_bar, snap_buttons)
@@ -441,6 +508,18 @@ class Application:
                 self.scene.gizmo.mode,
                 self.scene.gizmo.space,
                 transform_bar,
+            )
+        if zoom_bar is not None:
+            draw_zoom_bar(
+                self.font, self.scene.orbit, self.ui, zoom_bar, zoom_buttons
+            )
+        if move_bar is not None:
+            draw_move_bar(
+                self.font, self.scene.orbit, self.ui, move_bar, move_buttons
+            )
+        if view_bar is not None:
+            draw_view_distance_bar(
+                self.font, self.scene.orbit, self.ui, view_bar, view_buttons
             )
         if self.ui.side_panel_open:
             draw_button_stack(self.font, layout.panel, panel_buttons)
@@ -468,7 +547,13 @@ class Application:
                     modifiers_buttons,
                     modifiers_rows,
                 )
-        draw_status_bar(self.font, layout.status, self.ui.status)
+        draw_status_bar(
+            self.font,
+            layout.status,
+            self.ui.status,
+            fps=get_fps(),
+            frame_ms=get_frame_time() * 1000.0,
+        )
         if self.ui.file_browser is not None and browser_window is not None:
             draw_file_browser(
                 self.font,
@@ -483,7 +568,11 @@ class Application:
 
     def run(self) -> None:
         while not window_should_close() and not self.application.should_close:
-            self.frame()
+            try:
+                self.frame()
+            except Exception as exc:
+                log_exception("frame failed", exc)
+                raise
 
     def shutdown(self) -> None:
         """release GPU resources owned by this session"""
@@ -509,12 +598,20 @@ def run_application() -> None:
     scene: Viewport
     try:
         scene = Viewport()
-    except RuntimeError:
+    except RuntimeError as exc:
+        log_exception("viewport init failed", exc)
         unload_app_font(font)
         close_window()
         raise
 
     app: Application = Application(scene=scene, font=font)
-    app.run()
-    app.shutdown()
-    close_window()
+    app.application.journal.begin_session()
+    try:
+        app.run()
+    except Exception as exc:
+        log_exception("application crashed", exc)
+        raise
+    finally:
+        app.application.journal.close()
+        app.shutdown()
+        close_window()

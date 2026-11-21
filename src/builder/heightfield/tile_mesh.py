@@ -13,9 +13,9 @@ from pyray import (
     upload_mesh,
 )
 
-from builder.heightfield.heightfield_types import Heightfield
+from builder.heightfield.heightfield_types import Heightfield, HeightfieldLayout
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
-from builder.heightfield.sample import sample_height
+from builder.heightfield.sample import layer_height_bounds, sample_height
 from builder.view.prepare_mesh import PreparedMesh, prepare_mesh
 
 # terrain albedo under vertex colors (default material white texture)
@@ -68,16 +68,13 @@ def terrain_vertex_color(
 def build_tile_heights(
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
+    layout: HeightfieldLayout,
     tile_x: int,
     tile_z: int,
 ) -> list[float]:
     """sample heights for one tile's vertex grid (row-major x then z)"""
-    tile_verts: int = heightfield.tile_verts.value
+    tile_verts: int = layout.tile_verts
     step: int = tile_verts - 1
-    res_x: int
-    res_z: int
-    res_x = heightfield.tiles_x.value * step + 1
-    res_z = heightfield.tiles_z.value * step + 1
     origin_i: int = tile_x * step
     origin_k: int = tile_z * step
     heights: list[float] = []
@@ -85,10 +82,10 @@ def build_tile_heights(
     local_x: int
     for local_z in range(tile_verts):
         global_z: int = origin_k + local_z
-        v: float = 0.0 if res_z <= 1 else float(global_z) / float(res_z - 1)
+        v: float = 0.0 if layout.res_z <= 1 else float(global_z) / float(layout.res_z - 1)
         for local_x in range(tile_verts):
             global_x: int = origin_i + local_x
-            u: float = 0.0 if res_x <= 1 else float(global_x) / float(res_x - 1)
+            u: float = 0.0 if layout.res_x <= 1 else float(global_x) / float(layout.res_x - 1)
             heights.append(sample_height(catalog, heightfield.layers, u, v))
     return heights
 
@@ -97,36 +94,14 @@ def field_height_range(
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
 ) -> tuple[float, float]:
-    """min/max height across all tiles for consistent vertex coloring"""
-    height_min: float = 0.0
-    height_max: float = 0.0
-    first: bool = True
-    tile_z: int
-    tile_x: int
-    for tile_z in range(heightfield.tiles_z.value):
-        for tile_x in range(heightfield.tiles_x.value):
-            heights: list[float] = build_tile_heights(
-                catalog, heightfield, tile_x, tile_z
-            )
-            if not heights:
-                continue
-            local_min: float = min(heights)
-            local_max: float = max(heights)
-            if first:
-                height_min = local_min
-                height_max = local_max
-                first = False
-            else:
-                height_min = min(height_min, local_min)
-                height_max = max(height_max, local_max)
-    if first or abs(height_max - height_min) < 1e-6:
-        return (height_min - 0.5, height_max + 0.5)
-    return (height_min, height_max)
+    """min/max world height from layer buffer bounds (not a full vert scan)"""
+    return layer_height_bounds(catalog, heightfield.layers)
 
 
 def upload_tile_mesh(
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
+    layout: HeightfieldLayout,
     tile_x: int,
     tile_z: int,
     shader: Shader,
@@ -134,21 +109,18 @@ def upload_tile_mesh(
     height_max: float,
 ) -> PreparedMesh:
     """create and upload one tile mesh in local tile space (origin at tile min xz)"""
-    tile_verts: int = heightfield.tile_verts.value
+    tile_verts: int = layout.tile_verts
     if tile_verts < 2:
         raise ValueError("tile_verts must be at least 2")
     if tile_verts * tile_verts > 65535:
         raise ValueError("tile exceeds unsigned-short index limit")
     step: int = tile_verts - 1
-    size_x: float = heightfield.size_x.value
-    size_z: float = heightfield.size_z.value
-    res_x: int = heightfield.tiles_x.value * step + 1
-    res_z: int = heightfield.tiles_z.value * step + 1
-    cell_x: float = size_x / float(res_x - 1) if res_x > 1 else size_x
-    cell_z: float = size_z / float(res_z - 1) if res_z > 1 else size_z
+    cell: float = layout.spacing
     origin_i: int = tile_x * step
     origin_k: int = tile_z * step
-    heights: list[float] = build_tile_heights(catalog, heightfield, tile_x, tile_z)
+    heights: list[float] = build_tile_heights(
+        catalog, heightfield, layout, tile_x, tile_z
+    )
 
     positions: list[float] = []
     normals: list[float] = []
@@ -160,7 +132,7 @@ def upload_tile_mesh(
         for local_x in range(tile_verts):
             y: float = heights[local_z * tile_verts + local_x]
             positions.extend(
-                [float(local_x) * cell_x, y, float(local_z) * cell_z]
+                [float(local_x) * cell, y, float(local_z) * cell]
             )
             left_x: int = max(local_x - 1, 0)
             right_x: int = min(local_x + 1, tile_verts - 1)
@@ -170,8 +142,8 @@ def upload_tile_mesh(
             h_r: float = heights[local_z * tile_verts + right_x]
             h_d: float = heights[down_z * tile_verts + local_x]
             h_u: float = heights[up_z * tile_verts + local_x]
-            span_x: float = cell_x * float(max(right_x - left_x, 1))
-            span_z: float = cell_z * float(max(up_z - down_z, 1))
+            span_x: float = cell * float(max(right_x - left_x, 1))
+            span_z: float = cell * float(max(up_z - down_z, 1))
             nx: float = -(h_r - h_l) / span_x
             ny: float = 1.0
             nz: float = -(h_u - h_d) / span_z

@@ -22,13 +22,15 @@ from builder.generators.param_types import (
     IntParam,
 )
 from builder.generators.registry import get_spec
+from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.heightfield_types import Heightfield, HeightmapLayer
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapId
+from builder.heightfield.regenerate import is_heightfield_tile_child
 from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 7
+scene_format_version: int = 10
 scene_file_suffix: str = ".scene"
 
 
@@ -42,12 +44,23 @@ class SceneUiState:
 
 
 @dataclass(frozen=True)
+class SceneCameraState:
+    """orbit camera pose persisted with a scene"""
+
+    yaw: float
+    pitch: float
+    distance: float
+    target: Vector3
+
+
+@dataclass(frozen=True)
 class SceneDocument:
     """in-memory scene file contents"""
 
     version: int
     active_mesh_id: MeshId
     ui: SceneUiState
+    camera: SceneCameraState
     meshes: tuple[MeshAsset, ...]
     heightmaps: tuple[HeightmapAsset, ...]
     nodes: tuple[Node, ...]
@@ -510,50 +523,86 @@ def heightfield_from_json(data: Any) -> Heightfield:
 
 
 def heightmap_asset_to_json(
-    asset: HeightmapAsset, relative_source: str
+    asset: HeightmapAsset,
+    relative_source: str,
+    relative_cache: str,
 ) -> dict[str, Any]:
     """encode a heightmap catalog entry"""
     return {
         "id": asset.heightmap_id.name,
         "label": asset.label,
         "source": relative_source,
+        "cache": relative_cache,
+        "sample_type": asset.sample_type.name,
+        "width": asset.width,
+        "height": asset.height,
     }
 
 
 def heightmap_asset_from_json(data: Any) -> HeightmapAsset:
-    """decode a heightmap catalog entry; source stays relative until load"""
+    """decode a heightmap catalog entry; paths stay relative until load"""
     if not isinstance(data, dict):
         raise ValueError("heightmap entry must be an object")
     map_id: Any = data.get("id")
     label: Any = data.get("label")
     source: Any = data.get("source")
+    cache: Any = data.get("cache")
+    sample_raw: Any = data.get("sample_type")
+    width_raw: Any = data.get("width")
+    height_raw: Any = data.get("height")
     if not isinstance(map_id, str) or map_id == "":
         raise ValueError("heightmap.id must be a non-empty string")
     if not isinstance(label, str) or label == "":
         raise ValueError("heightmap.label must be a non-empty string")
     if not isinstance(source, str) or source == "":
         raise ValueError("heightmap.source must be a non-empty string")
+    if not isinstance(cache, str) or cache == "":
+        raise ValueError("heightmap.cache must be a non-empty string")
+    if not isinstance(sample_raw, str) or sample_raw == "":
+        raise ValueError("heightmap.sample_type must be a non-empty string")
+    if not isinstance(width_raw, int) or width_raw <= 0:
+        raise ValueError("heightmap.width must be a positive integer")
+    if not isinstance(height_raw, int) or height_raw <= 0:
+        raise ValueError("heightmap.height must be a positive integer")
+    try:
+        sample_type: HeightSampleType = HeightSampleType[sample_raw]
+    except KeyError as exc:
+        raise ValueError(
+            f"heightmap.sample_type must be a HeightSampleType name, got {sample_raw!r}"
+        ) from exc
     return HeightmapAsset(
         heightmap_id=HeightmapId(map_id),
         label=label,
         source_path=source,
+        cache_path=cache,
+        sample_type=sample_type,
+        width=width_raw,
+        height=height_raw,
     )
 
 
 def nodes_for_save(nodes: dict[str, Node]) -> list[Node]:
-    """omit meshed children of live generator/heightfield groups; rebuilt on load
+    """omit regenerated children of live generator/heightfield groups; rebuilt on load
 
-    nested group nodes are always kept, even when parented under a generator
+    nested group nodes are always kept, even when parented under a generator.
+    heightfield tile markers (mesh-less) are omitted the same way as old tile meshes
     """
     saved: list[Node] = []
     node: Node
     for node in nodes.values():
-        if node.parent_id is not None and node.mesh_id is not None:
-            parent: Node | None = nodes.get(node.parent_id)
-            if parent is not None and (
-                parent.generator is not None or parent.heightfield is not None
-            ):
-                continue
+        if node.parent_id is None:
+            saved.append(node)
+            continue
+        parent: Node | None = nodes.get(node.parent_id)
+        if parent is None:
+            saved.append(node)
+            continue
+        if parent.heightfield is not None and is_heightfield_tile_child(
+            parent.id, node
+        ):
+            continue
+        if parent.generator is not None and node.mesh_id is not None:
+            continue
         saved.append(node)
     return saved
 
@@ -562,6 +611,7 @@ def document_to_json(
     document: SceneDocument,
     relative_sources: dict[str, str],
     heightmap_sources: dict[str, str],
+    heightmap_caches: dict[str, str],
 ) -> dict[str, Any]:
     """encode a scene document; relative_sources maps mesh id -> relative path"""
     meshes_json: list[dict[str, Any]] = []
@@ -573,11 +623,18 @@ def document_to_json(
     heightmap: HeightmapAsset
     for heightmap in document.heightmaps:
         relative_hm: str | None = heightmap_sources.get(heightmap.heightmap_id.name)
+        relative_cache: str | None = heightmap_caches.get(heightmap.heightmap_id.name)
         if relative_hm is None:
             raise ValueError(
                 f"heightmap '{heightmap.label}' has no relative source path"
             )
-        heightmaps_json.append(heightmap_asset_to_json(heightmap, relative_hm))
+        if relative_cache is None:
+            raise ValueError(
+                f"heightmap '{heightmap.label}' has no relative cache path"
+            )
+        heightmaps_json.append(
+            heightmap_asset_to_json(heightmap, relative_hm, relative_cache)
+        )
     nodes_json: list[dict[str, Any]] = [node_to_json(node) for node in document.nodes]
     return {
         "version": document.version,
@@ -586,6 +643,12 @@ def document_to_json(
             "side_panel_open": document.ui.side_panel_open,
             "meshes_panel_open": document.ui.meshes_panel_open,
             "outliner_open": document.ui.outliner_open,
+        },
+        "camera": {
+            "yaw": float(document.camera.yaw),
+            "pitch": float(document.camera.pitch),
+            "distance": float(document.camera.distance),
+            "target": vec3_to_list(document.camera.target),
         },
         "meshes": meshes_json,
         "heightmaps": heightmaps_json,
@@ -620,6 +683,21 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
         or not isinstance(outliner_open, bool)
     ):
         raise ValueError("ui panel flags must be booleans")
+    camera_raw: Any = data.get("camera")
+    if not isinstance(camera_raw, dict):
+        raise ValueError("camera must be an object")
+    yaw_raw: Any = camera_raw.get("yaw")
+    pitch_raw: Any = camera_raw.get("pitch")
+    distance_raw: Any = camera_raw.get("distance")
+    if (
+        not isinstance(yaw_raw, (int, float))
+        or not isinstance(pitch_raw, (int, float))
+        or not isinstance(distance_raw, (int, float))
+    ):
+        raise ValueError("camera yaw, pitch, and distance must be numbers")
+    if float(distance_raw) <= 0.0:
+        raise ValueError("camera distance must be positive")
+    camera_target: Vector3 = list_to_vec3(camera_raw.get("target"), "camera.target")
     meshes_raw: Any = data.get("meshes")
     heightmaps_raw: Any = data.get("heightmaps")
     nodes_raw: Any = data.get("nodes")
@@ -640,6 +718,12 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
             meshes_panel_open=meshes_open,
             outliner_open=outliner_open,
         ),
+        camera=SceneCameraState(
+            yaw=float(yaw_raw),
+            pitch=float(pitch_raw),
+            distance=float(distance_raw),
+            target=camera_target,
+        ),
         meshes=tuple(meshes),
         heightmaps=tuple(heightmaps),
         nodes=tuple(nodes),
@@ -651,10 +735,11 @@ def dumps_document(
     document: SceneDocument,
     relative_sources: dict[str, str],
     heightmap_sources: dict[str, str],
+    heightmap_caches: dict[str, str],
 ) -> str:
     """serialize a scene document to indented json text"""
     payload: dict[str, Any] = document_to_json(
-        document, relative_sources, heightmap_sources
+        document, relative_sources, heightmap_sources, heightmap_caches
     )
     return json.dumps(payload, indent=2, sort_keys=False) + "\n"
 

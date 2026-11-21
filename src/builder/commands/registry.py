@@ -8,6 +8,7 @@ from typing import Any
 
 from builder.commands.command_context import CommandContext
 from builder.commands.commands_types import CommandItem, CommandEntry
+from builder.session_journal import log_exception
 
 
 @dataclass
@@ -32,4 +33,17 @@ def register_commands(entries: Iterable[CommandItem]) -> CommandRegistry:
 
 def bind_entry(context: CommandContext, entry: CommandEntry[Any]) -> Callable[[], None]:
     """return a zero-arg callback that runs the entry's command with context and params"""
-    return lambda: entry.command.run(context, entry.params)
+
+    def run_bound() -> None:
+        context.application.journal.record(
+            "command",
+            label=entry.command.label,
+            params=entry.params,
+        )
+        try:
+            entry.command.run(context, entry.params)
+        except Exception as exc:
+            log_exception(f"command failed: {entry.command.label}", exc)
+            context.ui.status = f"Error: {exc}"
+
+    return run_bound

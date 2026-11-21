@@ -32,6 +32,7 @@ from builder.modifiers.registry import (
 )
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
+from builder.session_journal import SessionJournal
 from builder.ui.param_ui import (
     BoolControl,
     EnumControl,
@@ -147,7 +148,54 @@ def focus_modifier_control(
     ui.edit = begin_edit(format_control(control, read_control(params, control)))
 
 
-def commit_modifiers_draft(scene: Scene, ui: UiState, group: Node) -> None:
+def apply_modifier_control_edit(
+    scene: Scene,
+    group_id: str,
+    index: int,
+    params: Any,
+    control: ParamControl,
+    value: Any,
+    journal: SessionJournal | None = None,
+) -> None:
+    """write one modifier control and optionally journal the edit"""
+    if journal is not None:
+        journal.record(
+            "modifier_edit",
+            group_id=group_id,
+            modifier_index=index,
+            control=control_key(control),
+            value=value,
+        )
+    set_modifier_params(
+        scene, group_id, index, write_control(params, control, value)
+    )
+
+
+def apply_modifier_stack(
+    scene: Scene,
+    group_id: str,
+    modifiers: tuple[Modifier, ...],
+    journal: SessionJournal | None = None,
+    op: str = "set",
+) -> None:
+    """replace the modifier stack and optionally journal the change"""
+    if journal is not None:
+        journal.record(
+            "modifier_stack",
+            group_id=group_id,
+            op=op,
+            kinds=[modifier.kind for modifier in modifiers],
+            enabled=[modifier.enabled for modifier in modifiers],
+        )
+    set_generator_modifiers(scene, group_id, modifiers)
+
+
+def commit_modifiers_draft(
+    scene: Scene,
+    ui: UiState,
+    group: Node,
+    journal: SessionJournal | None = None,
+) -> None:
     """apply the typed draft to its modifier control"""
     if ui.focus is None or ui.edit is None:
         return
@@ -172,8 +220,14 @@ def commit_modifiers_draft(scene: Scene, ui: UiState, group: Node) -> None:
     parsed: Any | None = parse_control(control, ui.edit.text)
     if parsed is None:
         return
-    set_modifier_params(
-        scene, group.id, index, write_control(modifier.params, control, parsed)
+    apply_modifier_control_edit(
+        scene,
+        group.id,
+        index,
+        modifier.params,
+        control,
+        parsed,
+        journal=journal,
     )
 
 
@@ -210,6 +264,7 @@ def handle_modifiers_typing(
     ui: UiState,
     group: Node,
     keys: Sequence[str],
+    journal: SessionJournal | None = None,
 ) -> None:
     """commit on Enter, cancel on Escape, commit and step focus on Tab"""
     edit: TextEdit | None = ui.edit
@@ -228,7 +283,7 @@ def handle_modifiers_typing(
         next_key = field_after(keys, ui.focus.key, 1)
     elif action is TextAction.focus_prev:
         next_key = field_after(keys, ui.focus.key, -1)
-    commit_modifiers_draft(scene, ui, group)
+    commit_modifiers_draft(scene, ui, group, journal=journal)
     if next_key is None:
         ui.clear_focus()
         return
@@ -240,6 +295,7 @@ def update_modifiers_panel(
     ui: UiState,
     area: Rectangle,
     group: Node,
+    journal: SessionJournal | None = None,
 ) -> tuple[list[Button], list[ModifierPanelRow]]:
     """handle modifiers panel input; return buttons and row geometry"""
     generator: Generator | None = group.generator
@@ -261,7 +317,7 @@ def update_modifiers_panel(
                     continue
                 case _:
                     text_keys.append(f"mod:{mod_index}:{control_key(control)}")
-    handle_modifiers_typing(scene, ui, group, text_keys)
+    handle_modifiers_typing(scene, ui, group, text_keys, journal=journal)
 
     x: float = area.x + ui_pad
     inner_w: float = area.width - ui_pad * 2
@@ -275,18 +331,22 @@ def update_modifiers_panel(
 
     def on_add_noise() -> None:
         ui.clear_focus()
-        set_generator_modifiers(
+        apply_modifier_stack(
             scene,
             group.id,
             generator.modifiers + (make_modifier("noise_displace"),),
+            journal=journal,
+            op="add",
         )
 
     def on_add_translate() -> None:
         ui.clear_focus()
-        set_generator_modifiers(
+        apply_modifier_stack(
             scene,
             group.id,
             generator.modifiers + (make_modifier("template_translate"),),
+            journal=journal,
+            op="add",
         )
 
     buttons.append(
@@ -317,7 +377,9 @@ def update_modifiers_panel(
             ui.clear_focus()
             updated: list[Modifier] = list(generator.modifiers)
             updated[i] = replace(current, enabled=not current.enabled)
-            set_generator_modifiers(scene, group.id, tuple(updated))
+            apply_modifier_stack(
+                scene, group.id, tuple(updated), journal=journal, op="enable"
+            )
 
         def move_up(i: int = index) -> None:
             ui.clear_focus()
@@ -325,7 +387,9 @@ def update_modifiers_panel(
                 return
             updated = list(generator.modifiers)
             updated[i - 1], updated[i] = updated[i], updated[i - 1]
-            set_generator_modifiers(scene, group.id, tuple(updated))
+            apply_modifier_stack(
+                scene, group.id, tuple(updated), journal=journal, op="move_up"
+            )
 
         def move_down(i: int = index) -> None:
             ui.clear_focus()
@@ -333,13 +397,17 @@ def update_modifiers_panel(
                 return
             updated = list(generator.modifiers)
             updated[i + 1], updated[i] = updated[i], updated[i + 1]
-            set_generator_modifiers(scene, group.id, tuple(updated))
+            apply_modifier_stack(
+                scene, group.id, tuple(updated), journal=journal, op="move_down"
+            )
 
         def remove_mod(i: int = index) -> None:
             ui.clear_focus()
             updated = list(generator.modifiers)
             del updated[i]
-            set_generator_modifiers(scene, group.id, tuple(updated))
+            apply_modifier_stack(
+                scene, group.id, tuple(updated), journal=journal, op="remove"
+            )
 
         enable_rect: Rectangle = Rectangle(x, y, inner_w, row_h)
         rows.append(
@@ -392,13 +460,14 @@ def update_modifiers_panel(
                         current_bool: bool = bool(
                             read_control(modifier.params, bool_control)
                         )
-                        set_modifier_params(
+                        apply_modifier_control_edit(
                             scene,
                             group.id,
                             index,
-                            write_control(
-                                modifier.params, bool_control, not current_bool
-                            ),
+                            modifier.params,
+                            bool_control,
+                            not current_bool,
+                            journal=journal,
                         )
                 case EnumControl() as enum_control:
                     if clicked:
@@ -412,15 +481,14 @@ def update_modifiers_panel(
                         ):
                             if is_point_in_rect(mouse.x, mouse.y, option_rect):
                                 ui.clear_focus()
-                                set_modifier_params(
+                                apply_modifier_control_edit(
                                     scene,
                                     group.id,
                                     index,
-                                    write_control(
-                                        modifier.params,
-                                        enum_control,
-                                        options[option_index],
-                                    ),
+                                    modifier.params,
+                                    enum_control,
+                                    options[option_index],
+                                    journal=journal,
                                 )
                                 break
                 case (
@@ -436,15 +504,14 @@ def update_modifiers_panel(
                     ) -> None:
                         ui.clear_focus()
                         current: Any = read_control(p, c)
-                        set_modifier_params(
+                        apply_modifier_control_edit(
                             scene,
                             group.id,
                             i,
-                            write_control(
-                                p,
-                                c,
-                                float(current) - control_step(p, c),
-                            ),
+                            p,
+                            c,
+                            float(current) - control_step(p, c),
+                            journal=journal,
                         )
 
                     def step_plus(
@@ -454,15 +521,14 @@ def update_modifiers_panel(
                     ) -> None:
                         ui.clear_focus()
                         current = read_control(p, c)
-                        set_modifier_params(
+                        apply_modifier_control_edit(
                             scene,
                             group.id,
                             i,
-                            write_control(
-                                p,
-                                c,
-                                float(current) + control_step(p, c),
-                            ),
+                            p,
+                            c,
+                            float(current) + control_step(p, c),
+                            journal=journal,
                         )
 
                     buttons.append(

@@ -5,12 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pyray import (
-    PixelFormat,
-    get_image_color,
-    image_format,
-    load_image,
-    unload_image,
+from builder.heightfield.height_image_decode import (
+    DecodeHeightImage,
+    default_decode_height_image,
+    float_samples_from_decoded,
+)
+from builder.heightfield.height_image_types import (
+    DecodedHeightImage,
+    HeightSampleType,
+)
+from builder.heightfield.height_raw_cache import (
+    default_height_raw_cache_path,
+    read_height_raw_cache,
+    write_height_raw_cache,
 )
 
 
@@ -28,15 +35,21 @@ class HeightmapAsset:
     heightmap_id: HeightmapId
     label: str
     source_path: str
+    cache_path: str
+    sample_type: HeightSampleType
+    width: int
+    height: int
 
 
 @dataclass(frozen=True)
 class HeightmapBuffer:
-    """cpu luminance samples in row-major order, values in 0..1"""
+    """cpu height samples in row-major order as signed float32 values"""
 
     width: int
     height: int
     samples: tuple[float, ...]
+    sample_min: float
+    sample_max: float
 
 
 @dataclass
@@ -45,6 +58,7 @@ class HeightmapCatalog:
 
     entries: dict[HeightmapId, HeightmapAsset] = field(default_factory=dict)
     buffers: dict[HeightmapId, HeightmapBuffer] = field(default_factory=dict)
+    decode: DecodeHeightImage = field(default=default_decode_height_image)
 
 
 def register_heightmap_asset(catalog: HeightmapCatalog, asset: HeightmapAsset) -> None:
@@ -71,40 +85,92 @@ def heightmap_id_for_path(path: Path) -> HeightmapId:
     return HeightmapId(stem)
 
 
-def load_heightmap_buffer(path: Path) -> HeightmapBuffer:
-    """load an image and convert to luminance samples"""
-    image = load_image(str(path))
-    try:
-        image_format(image, PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
-        width: int = int(image.width)
-        height: int = int(image.height)
-        if width <= 0 or height <= 0:
-            raise ValueError(f"heightmap has no pixels: {path}")
-        samples: list[float] = []
-        y: int
-        x: int
-        for y in range(height):
-            for x in range(width):
-                color = get_image_color(image, x, y)
-                r: float = float(color.r) / 255.0
-                g: float = float(color.g) / 255.0
-                b: float = float(color.b) / 255.0
-                samples.append((r + g + b) / 3.0)
-        return HeightmapBuffer(width=width, height=height, samples=tuple(samples))
-    finally:
-        unload_image(image)
+def heightmap_buffer_from_samples(
+    width: int, height: int, samples: tuple[float, ...]
+) -> HeightmapBuffer:
+    """build a buffer with precomputed sample bounds"""
+    if width <= 0 or height <= 0:
+        raise ValueError("heightmap has no pixels")
+    if len(samples) != width * height:
+        raise ValueError("heightmap sample count does not match width*height")
+    sample_min: float = min(samples) if samples else 0.0
+    sample_max: float = max(samples) if samples else 0.0
+    return HeightmapBuffer(
+        width=width,
+        height=height,
+        samples=samples,
+        sample_min=sample_min,
+        sample_max=sample_max,
+    )
+
+
+def heightmap_buffer_from_decoded(image: DecodedHeightImage) -> HeightmapBuffer:
+    """build a float buffer from packed decoded samples"""
+    samples: list[float] = float_samples_from_decoded(image)
+    return heightmap_buffer_from_samples(
+        image.width, image.height, tuple(samples)
+    )
+
+
+def load_or_build_height_raw(
+    source_path: Path,
+    cache_path: Path,
+    decode: DecodeHeightImage,
+) -> DecodedHeightImage:
+    """load .hraw when present, otherwise decode source and write the cache"""
+    if cache_path.is_file():
+        return read_height_raw_cache(cache_path)
+    decoded: DecodedHeightImage = decode(source_path)
+    write_height_raw_cache(cache_path, decoded)
+    return decoded
+
+
+def import_heightmap_image(
+    catalog: HeightmapCatalog,
+    source_path: Path,
+    heightmap_id: HeightmapId,
+    label: str,
+    *,
+    cache_path: Path | None = None,
+) -> HeightmapAsset:
+    """decode source, write .hraw cache, register asset, and warm the float buffer"""
+    source: Path = source_path.resolve()
+    cache: Path = (
+        cache_path.resolve()
+        if cache_path is not None
+        else default_height_raw_cache_path(source)
+    )
+    decoded: DecodedHeightImage = catalog.decode(source)
+    write_height_raw_cache(cache, decoded)
+    asset: HeightmapAsset = HeightmapAsset(
+        heightmap_id=heightmap_id,
+        label=label,
+        source_path=str(source),
+        cache_path=str(cache),
+        sample_type=decoded.sample_type,
+        width=decoded.width,
+        height=decoded.height,
+    )
+    register_heightmap_asset(catalog, asset)
+    catalog.buffers[heightmap_id] = heightmap_buffer_from_decoded(decoded)
+    return asset
 
 
 def ensure_heightmap_buffer(
     catalog: HeightmapCatalog, heightmap_id: HeightmapId
 ) -> HeightmapBuffer | None:
-    """return a cached buffer, loading from source_path when needed"""
+    """return a cached float buffer, loading via .hraw (rebuilding if needed)"""
     existing: HeightmapBuffer | None = catalog.buffers.get(heightmap_id)
     if existing is not None:
         return existing
     asset: HeightmapAsset | None = catalog.entries.get(heightmap_id)
     if asset is None:
         return None
-    buffer: HeightmapBuffer = load_heightmap_buffer(Path(asset.source_path))
+    decoded: DecodedHeightImage = load_or_build_height_raw(
+        Path(asset.source_path),
+        Path(asset.cache_path),
+        catalog.decode,
+    )
+    buffer: HeightmapBuffer = heightmap_buffer_from_decoded(decoded)
     catalog.buffers[heightmap_id] = buffer
     return buffer

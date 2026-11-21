@@ -8,6 +8,15 @@ from builder.ui.file_browser import FileBrowserState
 from builder.ui.text_field import FieldId, TextEdit
 
 
+@dataclass(frozen=True)
+class HeightfieldSizeDraft:
+    """pending size_x/size_z edits waiting for apply"""
+
+    group_id: str
+    size_x: float
+    size_z: float
+
+
 @dataclass
 class UiState:
     """status text and panel visibility for the shell UI"""
@@ -40,6 +49,8 @@ class UiState:
     file_browser: FileBrowserState | None = None
     # group id waiting for a heightmap pick from the file browser
     heightfield_layer_target: str | None = None
+    # staged heightfield size until Apply size is pressed
+    heightfield_size_draft: HeightfieldSizeDraft | None = None
 
     def toggle_side_panel(self) -> None:
         """show or hide the context side panel"""

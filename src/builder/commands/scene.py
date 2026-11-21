@@ -17,7 +17,11 @@ from builder.generators.generator_types import (
 )
 from builder.generators.registry import default_params, get_spec
 from builder.generators.regenerate import regenerate_group
-from builder.heightfield.heightfield_types import default_heightfield
+from builder.heightfield.heightfield_types import (
+    HeightfieldLayout,
+    default_heightfield,
+    heightfield_layout,
+)
 from builder.heightfield.regenerate import regenerate_heightfield
 from builder.meshes.mesh_catalog import MeshAsset
 from builder.scene.clone import clone_subtrees
@@ -233,10 +237,10 @@ def place_heightfield(context: CommandContext, _: None) -> None:
     regenerate_heightfield(
         context.scene,
         context.application.heightmap_catalog,
-        context.scene.mesh_shader(),
         group_id,
     )
-    tiles: int = heightfield.tiles_x.value * heightfield.tiles_z.value
+    layout: HeightfieldLayout = heightfield_layout(heightfield)
+    tiles: int = layout.tiles_x * layout.tiles_z
     context.scene.set_selection([group_id])
     context.ui.status = f"Placed Heightfield ({tiles} tiles)"
 
@@ -279,11 +283,11 @@ def duplicate_selection(context: CommandContext, _: None) -> None:
     clones: list[Node]
     new_roots: list[str]
     clones, new_roots = clone_subtrees(context.scene.nodes.nodes, roots)
-    # drop cloned heightfield tile children; regenerate creates fresh meshes
+    # drop cloned heightfield tile children; regenerate recreates markers
     kept: list[Node] = []
     clone: Node
     for clone in clones:
-        if clone.parent_id in new_roots and clone.mesh_id is not None:
+        if clone.parent_id in new_roots:
             root: Node | None = next(
                 (node for node in clones if node.id == clone.parent_id), None
             )
@@ -299,7 +303,6 @@ def duplicate_selection(context: CommandContext, _: None) -> None:
         regenerate_heightfield(
             context.scene,
             context.application.heightmap_catalog,
-            context.scene.mesh_shader(),
             root_id,
         )
     context.scene.set_selection(new_roots)

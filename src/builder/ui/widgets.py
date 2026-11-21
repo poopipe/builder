@@ -362,14 +362,27 @@ def draw_button_stack(font: Font, panel: Rectangle, buttons: Sequence[Button]) -
     end_scissor_mode()
 
 
-def draw_status_bar(font: Font, rect: Rectangle, text: str) -> None:
-    """draw a single-line status bar"""
+def draw_status_bar(
+    font: Font, rect: Rectangle, text: str, *, fps: int, frame_ms: float
+) -> None:
+    """draw status text left and fps / frame time right"""
     draw_rectangle_rec(rect, ui_color_status)
+    size: float = float(ui_font_size - 2)
     draw_text_ex(
         font,
         text,
         Vector2(rect.x + ui_pad, rect.y + 4),
-        float(ui_font_size - 2),
+        size,
+        0,
+        ui_color_text,
+    )
+    timing: str = f"{fps} fps  {frame_ms:.1f} ms"
+    timing_w: float = measure_text_ex(font, timing, size, 0).x
+    draw_text_ex(
+        font,
+        timing,
+        Vector2(rect.x + rect.width - timing_w - ui_pad, rect.y + 4),
+        size,
         0,
         ui_color_text,
     )

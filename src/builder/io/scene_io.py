@@ -18,12 +18,14 @@ from builder.heightfield.regenerate import regenerate_heightfield
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.io.scene_format import (
     scene_format_version,
+    SceneCameraState,
     SceneDocument,
     SceneUiState,
     dumps_document,
     loads_document,
     nodes_for_save,
 )
+from pyray import Vector3
 from builder.meshes.mesh_catalog import (
     MeshAsset,
     MeshAssetKind,
@@ -32,6 +34,7 @@ from builder.meshes.mesh_catalog import (
     register_mesh_asset,
 )
 from builder.scene.scene_types import builtin_cube, MeshId, Node
+from builder.session_journal import log_exception
 
 
 def project_root_for_scene(scene_path: Path) -> Path:
@@ -40,9 +43,15 @@ def project_root_for_scene(scene_path: Path) -> Path:
 
 
 def relativize_path(path: Path, root: Path) -> str:
-    """return path relative to root using forward slashes"""
-    relative: Path = path.resolve().relative_to(root.resolve())
-    return relative.as_posix()
+    """return path relative to root using forward slashes; may include ..
+
+    absolute path is kept when root and path are on different drives
+    """
+    resolved: Path = path.resolve()
+    try:
+        return resolved.relative_to(root.resolve(), walk_up=True).as_posix()
+    except ValueError:
+        return resolved.as_posix()
 
 
 def resolve_project_path(root: Path, relative: str) -> Path:
@@ -52,6 +61,9 @@ def resolve_project_path(root: Path, relative: str) -> Path:
 
 def build_document(context: CommandContext) -> SceneDocument:
     """snapshot the live session into a scene document"""
+    target: Vector3 | None = context.scene.orbit.target
+    if target is None:
+        target = Vector3(0.0, 0.0, 0.0)
     return SceneDocument(
         version=scene_format_version,
         active_mesh_id=context.application.active_mesh_id,
@@ -59,6 +71,12 @@ def build_document(context: CommandContext) -> SceneDocument:
             side_panel_open=context.ui.side_panel_open,
             meshes_panel_open=context.ui.meshes_panel_open,
             outliner_open=context.ui.outliner_open,
+        ),
+        camera=SceneCameraState(
+            yaw=float(context.scene.orbit.yaw),
+            pitch=float(context.scene.orbit.pitch),
+            distance=float(context.scene.orbit.distance),
+            target=Vector3(float(target.x), float(target.y), float(target.z)),
         ),
         meshes=tuple(context.application.mesh_catalog.entries.values()),
         heightmaps=tuple(context.application.heightmap_catalog.entries.values()),
@@ -90,7 +108,7 @@ def heightmap_sources_for_save(
     document: SceneDocument,
     root: Path,
 ) -> dict[str, str]:
-    """map heightmap ids to paths relative to the scene project root"""
+    """map heightmap ids to source paths relative to the scene project root"""
     sources: dict[str, str] = {}
     asset: HeightmapAsset
     for asset in document.heightmaps:
@@ -100,6 +118,20 @@ def heightmap_sources_for_save(
     return sources
 
 
+def heightmap_caches_for_save(
+    document: SceneDocument,
+    root: Path,
+) -> dict[str, str]:
+    """map heightmap ids to .hraw cache paths relative to the scene project root"""
+    caches: dict[str, str] = {}
+    asset: HeightmapAsset
+    for asset in document.heightmaps:
+        caches[asset.heightmap_id.name] = relativize_path(
+            Path(asset.cache_path), root
+        )
+    return caches
+
+
 def save_scene_to_path(context: CommandContext, scene_path: Path) -> None:
     """write the current session to a .scene file"""
     path: Path = scene_path.resolve()
@@ -107,7 +139,10 @@ def save_scene_to_path(context: CommandContext, scene_path: Path) -> None:
     document: SceneDocument = build_document(context)
     relative_sources: dict[str, str] = relative_sources_for_save(document, root)
     heightmap_sources: dict[str, str] = heightmap_sources_for_save(document, root)
-    text: str = dumps_document(document, relative_sources, heightmap_sources)
+    heightmap_caches: dict[str, str] = heightmap_caches_for_save(document, root)
+    text: str = dumps_document(
+        document, relative_sources, heightmap_sources, heightmap_caches
+    )
     path.write_text(text, encoding="utf-8")
     context.application.scene_path = path
 
@@ -219,6 +254,9 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
                         ),
                     )
                 except (OSError, RuntimeError, ValueError) as exc:
+                    log_exception(
+                        f"scene mesh load failed: {asset.label}", exc
+                    )
                     warnings.append(
                         f"missing or invalid mesh '{asset.label}' "
                         f"({asset.source_path}): {exc}; using cube"
@@ -228,10 +266,15 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     heightmap: HeightmapAsset
     for heightmap in document.heightmaps:
         absolute_hm: Path = resolve_project_path(root, heightmap.source_path)
+        absolute_cache: Path = resolve_project_path(root, heightmap.cache_path)
         resolved: HeightmapAsset = HeightmapAsset(
             heightmap_id=heightmap.heightmap_id,
             label=heightmap.label,
             source_path=str(absolute_hm),
+            cache_path=str(absolute_cache),
+            sample_type=heightmap.sample_type,
+            width=heightmap.width,
+            height=heightmap.height,
         )
         register_heightmap_asset(context.application.heightmap_catalog, resolved)
         try:
@@ -239,6 +282,9 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
                 context.application.heightmap_catalog, heightmap.heightmap_id
             )
         except (OSError, RuntimeError, ValueError) as exc:
+            log_exception(
+                f"scene heightmap load failed: {heightmap.label}", exc
+            )
             warnings.append(
                 f"missing or invalid heightmap '{heightmap.label}' "
                 f"({heightmap.source_path}): {exc}; treating as flat"
@@ -255,16 +301,17 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
             try:
                 regenerate_group(context.scene.nodes, group.id)
             except (KeyError, ValueError) as exc:
+                log_exception(f"regenerate failed: {group.id}", exc)
                 warnings.append(f"failed to regenerate '{group.id}': {exc}")
         if group.heightfield is not None:
             try:
                 regenerate_heightfield(
                     context.scene,
                     context.application.heightmap_catalog,
-                    context.scene.mesh_shader(),
                     group.id,
                 )
             except (KeyError, ValueError, RuntimeError) as exc:
+                log_exception(f"heightfield regenerate failed: {group.id}", exc)
                 warnings.append(f"failed to regenerate heightfield '{group.id}': {exc}")
 
     active: MeshId = remap_mesh_id(document.active_mesh_id, fallbacks) or builtin_cube
@@ -277,5 +324,14 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     context.ui.side_panel_open = document.ui.side_panel_open
     context.ui.meshes_panel_open = document.ui.meshes_panel_open
     context.ui.outliner_open = document.ui.outliner_open
+    context.scene.orbit.yaw = document.camera.yaw
+    context.scene.orbit.pitch = document.camera.pitch
+    context.scene.orbit.distance = document.camera.distance
+    context.scene.orbit.target = Vector3(
+        document.camera.target.x,
+        document.camera.target.y,
+        document.camera.target.z,
+    )
+    context.scene.apply_orbit()
     context.application.scene_path = path
     return warnings

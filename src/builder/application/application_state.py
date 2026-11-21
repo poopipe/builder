@@ -9,6 +9,7 @@ from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.io.mesh_import import MeshImporter
 from builder.meshes.mesh_catalog import MeshCatalog, default_mesh_catalog
 from builder.scene.scene_types import builtin_cube, MeshId
+from builder.session_journal import SessionJournal
 from builder.ui.file_browser import FileBrowserPurpose
 
 
@@ -22,5 +23,6 @@ class ApplicationState:
     heightmap_catalog: HeightmapCatalog = field(default_factory=HeightmapCatalog)
     active_mesh_id: MeshId = builtin_cube
     scene_path: Path | None = None
+    journal: SessionJournal = field(default_factory=SessionJournal)
     # last folder opened per file-browser purpose
     browser_directories: dict[FileBrowserPurpose, Path] = field(default_factory=dict)

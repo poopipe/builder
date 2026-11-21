@@ -22,6 +22,7 @@ from pyray import (
     clear_background,
     end_mode_3d,
     end_scissor_mode,
+    get_frame_time,
     get_mouse_position,
     get_mouse_wheel_move,
     is_key_down,
@@ -31,13 +32,24 @@ from pyray import (
     rl_disable_depth_test,
     rl_draw_render_batch_active,
     rl_enable_depth_test,
+    rl_set_clip_planes,
     vector3_add,
     vector3_cross_product,
+    vector3_length,
     vector3_normalize,
     vector3_scale,
     vector3_subtract,
 )
 
+from builder.generators.regenerate import regenerate_splines_touching
+from builder.heightfield.gpu import (
+    HeightfieldGpuState,
+    create_heightfield_gpu_state,
+    draw_heightfields,
+    unload_heightfield_gpu,
+)
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.pick import HeightfieldPickHit, pick_nearest_heightfield
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.meshes.builtins import (
     make_cone,
@@ -59,7 +71,8 @@ from builder.scene.scene_types import (
     builtin_torus,
 )
 from builder.scene.selection import root_group_id
-from builder.generators.regenerate import regenerate_splines_touching
+from builder.session_journal import transform_payload
+from builder.view.draw_cache import DrawCache, clear_draw_cache
 from builder.view.gizmo import (
     GizmoState,
     apply_drag_to_scene,
@@ -74,11 +87,17 @@ from builder.view.gizmo import (
 )
 from builder.view.gizmo_types import GizmoAxis
 from builder.view.grid import draw_ground_grid
-from builder.view.draw_cache import DrawCache, clear_draw_cache
 from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
 from builder.view.mesh_table import MeshTable
-from builder.view.picking import pick_nearest_mesh_node
+from builder.view.orbit_move import (
+    dolly_move_delta,
+    fly_move_delta,
+    nudged_move_speed,
+    view_distance_default,
+    view_distance_near,
+)
+from builder.view.picking import MeshPickHit, pick_nearest_mesh_node
 from builder.view.prepare_mesh import PreparedMesh, prepare_mesh, release_prepared_mesh
 from builder.view.upload_mesh import upload_imported_mesh
 from builder.view.viewport_ray import mouse_in_rect, viewport_world_ray
@@ -92,6 +111,9 @@ class OrbitState:
     yaw: float = 45.0
     pitch: float = 30.0
     distance: float = 10.0
+    zoom_speed: float = 1.0
+    move_speed: float = 1.0
+    view_distance: float = view_distance_default
     target: Vector3 | None = None
 
     def __post_init__(self) -> None:
@@ -115,6 +137,7 @@ class Viewport:
         self.nodes: Scene = Scene()
         self.draw_cache: DrawCache = DrawCache()
         self.gizmo: GizmoState = GizmoState()
+        self.heightfield_gpu: HeightfieldGpuState | None = None
         try:
             builtins: tuple[tuple[MeshId, PreparedMesh], ...] = (
                 (builtin_cube, prepare_mesh(make_cube(), self.lighting.shader)),
@@ -133,12 +156,17 @@ class Viewport:
             prepared: PreparedMesh
             for mesh_id, prepared in builtins:
                 self.mesh_table.add(mesh_id, prepared)
+            self.heightfield_gpu = create_heightfield_gpu_state()
         except (RuntimeError, ValueError):
+            if self.heightfield_gpu is not None:
+                unload_heightfield_gpu(self.heightfield_gpu)
+                self.heightfield_gpu = None
             self.mesh_table.unload()
             self.lighting.unload()
             raise
 
         self.show_grid: bool = True
+        self.show_heightfield_wireframe: bool = False
         self.dragging_orbit: bool = False
         self.dragging_pan: bool = False
         self.last_mouse: Vector2 = Vector2(0.0, 0.0)
@@ -167,6 +195,10 @@ class Viewport:
     def toggle_grid(self) -> None:
         """toggle ground grid visibility"""
         self.show_grid = not self.show_grid
+
+    def toggle_heightfield_wireframe(self) -> None:
+        """toggle heightfield solid vs wireframe draw"""
+        self.show_heightfield_wireframe = not self.show_heightfield_wireframe
 
     def add_nodes(self, nodes: Sequence[Node]) -> None:
         """insert or replace scene nodes"""
@@ -223,11 +255,44 @@ class Viewport:
         prepared: PreparedMesh = self.mesh_table.entries.pop(from_id)
         self.mesh_table.add_or_replace(to_id, prepared)
 
-    def handle_selection_click(self, ray: Ray) -> None:
-        """select a group from a mesh hit, or clear on a miss"""
-        hit_id: str | None = pick_nearest_mesh_node(
+    def record_gizmo_commit(self, node_ids: Sequence[str]) -> None:
+        """log final local transforms after a gizmo mouse-release commit"""
+        if self.nodes.journal is None or not node_ids:
+            return
+        transforms: dict[str, dict[str, list[float]]] = {}
+        node_id: str
+        for node_id in node_ids:
+            node: Node | None = self.nodes.nodes.get(node_id)
+            if node is None:
+                continue
+            transforms[node_id] = transform_payload(node.transform)
+        self.nodes.journal.record(
+            "gizmo_commit",
+            node_ids=list(node_ids),
+            transforms=transforms,
+        )
+
+    def handle_selection_click(
+        self, ray: Ray, heightmap_catalog: HeightmapCatalog
+    ) -> None:
+        """select a group from the nearest mesh or heightfield hit, or clear"""
+        mesh_hit: MeshPickHit | None = pick_nearest_mesh_node(
             self.nodes, self.mesh_table, ray, self.draw_cache
         )
+        field_hit: HeightfieldPickHit | None = pick_nearest_heightfield(
+            self.nodes, heightmap_catalog, ray, self.draw_cache
+        )
+        hit_id: str | None = None
+        if mesh_hit is not None and field_hit is not None:
+            hit_id = (
+                mesh_hit.node_id
+                if mesh_hit.distance <= field_hit.distance
+                else field_hit.group_id
+            )
+        elif mesh_hit is not None:
+            hit_id = mesh_hit.node_id
+        elif field_hit is not None:
+            hit_id = field_hit.group_id
         if hit_id is None:
             self.clear_selection()
             return
@@ -241,8 +306,76 @@ class Viewport:
             self.nodes.set_selection([group_id])
         end_gizmo_drag(self.gizmo)
 
-    def handle_input(self, view_rect: Rectangle, ui_blocks_mouse: bool) -> None:
-        """orbit / pan / zoom / select / gizmo when the mouse is over the viewport"""
+    def fly_keys_held(self) -> bool:
+        """true if any wasd/qe fly key is down"""
+        return (
+            is_key_down(KeyboardKey.KEY_W)
+            or is_key_down(KeyboardKey.KEY_A)
+            or is_key_down(KeyboardKey.KEY_S)
+            or is_key_down(KeyboardKey.KEY_D)
+            or is_key_down(KeyboardKey.KEY_Q)
+            or is_key_down(KeyboardKey.KEY_E)
+        )
+
+    def apply_keyboard_fly(self, text_focused: bool) -> None:
+        """wasd strafe on xz, qe world up/down; skipped while typing"""
+        if text_focused:
+            return
+        move_forward: float = 0.0
+        move_right: float = 0.0
+        move_up: float = 0.0
+        if is_key_down(KeyboardKey.KEY_W):
+            move_forward += 1.0
+        if is_key_down(KeyboardKey.KEY_S):
+            move_forward -= 1.0
+        if is_key_down(KeyboardKey.KEY_D):
+            move_right += 1.0
+        if is_key_down(KeyboardKey.KEY_A):
+            move_right -= 1.0
+        if is_key_down(KeyboardKey.KEY_E):
+            move_up += 1.0
+        if is_key_down(KeyboardKey.KEY_Q):
+            move_up -= 1.0
+        if move_forward == 0.0 and move_right == 0.0 and move_up == 0.0:
+            return
+        delta: Vector3 = fly_move_delta(
+            self.orbit.yaw,
+            move_forward,
+            move_right,
+            move_up,
+            self.orbit.distance,
+            self.orbit.move_speed,
+            get_frame_time(),
+        )
+        if vector3_length(delta) < 1e-12:
+            return
+        assert self.orbit.target is not None
+        self.orbit.target = vector3_add(self.orbit.target, delta)
+        self.apply_orbit()
+
+    def apply_fly_wheel(self, text_focused: bool) -> bool:
+        """while flying, wheel nudges move_speed; true if the wheel was used"""
+        if text_focused or not self.fly_keys_held():
+            return False
+        wheel: float = get_mouse_wheel_move()
+        if wheel == 0.0:
+            return False
+        # scroll up = faster, matching + stepper
+        self.orbit.move_speed = nudged_move_speed(
+            self.orbit.move_speed, 1 if wheel > 0.0 else -1
+        )
+        return True
+
+    def handle_input(
+        self,
+        view_rect: Rectangle,
+        ui_blocks_mouse: bool,
+        heightmap_catalog: HeightmapCatalog,
+        text_focused: bool,
+    ) -> None:
+        """orbit / pan / zoom / select / gizmo; keyboard fly when not typing"""
+        self.apply_keyboard_fly(text_focused)
+        fly_used_wheel: bool = self.apply_fly_wheel(text_focused)
         mouse: Vector2 = get_mouse_position()
         over: bool = mouse_in_rect(mouse, view_rect)
         if ui_blocks_mouse or not over:
@@ -256,6 +389,7 @@ class Viewport:
                 )
                 end_gizmo_drag(self.gizmo)
                 if dragged:
+                    self.record_gizmo_commit(dragged)
                     regenerate_splines_touching(self.nodes, dragged)
             return
 
@@ -281,6 +415,7 @@ class Viewport:
             if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
                 dragged: list[str] = list(self.gizmo.drag.start_transforms.keys())
                 end_gizmo_drag(self.gizmo)
+                self.record_gizmo_commit(dragged)
                 regenerate_splines_touching(self.nodes, dragged)
             return
 
@@ -306,7 +441,7 @@ class Viewport:
                 return
 
         if is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT):
-            self.handle_selection_click(ray)
+            self.handle_selection_click(ray, heightmap_catalog)
             return
 
         if is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_RIGHT):
@@ -348,12 +483,25 @@ class Viewport:
             self.orbit.target = vector3_add(self.orbit.target, delta)
             self.apply_orbit()
 
-        wheel: float = get_mouse_wheel_move()
-        if wheel != 0.0:
-            self.orbit.distance = max(0.5, min(200.0, self.orbit.distance - wheel * 1.5))
-            self.apply_orbit()
+        if not fly_used_wheel:
+            wheel: float = get_mouse_wheel_move()
+            if wheel != 0.0:
+                look: Vector3 = vector3_subtract(
+                    self.camera.target, self.camera.position
+                )
+                dolly: Vector3 = dolly_move_delta(
+                    look,
+                    wheel,
+                    self.orbit.distance,
+                    self.orbit.zoom_speed,
+                )
+                assert self.orbit.target is not None
+                self.orbit.target = vector3_add(self.orbit.target, dolly)
+                self.apply_orbit()
 
-    def draw(self, view_rect: Rectangle) -> None:
+    def draw(
+        self, view_rect: Rectangle, heightmap_catalog: HeightmapCatalog
+    ) -> None:
         """render the 3D scene into the viewport rectangle using scissor"""
         begin_scissor_mode(
             int(view_rect.x),
@@ -364,6 +512,7 @@ class Viewport:
         clear_background(Color(24, 26, 30, 255))
 
         self.lighting.update_view_position(self.camera.position)
+        rl_set_clip_planes(view_distance_near, self.orbit.view_distance)
         begin_mode_3d(self.camera)
         if self.show_grid:
             draw_ground_grid(40, 1.0)
@@ -371,6 +520,16 @@ class Viewport:
         draw_nodes_instanced(
             self.mesh_table, self.nodes, self.draw_cache, self.lighting
         )
+        if self.heightfield_gpu is not None:
+            draw_heightfields(
+                self.heightfield_gpu,
+                heightmap_catalog,
+                self.nodes,
+                self.draw_cache,
+                self.lighting,
+                self.camera.position,
+                wireframe=self.show_heightfield_wireframe,
+            )
 
         # flush scene draws, then submit gizmos with depth off and flush again
         # before restoring depth — otherwise EndMode3D draws them with depth on
@@ -404,5 +563,8 @@ class Viewport:
         self.nodes.added_ids.clear()
         self.nodes.removed.clear()
         clear_draw_cache(self.draw_cache)
+        if self.heightfield_gpu is not None:
+            unload_heightfield_gpu(self.heightfield_gpu)
+            self.heightfield_gpu = None
         self.mesh_table.unload()
         self.lighting.unload()

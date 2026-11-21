@@ -3,3 +3,4 @@ __pycache__
 .venv
 ufbx_bridge/build/
 *.scene
+logs/

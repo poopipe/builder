@@ -11,9 +11,11 @@ from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.meshes.mesh_catalog import MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
+from builder.session_journal import SessionJournal
 from builder.ui.file_browser import FileBrowserState
 from builder.view.gizmo import GizmoState
 from builder.view.prepare_mesh import PreparedMesh
+from builder.view.viewport import OrbitState
 from pyray import Shader
 
 
@@ -21,15 +23,25 @@ class SceneContext(Protocol):
     """expose scene functions/state to commands"""
 
     show_grid: bool
+    show_heightfield_wireframe: bool
     nodes: Scene
     gizmo: GizmoState
+    orbit: OrbitState
 
     def toggle_grid(self) -> None:
         """show or hide the ground grid"""
         ...
 
+    def toggle_heightfield_wireframe(self) -> None:
+        """show or hide heightfield wireframe"""
+        ...
+
     def focus_origin(self) -> None:
         """reset the camera on the origin"""
+        ...
+
+    def apply_orbit(self) -> None:
+        """push orbit state into the live camera"""
         ...
 
     def add_nodes(self, nodes: Sequence[Node]) -> None:
@@ -106,6 +118,7 @@ class ApplicationContext(Protocol):
     heightmap_catalog: HeightmapCatalog
     active_mesh_id: MeshId
     scene_path: Path | None
+    journal: SessionJournal
 
 
 class CommandContext(Protocol):

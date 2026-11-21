@@ -6,6 +6,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from builder.scene.scene_types import MeshId, Node
+from builder.session_journal import SessionJournal
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class Scene:
     dirty_ids: set[str] = field(default_factory=set)
     added_ids: set[str] = field(default_factory=set)
     removed: list[RemovedNode] = field(default_factory=list)
+    journal: SessionJournal | None = field(default=None, repr=False)
 
     def bump_revision(self) -> None:
         """invalidate cached draw state for this scene"""
@@ -113,6 +115,12 @@ class Scene:
         """return nodes in insertion order (dict order)"""
         return list(self.nodes.values())
 
+    def record_selection(self) -> None:
+        """append current selection to the session journal when attached"""
+        if self.journal is None:
+            return
+        self.journal.record("selection", selected_ids=list(self.selected_ids))
+
     def set_selection(self, group_ids: Iterable[str]) -> None:
         """replace the selection, preserving order and dropping duplicates"""
         ordered: list[str] = []
@@ -121,10 +129,12 @@ class Scene:
             if group_id not in ordered:
                 ordered.append(group_id)
         self.selected_ids = ordered
+        self.record_selection()
 
     def clear_selection(self) -> None:
         """clear the current selection"""
         self.selected_ids.clear()
+        self.record_selection()
 
     def toggle_selection(self, group_id: str) -> None:
         """add a group id to the end of the selection, or remove it"""
@@ -132,6 +142,7 @@ class Scene:
             self.selected_ids.remove(group_id)
         else:
             self.selected_ids.append(group_id)
+        self.record_selection()
 
     def first_selected(self) -> str | None:
         """return the id that parenting treats as the target, or none"""

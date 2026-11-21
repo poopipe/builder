@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from pyray import BoundingBox, Ray, RayCollision, get_ray_collision_box
 
 from builder.scene.bounds import transform_bounding_box
@@ -12,16 +14,23 @@ from builder.view.mesh_table import MeshTable
 from builder.view.prepare_mesh import PreparedMesh
 
 
+@dataclass(frozen=True)
+class MeshPickHit:
+    """nearest meshed node hit by a ray"""
+
+    node_id: str
+    distance: float
+
+
 def pick_nearest_mesh_node(
     scene: Scene,
     mesh_table: MeshTable,
     ray: Ray,
     cache: DrawCache,
-) -> str | None:
-    """return id of the nearest meshed node hit by ray, or none"""
+) -> MeshPickHit | None:
+    """return the nearest meshed node hit by ray, or none"""
     sync_draw_cache(scene, cache)
-    best_id: str | None = None
-    best_distance: float = float("inf")
+    best: MeshPickHit | None = None
     node: Node
     for node in scene.all_nodes():
         if node.mesh_id is None:
@@ -34,7 +43,8 @@ def pick_nearest_mesh_node(
             world_matrix_for(scene, cache, node.id),
         )
         hit: RayCollision = get_ray_collision_box(ray, world_bounds)
-        if hit.hit and hit.distance < best_distance:
-            best_distance = hit.distance
-            best_id = node.id
-    return best_id
+        if not hit.hit:
+            continue
+        if best is None or hit.distance < best.distance:
+            best = MeshPickHit(node_id=node.id, distance=float(hit.distance))
+    return best
