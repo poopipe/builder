@@ -24,8 +24,15 @@ from builder.heightfield.vector.registry import (
 )
 from builder.heightfield.vector.vector_types import (
     VectorLayerRecipe,
-    VectorPointRecipe,
     VectorShapeRecipe,
+)
+from builder.path.points import (
+    child_with_role,
+    default_handle_length,
+    handle_offset_along,
+    make_path_handle,
+    make_path_point,
+    ordered_path_points,
 )
 from builder.scene.ids import new_node_id
 from builder.scene.scene_types import Node, NodeRole, transform_at
@@ -43,55 +50,61 @@ def default_shape_recipe(kind: str) -> VectorShapeRecipe:
         radius=FloatParam(
             4.0, label="Radius", step=0.25, minimum=0.1
         ),
+        grade=FloatParam(
+            1.0, label="Grade", step=0.05, minimum=0.0, maximum=1.0
+        ),
         params=default_vector_shape_params(kind),
         enabled=True,
     )
 
 
-def default_vector_point_recipe() -> VectorPointRecipe:
-    """default per-point recipe (width scale 1)"""
-    return VectorPointRecipe(
-        width_scale=FloatParam(
-            1.0, label="Width scale", step=0.05, minimum=0.05
+def default_polyline_nodes(shape_id: str) -> list[Node]:
+    """three-point open polyline with default handles"""
+    h: float = default_handle_length
+    nodes: list[Node] = []
+    nodes.extend(
+        make_path_point(
+            shape_id,
+            "Point 0",
+            Vector3(-16.0, 0.0, 0.0),
+            handle_out=Vector3(h, 0.0, 0.0),
         )
     )
-
-
-def make_vector_point(
-    parent_id: str, name: str, x: float, z: float
-) -> Node:
-    """one editable vector_point under a shape"""
-    return Node(
-        id=new_node_id(),
-        parent_id=parent_id,
-        transform=transform_at(Vector3(x, 0.0, z)),
-        mesh_id=None,
-        vector_point=default_vector_point_recipe(),
-        name=name,
-        role=NodeRole.vector_point,
+    nodes.extend(
+        make_path_point(
+            shape_id,
+            "Point 1",
+            Vector3(0.0, 0.0, 8.0),
+            handle_in=Vector3(-h, 0.0, 0.0),
+            handle_out=Vector3(h, 0.0, 0.0),
+        )
     )
-
-
-def default_polyline_nodes(shape_id: str) -> list[Node]:
-    """three-point open polyline defaults"""
-    return [
-        make_vector_point(shape_id, "Point 0", -16.0, 0.0),
-        make_vector_point(shape_id, "Point 1", 0.0, 8.0),
-        make_vector_point(shape_id, "Point 2", 16.0, 0.0),
-    ]
+    nodes.extend(
+        make_path_point(
+            shape_id,
+            "Point 2",
+            Vector3(16.0, 0.0, 0.0),
+            handle_in=Vector3(-h, 0.0, 0.0),
+        )
+    )
+    return nodes
 
 
 def default_circle_nodes(shape_id: str) -> list[Node]:
-    """center point for a circle"""
-    return [make_vector_point(shape_id, "Center", 0.0, 0.0)]
+    """center point for a circle (no handles)"""
+    return make_path_point(shape_id, "Center", Vector3(0.0, 0.0, 0.0))
 
 
 def default_rectangle_nodes(shape_id: str) -> list[Node]:
-    """two opposite corners for a rectangle"""
-    return [
-        make_vector_point(shape_id, "Corner 0", -12.0, -8.0),
-        make_vector_point(shape_id, "Corner 1", 12.0, 8.0),
-    ]
+    """two opposite corners for a rectangle (no handles)"""
+    nodes: list[Node] = []
+    nodes.extend(
+        make_path_point(shape_id, "Corner 0", Vector3(-12.0, 0.0, -8.0))
+    )
+    nodes.extend(
+        make_path_point(shape_id, "Corner 1", Vector3(12.0, 0.0, 8.0))
+    )
+    return nodes
 
 
 def default_points_for_kind(kind: str, shape_id: str) -> list[Node]:
@@ -229,6 +242,9 @@ def default_road_shape_recipe(kind: str) -> VectorShapeRecipe:
         radius=FloatParam(
             8.0, label="Width", step=0.5, minimum=0.1
         ),
+        grade=FloatParam(
+            1.0, label="Grade", step=0.05, minimum=0.0, maximum=1.0
+        ),
         params=default_vector_shape_params(kind),
         enabled=True,
     )
@@ -317,16 +333,15 @@ def add_vector_shape(
     return [shape_node, *default_points_for_kind(kind, shape_id)]
 
 
-def append_polyline_point(nodes: dict[str, Node], shape_id: str) -> Node:
-    """append one vector_point after the last, continuing the last segment"""
-    existing: list[Node] = [
-        node
-        for node in nodes.values()
-        if node.parent_id == shape_id and node.role is NodeRole.vector_point
-    ]
+def append_polyline_point(
+    nodes: dict[str, Node], shape_id: str
+) -> list[Node]:
+    """append one path_point with handles after the last, continuing the segment"""
+    existing: list[Node] = ordered_path_points(nodes, shape_id)
     count: int = len(existing)
     x: float
     z: float
+    direction: Vector3 = Vector3(16.0, 0.0, 0.0)
     if count == 0:
         x = 0.0
         z = 0.0
@@ -334,25 +349,56 @@ def append_polyline_point(nodes: dict[str, Node], shape_id: str) -> Node:
         last = existing[-1].transform.translation
         x = float(last.x) + 16.0
         z = float(last.z)
+        direction = Vector3(16.0, 0.0, 0.0)
     else:
         prev = existing[-2].transform.translation
         last = existing[-1].transform.translation
-        x = float(last.x) + (float(last.x) - float(prev.x))
-        z = float(last.z) + (float(last.z) - float(prev.z))
-    return make_vector_point(shape_id, f"Point {count}", x, z)
+        dx: float = float(last.x) - float(prev.x)
+        dz: float = float(last.z) - float(prev.z)
+        x = float(last.x) + dx
+        z = float(last.z) + dz
+        direction = Vector3(dx, 0.0, dz)
+    out_offset: Vector3 = handle_offset_along(direction)
+    in_offset: Vector3 = handle_offset_along(
+        Vector3(-float(direction.x), 0.0, -float(direction.z))
+    )
+    created: list[Node] = make_path_point(
+        shape_id,
+        f"Point {count}",
+        Vector3(x, 0.0, z),
+        handle_in=in_offset,
+        handle_out=out_offset,
+    )
+    # ensure previous open endpoint has an out handle toward the new point
+    extras: list[Node] = []
+    if count >= 1:
+        last_point: Node = existing[-1]
+        if (
+            child_with_role(nodes, last_point.id, NodeRole.path_handle_out)
+            is None
+        ):
+            extras.append(
+                make_path_handle(
+                    last_point.id,
+                    NodeRole.path_handle_out,
+                    "Out",
+                    out_offset,
+                )
+            )
+    return extras + created
 
 
 def delete_vector_points(
     nodes: dict[str, Node], point_ids: list[str]
 ) -> list[str]:
-    """return point ids that are safe to delete (role vector_point only)"""
+    """return point ids that are safe to delete (role path_point only)"""
     removable: list[str] = []
     point_id: str
     for point_id in point_ids:
         node: Node | None = nodes.get(point_id)
         if node is None:
             continue
-        if node.role is NodeRole.vector_point:
+        if node.role is NodeRole.path_point:
             removable.append(point_id)
     return removable
 

@@ -89,8 +89,12 @@ def group_display_name(node: Node) -> str:
             return get_vector_shape_spec(node.vector_shape.kind).label
         except KeyError:
             return node.vector_shape.kind
-    if node.role is NodeRole.vector_point:
+    if node.role is NodeRole.path_point:
         return "Point"
+    if node.role is NodeRole.path_handle_in:
+        return "In"
+    if node.role is NodeRole.path_handle_out:
+        return "Out"
     return "Group"
 
 

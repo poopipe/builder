@@ -37,15 +37,10 @@ class VectorShapeRecipe:
     offset: FloatParam
     intensity: FloatParam
     radius: FloatParam
+    # 0 = drape (surface + offset), 1 = grade (absolute knot ribbon)
+    grade: FloatParam
     params: object
     enabled: bool = True
-
-
-@dataclass(frozen=True)
-class VectorPointRecipe:
-    """per-point authoring data (road width scale, etc.)"""
-
-    width_scale: FloatParam
 
 
 @dataclass(frozen=True)

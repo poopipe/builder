@@ -10,6 +10,7 @@ from builder.heightfield.heightfield_types import (
     VectorRoadHeightSource,
     VectorSculptHeightSource,
 )
+from builder.path.points import path_point_width_scale
 from builder.scene.scene_types import Node, NodeRole
 from builder.scene.transforms import matrix_translation, world_matrix
 
@@ -54,11 +55,11 @@ def vector_point_xz(
     shape_id: str,
     heightfield_group_id: str,
 ) -> list[tuple[float, float]]:
-    """ordered vector_point children as heightfield-local xz"""
+    """ordered path_point children as heightfield-local xz"""
     points: list[tuple[float, float]] = []
     child: Node
     for child in ordered_child_nodes(nodes, shape_id):
-        if child.role is not NodeRole.vector_point:
+        if child.role is not NodeRole.path_point:
             continue
         local: Vector3 = node_hf_local_position(
             nodes, child.id, heightfield_group_id
@@ -72,20 +73,13 @@ def vector_point_xzy(
     shape_id: str,
     heightfield_group_id: str,
 ) -> list[tuple[float, float, float]]:
-    """ordered vector_point children as (hf-local x, z, parent-local y offset)"""
+    """ordered path_point children as (hf-local x, z, parent-local y offset)"""
     return [
         (x, z, y)
         for x, z, y, _scale in vector_point_xzyw(
             nodes, shape_id, heightfield_group_id
         )
     ]
-
-
-def vector_point_width_scale(child: Node) -> float:
-    """width scale from a vector_point recipe; default 1 when missing"""
-    if child.vector_point is None:
-        return 1.0
-    return max(0.05, float(child.vector_point.width_scale.value))
 
 
 def vector_point_xzyw(
@@ -97,7 +91,7 @@ def vector_point_xzyw(
     points: list[tuple[float, float, float, float]] = []
     child: Node
     for child in ordered_child_nodes(nodes, shape_id):
-        if child.role is not NodeRole.vector_point:
+        if child.role is not NodeRole.path_point:
             continue
         local: Vector3 = node_hf_local_position(
             nodes, child.id, heightfield_group_id
@@ -109,7 +103,7 @@ def vector_point_xzyw(
                 float(local.x),
                 float(local.z),
                 offset_y,
-                vector_point_width_scale(child),
+                path_point_width_scale(child),
             )
         )
     return points
@@ -124,7 +118,7 @@ def vector_point_entries(
     entries: list[tuple[str, float, float]] = []
     child: Node
     for child in ordered_child_nodes(nodes, shape_id):
-        if child.role is not NodeRole.vector_point:
+        if child.role is not NodeRole.path_point:
             continue
         local: Vector3 = node_hf_local_position(
             nodes, child.id, heightfield_group_id
@@ -142,7 +136,7 @@ def vector_point_entries_xzy(
     entries: list[tuple[str, float, float, float]] = []
     child: Node
     for child in ordered_child_nodes(nodes, shape_id):
-        if child.role is not NodeRole.vector_point:
+        if child.role is not NodeRole.path_point:
             continue
         local: Vector3 = node_hf_local_position(
             nodes, child.id, heightfield_group_id
@@ -202,24 +196,46 @@ def vector_road_layer_index(
     return None
 
 
-def vector_point_belongs_to_road(
+def path_point_vector_layer_id(
     nodes: dict[str, Node], point_id: str
-) -> bool:
-    """true when a vector_point sits under a road-linked vector layer"""
-    layer_id: str | None = None
-    hf_id: str | None = None
+) -> str | None:
+    """nearest vector_layer ancestor id, if any"""
     current_id: str | None = point_id
     while current_id is not None:
         node: Node | None = nodes.get(current_id)
         if node is None:
+            return None
+        if node.vector_layer is not None:
+            return current_id
+        current_id = node.parent_id
+    return None
+
+
+def path_point_belongs_to_vector_layer(
+    nodes: dict[str, Node], point_id: str
+) -> bool:
+    """true when a path_point sits under a vector layer"""
+    return path_point_vector_layer_id(nodes, point_id) is not None
+
+
+def vector_point_belongs_to_road(
+    nodes: dict[str, Node], point_id: str
+) -> bool:
+    """true when a path_point sits under a road-linked vector layer"""
+    layer_id: str | None = path_point_vector_layer_id(nodes, point_id)
+    if layer_id is None:
+        return False
+    hf_id: str | None = None
+    current_id: str | None = layer_id
+    while current_id is not None:
+        node: Node | None = nodes.get(current_id)
+        if node is None:
             return False
-        if layer_id is None and node.vector_layer is not None:
-            layer_id = current_id
         if node.heightfield is not None:
             hf_id = current_id
             break
         current_id = node.parent_id
-    if layer_id is None or hf_id is None:
+    if hf_id is None:
         return False
     hf_node: Node | None = nodes.get(hf_id)
     if hf_node is None or hf_node.heightfield is None:

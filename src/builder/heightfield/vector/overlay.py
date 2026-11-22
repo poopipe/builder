@@ -53,6 +53,7 @@ from builder.heightfield.vector.rasterize import (
     find_vector_shape_ancestor,
 )
 from builder.heightfield.vector.rectangle import rectangle_corners
+from builder.path.points import densify_path_positions
 from builder.heightfield.vector.vector_types import (
     VectorShapeRecipe,
     world_xz_to_uv,
@@ -177,7 +178,21 @@ def shape_polyline_points(
                     closed = bool(closed_param.value)
                 case _:
                     pass
-            return points, closed
+            densify_step: float = max(
+                overlay_step_metres,
+                float(recipe.radius.value) * 0.25,
+            )
+            densified = densify_path_positions(
+                nodes,
+                shape.id,
+                heightfield_group_id,
+                closed=closed,
+                step_metres=densify_step,
+            )
+            curve: list[tuple[float, float]] = [
+                (float(p.x), float(p.z)) for p in densified
+            ]
+            return curve, closed
         case "circle":
             if len(points) == 0:
                 return None

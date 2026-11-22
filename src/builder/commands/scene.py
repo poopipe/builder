@@ -24,13 +24,13 @@ from builder.heightfield.heightfield_types import (
 )
 from builder.heightfield.regenerate import regenerate_heightfield
 from builder.meshes.mesh_catalog import MeshAsset
+from builder.path.points import make_path_point
 from builder.scene.clone import clone_subtrees
 from builder.scene.ids import new_node_id
 from builder.scene.selection import subtree_ids
 from builder.scene.scene_types import (
     MeshId,
     Node,
-    NodeRole,
     transform_at,
 )
 from builder.scene.transforms import (
@@ -74,7 +74,7 @@ def build_mesh_group(
 
 
 def default_spline_controls(group_id: str) -> list[Node]:
-    """return a default open 3-point cubic bezier under group_id"""
+    """return a default open 3-point cubic path under group_id"""
     nodes: list[Node] = []
     specs: tuple[tuple[str, Vector3, Vector3 | None, Vector3 | None], ...] = (
         ("Point 0", Vector3(-4.0, 0.0, 0.0), None, Vector3(1.5, 0.0, 0.0)),
@@ -91,39 +91,15 @@ def default_spline_controls(group_id: str) -> list[Node]:
     handle_in: Vector3 | None
     handle_out: Vector3 | None
     for name, position, handle_in, handle_out in specs:
-        point_id: str = new_node_id()
-        nodes.append(
-            Node(
-                id=point_id,
-                parent_id=group_id,
-                transform=transform_at(position),
-                mesh_id=None,
-                name=name,
-                role=NodeRole.bezier_point,
+        nodes.extend(
+            make_path_point(
+                group_id,
+                name,
+                position,
+                handle_in=handle_in,
+                handle_out=handle_out,
             )
         )
-        if handle_in is not None:
-            nodes.append(
-                Node(
-                    id=new_node_id(),
-                    parent_id=point_id,
-                    transform=transform_at(handle_in),
-                    mesh_id=None,
-                    name="In",
-                    role=NodeRole.bezier_handle_in,
-                )
-            )
-        if handle_out is not None:
-            nodes.append(
-                Node(
-                    id=new_node_id(),
-                    parent_id=point_id,
-                    transform=transform_at(handle_out),
-                    mesh_id=None,
-                    name="Out",
-                    role=NodeRole.bezier_handle_out,
-                )
-            )
     return nodes
 
 

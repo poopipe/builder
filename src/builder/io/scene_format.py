@@ -49,14 +49,14 @@ from builder.heightfield.vector.registry import (
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
     VectorLayerRecipe,
-    VectorPointRecipe,
     VectorShapeRecipe,
 )
 from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
+from builder.path.path_types import PathPointRecipe
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 24
+scene_format_version: int = 26
 scene_file_suffix: str = ".scene"
 
 
@@ -453,24 +453,25 @@ def vector_shape_to_json(shape: VectorShapeRecipe) -> dict[str, Any]:
         "offset": float(shape.offset.value),
         "intensity": float(shape.intensity.value),
         "radius": float(shape.radius.value),
+        "grade": float(shape.grade.value),
         "enabled": bool(shape.enabled),
         "params": params_to_json(shape.params),
     }
 
 
-def vector_point_to_json(point: VectorPointRecipe) -> dict[str, Any]:
-    """encode a vector point recipe"""
+def path_point_to_json(point: PathPointRecipe) -> dict[str, Any]:
+    """encode a path point recipe"""
     return {"width_scale": float(point.width_scale.value)}
 
 
-def vector_point_from_json(data: Any) -> VectorPointRecipe:
-    """decode a vector point recipe"""
+def path_point_from_json(data: Any) -> PathPointRecipe:
+    """decode a path point recipe"""
     if not isinstance(data, dict):
-        raise ValueError("vector_point must be an object")
+        raise ValueError("path_point must be an object")
     scale_raw: Any = data.get("width_scale", 1.0)
     if isinstance(scale_raw, bool) or not isinstance(scale_raw, (int, float)):
-        raise ValueError("vector_point.width_scale must be a number")
-    return VectorPointRecipe(
+        raise ValueError("path_point.width_scale must be a number")
+    return PathPointRecipe(
         width_scale=FloatParam(
             float(scale_raw),
             label="Width scale",
@@ -502,6 +503,7 @@ def vector_shape_from_json(data: Any) -> VectorShapeRecipe:
     offset_raw: Any = data.get("offset")
     intensity_raw: Any = data.get("intensity")
     radius_raw: Any = data.get("radius", 4.0)
+    grade_raw: Any = data.get("grade")
     if isinstance(offset_raw, bool) or not isinstance(offset_raw, (int, float)):
         raise ValueError("vector_shape.offset must be a number")
     if isinstance(intensity_raw, bool) or not isinstance(
@@ -510,6 +512,8 @@ def vector_shape_from_json(data: Any) -> VectorShapeRecipe:
         raise ValueError("vector_shape.intensity must be a number")
     if isinstance(radius_raw, bool) or not isinstance(radius_raw, (int, float)):
         raise ValueError("vector_shape.radius must be a number")
+    if isinstance(grade_raw, bool) or not isinstance(grade_raw, (int, float)):
+        raise ValueError("vector_shape.grade must be a number")
     enabled_raw: Any = data.get("enabled", True)
     if not isinstance(enabled_raw, bool):
         raise ValueError("vector_shape.enabled must be a boolean")
@@ -518,6 +522,7 @@ def vector_shape_from_json(data: Any) -> VectorShapeRecipe:
         raise ValueError("vector_shape.params must be an object")
     spec = get_vector_shape_spec(kind_raw)
     params: Any = typed_params_from_json(spec.params_type, params_raw)
+    grade_value: float = max(0.0, min(1.0, float(grade_raw)))
 
     return VectorShapeRecipe(
         kind=kind_raw,
@@ -530,6 +535,13 @@ def vector_shape_from_json(data: Any) -> VectorShapeRecipe:
             step=0.05,
         ),
         radius=FloatParam(float(radius_raw), label="Radius", step=0.25, minimum=0.1),
+        grade=FloatParam(
+            grade_value,
+            label="Grade",
+            step=0.05,
+            minimum=0.0,
+            maximum=1.0,
+        ),
         params=params,
         enabled=enabled_raw,
     )
@@ -558,8 +570,8 @@ def node_to_json(node: Node) -> dict[str, Any]:
         payload["vector_layer"] = vector_layer_to_json(node.vector_layer)
     if node.vector_shape is not None:
         payload["vector_shape"] = vector_shape_to_json(node.vector_shape)
-    if node.vector_point is not None:
-        payload["vector_point"] = vector_point_to_json(node.vector_point)
+    if node.path_point is not None:
+        payload["path_point"] = path_point_to_json(node.path_point)
     return payload
 
 
@@ -604,9 +616,9 @@ def node_from_json(data: Any) -> Node:
     vector_shape: VectorShapeRecipe | None = None
     if "vector_shape" in data and data["vector_shape"] is not None:
         vector_shape = vector_shape_from_json(data["vector_shape"])
-    vector_point: VectorPointRecipe | None = None
-    if "vector_point" in data and data["vector_point"] is not None:
-        vector_point = vector_point_from_json(data["vector_point"])
+    path_point: PathPointRecipe | None = None
+    if "path_point" in data and data["path_point"] is not None:
+        path_point = path_point_from_json(data["path_point"])
     recipe_count: int = sum(
         1
         for flag in (
@@ -621,13 +633,18 @@ def node_from_json(data: Any) -> Node:
         raise ValueError(
             "node cannot combine generator/heightfield/vector_layer/vector_shape"
         )
-    if vector_point is not None and role is not NodeRole.vector_point:
-        raise ValueError("vector_point recipe requires role vector_point")
-    if role is NodeRole.vector_point and vector_point is None:
-        raise ValueError("vector_point role requires a vector_point recipe")
-    if vector_point is not None and recipe_count > 0:
+    if path_point is not None and role is not NodeRole.path_point:
+        raise ValueError("path_point recipe requires role path_point")
+    if role is NodeRole.path_point and path_point is None:
+        raise ValueError("path_point role requires a path_point recipe")
+    if role in (
+        NodeRole.path_handle_in,
+        NodeRole.path_handle_out,
+    ) and path_point is not None:
+        raise ValueError("path handles cannot carry a path_point recipe")
+    if path_point is not None and recipe_count > 0:
         raise ValueError(
-            "vector_point cannot combine with generator/heightfield/vector_layer/vector_shape"
+            "path_point cannot combine with generator/heightfield/vector_layer/vector_shape"
         )
     return Node(
         id=node_id,
@@ -638,7 +655,7 @@ def node_from_json(data: Any) -> Node:
         heightfield=heightfield,
         vector_layer=vector_layer,
         vector_shape=vector_shape,
-        vector_point=vector_point,
+        path_point=path_point,
         name=name_raw,
         role=role,
     )

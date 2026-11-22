@@ -26,6 +26,8 @@ from builder.heightfield.vector.polyline import PolylineShapeParams
 from builder.heightfield.vector.registry import get_vector_shape_spec
 from builder.heightfield.vector.road import (
     absolute_road_points,
+    blend_ribbon_height,
+    drape_ribbon_height,
     ribbon_half_width_circle,
     ribbon_half_width_polyline,
     ribbon_half_width_rectangle,
@@ -33,6 +35,7 @@ from builder.heightfield.vector.road import (
     ribbon_height_polyline,
     ribbon_height_rectangle,
     road_half_width_points,
+    road_offset_points,
 )
 from builder.heightfield.vector.stamp import is_flatten_brush
 from builder.heightfield.vector.vector_types import (
@@ -41,7 +44,10 @@ from builder.heightfield.vector.vector_types import (
     VectorShapeRecipe,
     world_xz_to_uv,
 )
+from builder.path.bezier import default_densify_step_metres
+from builder.path.points import densify_path_positions, densify_path_xzyw
 from builder.scene.scene_types import Node
+from pyray import Vector3
 
 
 def clear_buffer_samples(buffer: HeightmapBuffer) -> None:
@@ -136,37 +142,93 @@ def rasterize_vector_layer(
         if recipe is None or not recipe.enabled:
             continue
         spec = get_vector_shape_spec(recipe.kind)
-        points: list[tuple[float, float]] = vector_point_xz(
-            nodes, child.id, heightfield_group_id
+        closed: bool = False
+        match recipe.params:
+            case PolylineShapeParams(closed=closed_param):
+                closed = bool(closed_param.value)
+            case _:
+                closed = recipe.kind == "rectangle"
+        radius_metres: float = float(recipe.radius.value)
+        densify_step: float = max(
+            default_densify_step_metres * 0.5,
+            radius_metres * 0.25,
         )
+        points: list[tuple[float, float]]
+        if recipe.kind == "polyline":
+            densified: list[Vector3] = densify_path_positions(
+                nodes,
+                child.id,
+                heightfield_group_id,
+                closed=closed,
+                step_metres=densify_step,
+            )
+            points = [(float(p.x), float(p.z)) for p in densified]
+        else:
+            points = vector_point_xz(
+                nodes, child.id, heightfield_group_id
+            )
         flatten_target: float | None = None
         ribbon_height: RibbonHeightAtXz | None = None
         ribbon_half_width: RibbonHeightAtXz | None = None
-        radius_metres: float = float(recipe.radius.value)
         if road_metres:
-            points_xzyw: list[tuple[float, float, float, float]] = (
+            knot_xzyw: list[tuple[float, float, float, float]] = (
                 vector_point_xzyw(nodes, child.id, heightfield_group_id)
             )
-            points_xzy: list[tuple[float, float, float]] = [
-                (x, z, y) for x, z, y, _scale in points_xzyw
+            ribbon_kind: str = (
+                "polyline" if recipe.kind == "polyline" else recipe.kind
+            )
+            # grade: absolute heights from knots only
+            knot_xzy: list[tuple[float, float, float]] = [
+                (x, z, y) for x, z, y, _scale in knot_xzyw
             ]
-            points_abs: list[tuple[float, float, float]] = absolute_road_points(
-                points_xzy, surface_at_xz
+            grade_abs: list[tuple[float, float, float]] = absolute_road_points(
+                knot_xzy, surface_at_xz
             )
+            grade_fn: RibbonHeightAtXz = road_ribbon_height_fn(
+                ribbon_kind, grade_abs, closed
+            )
+            # drape: surface at query + lerped knot offsets
+            offset_xzy: list[tuple[float, float, float]] = road_offset_points(
+                knot_xzyw
+            )
+            grade_blend: float = max(
+                0.0, min(1.0, float(recipe.grade.value))
+            )
+
+            def ribbon_height_at(x: float, z: float) -> float:
+                drape: float = drape_ribbon_height(
+                    x,
+                    z,
+                    ribbon_kind,
+                    offset_xzy,
+                    closed,
+                    surface_at_xz,
+                )
+                grade: float = grade_fn(x, z)
+                return blend_ribbon_height(drape, grade, grade_blend)
+
+            ribbon_height = ribbon_height_at
+            # half-width: densify polyline for smoother scale lerp
+            width_xzyw: list[tuple[float, float, float, float]]
+            width_closed: bool = closed
+            if recipe.kind == "polyline":
+                width_xzyw = densify_path_xzyw(
+                    nodes,
+                    child.id,
+                    heightfield_group_id,
+                    closed=closed,
+                    step_metres=densify_step,
+                )
+                width_closed = False
+            else:
+                width_xzyw = knot_xzyw
             points_xzw: list[tuple[float, float, float]] = (
-                road_half_width_points(points_xzyw, radius_metres)
-            )
-            closed: bool = False
-            match recipe.params:
-                case PolylineShapeParams(closed=closed_param):
-                    closed = bool(closed_param.value)
-                case _:
-                    closed = recipe.kind == "rectangle"
-            ribbon_height = road_ribbon_height_fn(
-                recipe.kind, points_abs, closed
+                road_half_width_points(width_xzyw, radius_metres)
             )
             ribbon_half_width = road_ribbon_half_width_fn(
-                recipe.kind, points_xzw, closed
+                ribbon_kind,
+                points_xzw,
+                width_closed,
             )
             if points_xzw:
                 radius_metres = max(hw for _x, _z, hw in points_xzw)

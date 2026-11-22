@@ -5,11 +5,8 @@ from __future__ import annotations
 from pyray import (
     Transform,
     Vector3,
-    matrix_invert,
-    matrix_multiply,
     vector3_add,
     vector3_length,
-    vector3_scale,
     vector3_subtract,
 )
 
@@ -21,88 +18,18 @@ from builder.distribution.grids import (
     rotation_looking_along,
 )
 from builder.generators.generator_types import BuildContext, GeneratedSlot, SlotRole
+from builder.path.bezier import bezier_point, bezier_tangent, t_at_arc_length
+from builder.path.points import (
+    group_local_position,
+    handle_local,
+    ordered_path_points,
+)
 from builder.scene.scene_types import Node, NodeRole, transform_at
-from builder.scene.transforms import matrix_translation, world_matrix
-
-
-def bezier_point(
-    p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float
-) -> Vector3:
-    """evaluate a cubic bezier at t in [0, 1]"""
-    u: float = 1.0 - t
-    uu: float = u * u
-    tt: float = t * t
-    return vector3_add(
-        vector3_add(
-            vector3_scale(p0, uu * u),
-            vector3_scale(p1, 3.0 * uu * t),
-        ),
-        vector3_add(
-            vector3_scale(p2, 3.0 * u * tt),
-            vector3_scale(p3, tt * t),
-        ),
-    )
-
-
-def bezier_tangent(
-    p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: float
-) -> Vector3:
-    """evaluate cubic bezier derivative at t"""
-    u: float = 1.0 - t
-    return vector3_add(
-        vector3_add(
-            vector3_scale(vector3_subtract(p1, p0), 3.0 * u * u),
-            vector3_scale(vector3_subtract(p2, p1), 6.0 * u * t),
-        ),
-        vector3_scale(vector3_subtract(p3, p2), 3.0 * t * t),
-    )
-
-
-def child_with_role(
-    nodes: dict[str, Node], parent_id: str, role: NodeRole
-) -> Node | None:
-    """return the first direct child with the given role"""
-    node: Node
-    for node in nodes.values():
-        if node.parent_id == parent_id and node.role is role:
-            return node
-    return None
 
 
 def ordered_bezier_points(nodes: dict[str, Node], group_id: str) -> list[Node]:
-    """direct bezier point children, ordered by name then id"""
-    points: list[Node] = [
-        node
-        for node in nodes.values()
-        if node.parent_id == group_id and node.role is NodeRole.bezier_point
-    ]
-    points.sort(key=lambda node: (node.name, node.id))
-    return points
-
-
-def group_local_position(
-    nodes: dict[str, Node], group_id: str, node_id: str
-) -> Vector3:
-    """return a node's world position in the generator group's local space"""
-    local = matrix_multiply(
-        world_matrix(nodes, node_id),
-        matrix_invert(world_matrix(nodes, group_id)),
-    )
-    return matrix_translation(local)
-
-
-def handle_local(
-    nodes: dict[str, Node],
-    group_id: str,
-    point: Node,
-    role: NodeRole,
-    fallback: Vector3,
-) -> Vector3:
-    """return handle position in group-local space, or fallback when missing"""
-    handle: Node | None = child_with_role(nodes, point.id, role)
-    if handle is None:
-        return fallback
-    return group_local_position(nodes, group_id, handle.id)
+    """alias for ordered_path_points (insertion order)"""
+    return ordered_path_points(nodes, group_id)
 
 
 def append_spline_slot(
@@ -127,27 +54,6 @@ def append_spline_slot(
         )
         return
     slots.append(GeneratedSlot(transform_at(position), role))
-
-
-def t_at_arc_length(
-    cumulative: list[float],
-    probe_ts: list[float],
-    target: float,
-) -> float:
-    """return parameter t for a distance along the probed polyline"""
-    total: float = cumulative[-1]
-    if total <= 1e-12:
-        return 0.0
-    clamped: float = max(0.0, min(total, target))
-    index: int
-    for index in range(1, len(cumulative)):
-        if cumulative[index] >= clamped:
-            span: float = cumulative[index] - cumulative[index - 1]
-            if span < 1e-12:
-                return probe_ts[index]
-            alpha: float = (clamped - cumulative[index - 1]) / span
-            return probe_ts[index - 1] + (probe_ts[index] - probe_ts[index - 1]) * alpha
-    return probe_ts[-1]
 
 
 def sample_segment(
@@ -204,10 +110,10 @@ def spline_slots_from_context(
     spacing_height: float,
     build_from: AxisIndex,
 ) -> list[GeneratedSlot]:
-    """build stacked spline slots from bezier control children"""
+    """build stacked spline slots from path control children"""
     nodes: dict[str, Node] = dict(context.nodes)
     group_id: str = context.group_id
-    points: list[Node] = ordered_bezier_points(nodes, group_id)
+    points: list[Node] = ordered_path_points(nodes, group_id)
     if len(points) < 2:
         return []
     locals_points: list[Vector3] = [
@@ -220,11 +126,13 @@ def spline_slots_from_context(
     for point, position in zip(points, locals_points, strict=True):
         outs.append(
             handle_local(
-                nodes, group_id, point, NodeRole.bezier_handle_out, position
+                nodes, group_id, point, NodeRole.path_handle_out, position
             )
         )
         ins.append(
-            handle_local(nodes, group_id, point, NodeRole.bezier_handle_in, position)
+            handle_local(
+                nodes, group_id, point, NodeRole.path_handle_in, position
+            )
         )
 
     cylinder: AxisIndex = clamp_axis(axis)

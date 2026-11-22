@@ -147,6 +147,43 @@ def absolute_road_points(
     return result
 
 
+def road_offset_points(
+    points_xzyw: list[tuple[float, float, float, float]],
+) -> list[tuple[float, float, float]]:
+    """(x, z, offset) from path points — surface not baked in"""
+    return [(x, z, y) for x, z, y, _scale in points_xzyw]
+
+
+def drape_ribbon_height(
+    x: float,
+    z: float,
+    kind: str,
+    points_offset_xzy: list[tuple[float, float, float]],
+    closed: bool,
+    surface_at_xz: SurfaceAtXz,
+) -> float:
+    """surface at query + lerped path offset (terrain shape preserved)"""
+    offset: float
+    match kind:
+        case "circle":
+            offset = ribbon_height_circle(x, z, points_offset_xzy)
+        case "rectangle":
+            offset = ribbon_height_rectangle(x, z, points_offset_xzy)
+        case _:
+            offset = ribbon_height_polyline(
+                x, z, points_offset_xzy, closed
+            )
+    return float(surface_at_xz(x, z)) + offset
+
+
+def blend_ribbon_height(
+    drape: float, grade: float, blend: float
+) -> float:
+    """lerp drape (0) toward grade (1)"""
+    t: float = max(0.0, min(1.0, blend))
+    return drape + (grade - drape) * t
+
+
 def road_half_width_points(
     points_xzyw: list[tuple[float, float, float, float]],
     base_radius: float,

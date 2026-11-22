@@ -34,15 +34,20 @@ from builder.heightfield.vector.edit import (
     append_vector_edit_layer,
     append_vector_road_edit_layer,
     append_vector_sculpt_edit_layer,
-    default_vector_point_recipe,
     delete_vector_points,
     strip_vector_sources_from_heightfield,
 )
+from builder.path.path_types import PathPointRecipe
+from builder.path.points import default_path_point_recipe
 from builder.heightfield.vector.pick import pick_nearest_vector_point
 from builder.heightfield.vector.road import (
     absolute_road_points,
+    blend_ribbon_height,
+    drape_ribbon_height,
     nearest_segment_lerp_y,
+    ribbon_height_polyline,
     road_half_width_points,
+    road_offset_points,
 )
 from builder.heightfield.vector.stamp import (
     apply_weighted_sample,
@@ -59,7 +64,6 @@ from builder.heightfield.vector.registry import get_vector_shape_spec, vector_sh
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
     VectorLayerRecipe,
-    VectorPointRecipe,
     VectorRasterContext,
 )
 from builder.view.gizmo import snap_vector_point_translation
@@ -184,7 +188,7 @@ class TestVectorHybridLink(unittest.TestCase):
             shape_nodes = [node for node in nodes if node.vector_shape is not None]
             self.assertEqual(len(shape_nodes), 1)
             points = [
-                node for node in nodes if node.role is NodeRole.vector_point
+                node for node in nodes if node.role is NodeRole.path_point
             ]
             self.assertGreaterEqual(len(points), 2)
 
@@ -219,7 +223,7 @@ class TestVectorHybridLink(unittest.TestCase):
             before: float = max(catalog.buffers[source.heightmap_id].samples)
             # move circle center far away
             center = next(
-                n for n in new_nodes if n.role is NodeRole.vector_point
+                n for n in new_nodes if n.role is NodeRole.path_point
             )
             nodes[center.id] = replace(
                 center,
@@ -238,7 +242,7 @@ class TestVectorHybridLink(unittest.TestCase):
                 parent_id="s",
                 transform=transform_at(Vector3(0.0, 0.0, 0.0)),
                 mesh_id=None,
-                role=NodeRole.vector_point,
+                role=NodeRole.path_point,
             ),
             "g": Node(
                 id="g",
@@ -268,7 +272,7 @@ class TestVectorHybridLink(unittest.TestCase):
                 node
                 for node in nodes.values()
                 if node.parent_id == shape.id
-                and node.role is NodeRole.vector_point
+                and node.role is NodeRole.path_point
             ]
             self.assertEqual(len(before), 3)
             last = before[-1].transform.translation
@@ -279,9 +283,12 @@ class TestVectorHybridLink(unittest.TestCase):
             expected_z: float = float(last.z) + (
                 float(last.z) - float(prev.z)
             )
-            added: Node = append_polyline_point(nodes, shape.id)
+            created: list[Node] = append_polyline_point(nodes, shape.id)
+            added: Node = next(
+                node for node in created if node.role is NodeRole.path_point
+            )
             self.assertEqual(added.parent_id, shape.id)
-            self.assertIs(added.role, NodeRole.vector_point)
+            self.assertIs(added.role, NodeRole.path_point)
             self.assertEqual(added.name, "Point 3")
             self.assertAlmostEqual(
                 float(added.transform.translation.x), expected_x
@@ -289,6 +296,7 @@ class TestVectorHybridLink(unittest.TestCase):
             self.assertAlmostEqual(
                 float(added.transform.translation.z), expected_z
             )
+            self.assertGreaterEqual(len(created), 2)
 
     def test_remove_vector_layer_clears_nodes_and_source(self) -> None:
         catalog: HeightmapCatalog = HeightmapCatalog()
@@ -330,7 +338,7 @@ class TestVectorHybridLink(unittest.TestCase):
                 any(n.vector_shape is not None for n in nodes.values())
             )
             self.assertFalse(
-                any(n.role is NodeRole.vector_point for n in nodes.values())
+                any(n.role is NodeRole.path_point for n in nodes.values())
             )
 
 
@@ -372,9 +380,9 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
             )
             self.assertIsNotNone(layer_decoded.vector_layer)
             self.assertIsNotNone(shape_decoded.vector_shape)
-            self.assertEqual(scene_format_version, 24)
+            self.assertEqual(scene_format_version, 26)
 
-    def test_document_version_is_24(self) -> None:
+    def test_document_version_is_26(self) -> None:
         document: SceneDocument = SceneDocument(
             version=scene_format_version,
             active_mesh_id=builtin_cube,
@@ -400,7 +408,7 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
         )
         text: str = dumps_document(document, {}, {}, {})
         loaded, _warnings = loads_document(text)
-        self.assertEqual(loaded.version, 24)
+        self.assertEqual(loaded.version, 26)
 
 
 class TestVectorSculpt(unittest.TestCase):
@@ -648,7 +656,7 @@ class TestVectorWorkPlane(unittest.TestCase):
             parent_id="shape",
             transform=transform_at(Vector3(2.0, 7.0, -1.0)),
             mesh_id=None,
-            role=NodeRole.vector_point,
+            role=NodeRole.path_point,
         )
         snapped: Node = snap_vector_point_translation(point)
         self.assertAlmostEqual(float(snapped.transform.translation.x), 2.0)
@@ -670,7 +678,7 @@ class TestVectorWorkPlane(unittest.TestCase):
                 node
                 for node in nodes.values()
                 if node.parent_id == shape_id
-                and node.role is NodeRole.vector_point
+                and node.role is NodeRole.path_point
             )
             px: float = float(point.transform.translation.x)
             pz: float = float(point.transform.translation.z)
@@ -740,7 +748,7 @@ class TestVectorRoad(unittest.TestCase):
             point: Node = next(
                 node
                 for node in new_nodes
-                if node.role is NodeRole.vector_point
+                if node.role is NodeRole.path_point
             )
             point = replace(
                 point,
@@ -757,10 +765,10 @@ class TestVectorRoad(unittest.TestCase):
             self.assertAlmostEqual(
                 float(decoded.transform.translation.y), 4.0
             )
-            self.assertIsNotNone(decoded.vector_point)
-            assert decoded.vector_point is not None
+            self.assertIsNotNone(decoded.path_point)
+            assert decoded.path_point is not None
             self.assertAlmostEqual(
-                float(decoded.vector_point.width_scale.value), 1.0
+                float(decoded.path_point.width_scale.value), 1.0
             )
             match updated.edit_layers[0].height:
                 case VectorRoadHeightSource() as source:
@@ -842,7 +850,7 @@ class TestVectorRoad(unittest.TestCase):
             parent_id="shape",
             transform=transform_at(Vector3(1.0, 3.0, 2.0)),
             mesh_id=None,
-            role=NodeRole.vector_point,
+            role=NodeRole.path_point,
         )
         kept: Node = snap_vector_point_translation(point, allow_y=True)
         self.assertAlmostEqual(float(kept.transform.translation.y), 3.0)
@@ -875,7 +883,7 @@ class TestVectorRoad(unittest.TestCase):
             parent_id="shape1",
             transform=transform_at(Vector3(4.0, 2.0, 6.0)),
             mesh_id=None,
-            role=NodeRole.vector_point,
+            role=NodeRole.path_point,
         )
         nodes: dict[str, Node] = {
             hf.id: hf,
@@ -960,8 +968,8 @@ class TestVectorRoad(unittest.TestCase):
         self.assertAlmostEqual(samples[mid_i], target, places=1)
 
     def test_vector_point_width_scale_round_trip(self) -> None:
-        recipe: VectorPointRecipe = replace(
-            default_vector_point_recipe(),
+        recipe: PathPointRecipe = replace(
+            default_path_point_recipe(),
             width_scale=FloatParam(
                 2.5, label="Width scale", step=0.05, minimum=0.05
             ),
@@ -971,14 +979,14 @@ class TestVectorRoad(unittest.TestCase):
             parent_id="shape",
             transform=transform_at(Vector3(1.0, 0.0, 2.0)),
             mesh_id=None,
-            vector_point=recipe,
-            role=NodeRole.vector_point,
+            path_point=recipe,
+            role=NodeRole.path_point,
         )
         decoded: Node = node_from_json(node_to_json(point))
-        self.assertIsNotNone(decoded.vector_point)
-        assert decoded.vector_point is not None
+        self.assertIsNotNone(decoded.path_point)
+        assert decoded.path_point is not None
         self.assertAlmostEqual(
-            float(decoded.vector_point.width_scale.value), 2.5
+            float(decoded.path_point.width_scale.value), 2.5
         )
 
     def test_road_half_width_lerps_scales(self) -> None:
@@ -1049,6 +1057,57 @@ class TestVectorRoad(unittest.TestCase):
         right_x: int = int(right_u * width)
         wide_i: int = int(far_v * height) * width + right_x
         self.assertGreater(samples[wide_i], 0.0)
+
+    def test_grade_1_uses_knot_absolute_lerp(self) -> None:
+        def surface_at_xz(x: float, _z: float) -> float:
+            return 0.0 if x < 0.0 else 20.0
+
+        knots = [(-16.0, 0.0, 0.0, 1.0), (16.0, 0.0, 0.0, 1.0)]
+        offsets = road_offset_points(knots)
+        abs_pts = absolute_road_points(
+            [(x, z, y) for x, z, y, _s in knots], surface_at_xz
+        )
+        mid_x: float = 0.0
+        mid_z: float = 0.0
+        drape = drape_ribbon_height(
+            mid_x, mid_z, "polyline", offsets, False, surface_at_xz
+        )
+        grade = ribbon_height_polyline(mid_x, mid_z, abs_pts, False)
+        # mid surface under a step is 20 (x>=0); drape follows that
+        self.assertAlmostEqual(drape, 20.0)
+        # grade lerps knot absolutes 0 and 20 → 10
+        self.assertAlmostEqual(grade, 10.0)
+        self.assertAlmostEqual(blend_ribbon_height(drape, grade, 1.0), 10.0)
+        self.assertAlmostEqual(blend_ribbon_height(drape, grade, 0.0), 20.0)
+        self.assertAlmostEqual(blend_ribbon_height(drape, grade, 0.5), 15.0)
+
+    def test_shape_grade_round_trip(self) -> None:
+        catalog: HeightmapCatalog = HeightmapCatalog()
+        with tempfile.TemporaryDirectory() as tmp:
+            heightfield = default_heightfield()
+            updated, new_nodes = append_vector_road_edit_layer(
+                catalog,
+                heightfield,
+                "hf1",
+                cache_dir=Path(tmp),
+            )
+            shape: Node = next(
+                node for node in new_nodes if node.vector_shape is not None
+            )
+            assert shape.vector_shape is not None
+            shape = replace(
+                shape,
+                vector_shape=replace(
+                    shape.vector_shape,
+                    grade=replace(shape.vector_shape.grade, value=0.25),
+                ),
+            )
+            decoded = node_from_json(node_to_json(shape))
+            assert decoded.vector_shape is not None
+            self.assertAlmostEqual(
+                float(decoded.vector_shape.grade.value), 0.25
+            )
+            self.assertIsNotNone(updated.edit_layers)
 
 
 if __name__ == "__main__":

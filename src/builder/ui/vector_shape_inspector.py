@@ -24,12 +24,8 @@ from builder.heightfield.vector.circle import CircleShapeParams
 from builder.heightfield.vector.coords import (
     vector_layer_is_road,
     vector_point_belongs_to_road,
-    vector_point_width_scale,
 )
-from builder.heightfield.vector.edit import (
-    append_polyline_point,
-    default_vector_point_recipe,
-)
+from builder.heightfield.vector.edit import append_polyline_point
 from builder.heightfield.vector.polyline import PolylineShapeParams
 from builder.heightfield.vector.rasterize import (
     find_heightfield_group_for_descendant,
@@ -41,9 +37,10 @@ from builder.heightfield.vector.registry import get_vector_shape_spec
 from builder.heightfield.vector.stamp import is_flatten_brush
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
-    VectorPointRecipe,
     VectorShapeRecipe,
 )
+from builder.path.path_types import PathPointRecipe
+from builder.path.points import default_path_point_recipe, path_point_width_scale
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node, NodeRole
 from builder.ui.text_field import (
@@ -103,7 +100,7 @@ def selected_vector_shape_group(scene: Scene) -> Node | None:
         return None
     if node.vector_shape is not None:
         return node
-    if node.role is not NodeRole.vector_point:
+    if node.role is not NodeRole.path_point:
         return None
     shape_id: str | None = find_vector_shape_ancestor(scene.nodes, node.id)
     if shape_id is None:
@@ -132,6 +129,8 @@ def parse_shape_float(text: str) -> float | None:
 
 def clamp_shape_float(key: str, value: float) -> float:
     """clamp shape float keys to valid ranges"""
+    if key == "grade":
+        return max(0.0, min(1.0, value))
     if key in ("offset", "intensity"):
         return value
     return max(0.1, value)
@@ -162,6 +161,7 @@ def shape_float_fields(
     fields: list[ShapeFloatField] = []
     if road:
         fields.append(ShapeFloatField("intensity", "Intensity", 0.05))
+        fields.append(ShapeFloatField("grade", "Grade", 0.05))
         fields.append(ShapeFloatField("radius", "Width", 0.5))
     else:
         fields.append(ShapeFloatField("offset", "Offset", 0.25))
@@ -184,6 +184,8 @@ def read_shape_float(recipe: VectorShapeRecipe, key: str) -> float | None:
         return float(recipe.intensity.value)
     if key == "radius":
         return float(recipe.radius.value)
+    if key == "grade":
+        return float(recipe.grade.value)
     if key == "shape_radius":
         match recipe.params:
             case CircleShapeParams() as circle:
@@ -206,6 +208,8 @@ def apply_shape_float(
         )
     if key == "radius":
         return replace(recipe, radius=replace(recipe.radius, value=clamped))
+    if key == "grade":
+        return replace(recipe, grade=replace(recipe.grade, value=clamped))
     if key == "shape_radius":
         match recipe.params:
             case CircleShapeParams() as circle:
@@ -412,7 +416,7 @@ def update_vector_shape_inspector(
         point_cand: Node | None = scene.nodes.get(scene.selected_ids[0])
         if (
             point_cand is not None
-            and point_cand.role is NodeRole.vector_point
+            and point_cand.role is NodeRole.path_point
             and vector_point_belongs_to_road(scene.nodes, point_cand.id)
         ):
             road_point = point_cand
@@ -535,7 +539,7 @@ def update_vector_shape_inspector(
                     ui.clear_focus()
 
         scale_key: str = "point_width_scale"
-        scale_value: float = vector_point_width_scale(road_point)
+        scale_value: float = path_point_width_scale(road_point)
         scale_label: Rectangle = Rectangle(x, y, inner_w, float(ui_font_size))
         scale_controls_y: float = y + float(ui_font_size) + 4.0
         scale_minus: Rectangle = Rectangle(x, scale_controls_y, step_w, row_h)
@@ -568,16 +572,16 @@ def update_vector_shape_inspector(
             live_point: Node | None = scene.nodes.get(point_id)
             if live_point is None:
                 return
-            recipe: VectorPointRecipe = (
-                live_point.vector_point
-                if live_point.vector_point is not None
-                else default_vector_point_recipe()
+            recipe: PathPointRecipe = (
+                live_point.path_point
+                if live_point.path_point is not None
+                else default_path_point_recipe()
             )
             clamped: float = max(0.05, float(new_scale))
             scene.set_node(
                 replace(
                     live_point,
-                    vector_point=replace(
+                    path_point=replace(
                         recipe,
                         width_scale=replace(
                             recipe.width_scale, value=clamped
@@ -603,7 +607,7 @@ def update_vector_shape_inspector(
             if live_point is None:
                 return
             commit_point_width_scale(
-                vector_point_width_scale(live_point) - 0.05
+                path_point_width_scale(live_point) - 0.05
             )
 
         def nudge_scale_plus() -> None:
@@ -612,7 +616,7 @@ def update_vector_shape_inspector(
             if live_point is None:
                 return
             commit_point_width_scale(
-                vector_point_width_scale(live_point) + 0.05
+                path_point_width_scale(live_point) + 0.05
             )
 
         buttons.append(
@@ -767,8 +771,16 @@ def update_vector_shape_inspector(
 
             def add_point() -> None:
                 ui.clear_focus()
-                point: Node = append_polyline_point(scene.nodes, shape_node.id)
-                scene.add_nodes([point])
+                created: list[Node] = append_polyline_point(
+                    scene.nodes, shape_node.id
+                )
+                scene.add_nodes(created)
+                point_id: str = created[0].id
+                created_node: Node
+                for created_node in created:
+                    if created_node.role is NodeRole.path_point:
+                        point_id = created_node.id
+                        break
                 layer_id: str | None = find_vector_layer_ancestor(
                     scene.nodes, shape_node.id
                 )
@@ -779,7 +791,7 @@ def update_vector_shape_inspector(
                     regenerate_vector_layer_for_node(
                         catalog, scene.nodes, hf_id, layer_id
                     )
-                scene.set_selection([point.id])
+                scene.set_selection([point_id])
                 ui.status = "Added point"
 
             buttons.append(

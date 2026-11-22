@@ -13,9 +13,9 @@ if TYPE_CHECKING:
     from builder.heightfield.heightfield_types import Heightfield
     from builder.heightfield.vector.vector_types import (
         VectorLayerRecipe,
-        VectorPointRecipe,
         VectorShapeRecipe,
     )
+    from builder.path.path_types import PathPointRecipe
 
 # raylib stores quaternions as Vector4 (x, y, z, w); stubs have no Quaternion type
 type Quaternion = Vector4
@@ -30,10 +30,9 @@ class MeshId:
 
 class NodeRole(IntEnum):
     none = 0
-    bezier_point = 1
-    bezier_handle_in = 2
-    bezier_handle_out = 3
-    vector_point = 4
+    path_point = 1
+    path_handle_in = 2
+    path_handle_out = 3
 
 
 @dataclass(frozen=True)
@@ -41,9 +40,9 @@ class Node:
     """a scene node; mesh_id none means transform-only group
 
     name is a display label shown in the outliner; empty means derive one.
-    role tags control-point / handle nodes for spline generators.
+    role tags path control points / handles for splines and vector shapes.
     generator, heightfield, vector_layer, and vector_shape are mutually exclusive
-    vector_point is only valid with role=vector_point
+    path_point recipe is only valid with role=path_point
     """
 
     id: str
@@ -54,7 +53,7 @@ class Node:
     heightfield: Heightfield | None = None
     vector_layer: VectorLayerRecipe | None = None
     vector_shape: VectorShapeRecipe | None = None
-    vector_point: VectorPointRecipe | None = None
+    path_point: PathPointRecipe | None = None
     name: str = ""
     role: NodeRole = NodeRole.none
 

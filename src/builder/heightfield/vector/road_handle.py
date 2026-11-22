@@ -106,7 +106,7 @@ def pick_road_height_handle(
         return None
     point_id: str = selected_ids[0]
     point: Node | None = nodes.get(point_id)
-    if point is None or point.role is not NodeRole.vector_point:
+    if point is None or point.role is not NodeRole.path_point:
         return None
     if not vector_point_belongs_to_road(nodes, point_id):
         return None
@@ -172,7 +172,7 @@ def apply_road_height_drag(
 ) -> None:
     """update the road point local y from a vertical axis drag"""
     point: Node | None = scene.nodes.get(drag.point_id)
-    if point is None or point.role is not NodeRole.vector_point:
+    if point is None or point.role is not NodeRole.path_point:
         return
     hf_world: Matrix = world_matrix(scene.nodes, drag.heightfield_group_id)
     axis_y: float | None = ray_hit_vertical_axis_y(
