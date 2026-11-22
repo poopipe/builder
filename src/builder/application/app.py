@@ -43,6 +43,7 @@ from pyray import (
 from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandEntry, CommandItem
 from builder.commands.file import (
+    apply_export_heightmap_path,
     apply_import_heightmap_path,
     apply_import_mesh_path,
     apply_open_scene_path,
@@ -611,6 +612,8 @@ class Application:
                             apply_import_mesh_path(self, chosen)
                         case FileBrowserPurpose.import_heightmap:
                             apply_import_heightmap_path(self, chosen)
+                        case FileBrowserPurpose.export_heightmap:
+                            apply_export_heightmap_path(self, chosen)
                 case None:
                     pass
 

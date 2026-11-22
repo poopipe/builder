@@ -6,6 +6,7 @@ import struct
 from collections.abc import Callable
 from pathlib import Path
 
+from builder.heightfield.asc_height_decode import asc_decode_height_image
 from builder.heightfield.height_image_types import (
     DecodedHeightImage,
     HeightSampleType,
@@ -17,7 +18,9 @@ type DecodeHeightImage = Callable[[Path], DecodedHeightImage]
 
 
 def default_decode_height_image(path: Path) -> DecodedHeightImage:
-    """current default decoder (pillow); replace via HeightmapCatalog.decode"""
+    """dispatch by suffix: .asc → ESRI grid, else pillow image"""
+    if path.suffix.lower() == ".asc":
+        return asc_decode_height_image(path)
     return pillow_decode_height_image(path)
 
 

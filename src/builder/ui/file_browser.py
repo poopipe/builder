@@ -65,6 +65,7 @@ class FileBrowserPurpose(IntEnum):
     save_scene = 1
     import_mesh = 2
     import_heightmap = 3
+    export_heightmap = 4
 
 
 class FileBrowserCancel(IntEnum):
@@ -84,6 +85,15 @@ class BrowserEntry:
     path: Path
 
 
+def normalize_filter_suffixes(
+    filter_suffixes: str | tuple[str, ...],
+) -> tuple[str, ...]:
+    """accept a single suffix or tuple; store lowercase"""
+    if isinstance(filter_suffixes, str):
+        return (filter_suffixes.lower(),)
+    return tuple(suffix.lower() for suffix in filter_suffixes)
+
+
 @dataclass
 class FileBrowserState:
     """mutable modal file browser session"""
@@ -91,7 +101,7 @@ class FileBrowserState:
     mode: FileBrowserMode
     purpose: FileBrowserPurpose
     directory: Path
-    filter_suffix: str
+    filter_suffixes: tuple[str, ...]
     path_edit: TextEdit | None = None
     filename: str = ""
     filename_edit: TextEdit | None = None
@@ -131,6 +141,8 @@ def browser_title(purpose: FileBrowserPurpose) -> str:
             return "Import mesh"
         case FileBrowserPurpose.import_heightmap:
             return "Add heightmap"
+        case FileBrowserPurpose.export_heightmap:
+            return "Export heightmap"
 
 
 def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
@@ -144,11 +156,13 @@ def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
             return "Import"
         case FileBrowserPurpose.import_heightmap:
             return "Add"
+        case FileBrowserPurpose.export_heightmap:
+            return "Export"
 
 
 def make_open_browser(
     directory: Path,
-    filter_suffix: str,
+    filter_suffixes: str | tuple[str, ...],
     purpose: FileBrowserPurpose = FileBrowserPurpose.open_scene,
 ) -> FileBrowserState:
     """open-mode browser rooted at directory"""
@@ -156,13 +170,13 @@ def make_open_browser(
         mode=FileBrowserMode.open,
         purpose=purpose,
         directory=directory.resolve(),
-        filter_suffix=filter_suffix.lower(),
+        filter_suffixes=normalize_filter_suffixes(filter_suffixes),
     )
 
 
 def make_save_browser(
     directory: Path,
-    filter_suffix: str,
+    filter_suffixes: str | tuple[str, ...],
     initial_name: str,
     purpose: FileBrowserPurpose = FileBrowserPurpose.save_scene,
 ) -> FileBrowserState:
@@ -171,7 +185,7 @@ def make_save_browser(
         mode=FileBrowserMode.save,
         purpose=purpose,
         directory=directory.resolve(),
-        filter_suffix=filter_suffix.lower(),
+        filter_suffixes=normalize_filter_suffixes(filter_suffixes),
         filename=initial_name,
         filename_edit=begin_edit(initial_name),
     )
@@ -184,10 +198,27 @@ def make_import_browser(directory: Path, filter_suffix: str) -> FileBrowserState
     )
 
 
-def make_heightmap_browser(directory: Path, filter_suffix: str) -> FileBrowserState:
-    """open-mode browser for importing a heightmap image"""
+def make_heightmap_browser(
+    directory: Path,
+    filter_suffixes: str | tuple[str, ...] = (".png", ".asc"),
+) -> FileBrowserState:
+    """open-mode browser for importing a heightmap (.png / .asc)"""
     return make_open_browser(
-        directory, filter_suffix, purpose=FileBrowserPurpose.import_heightmap
+        directory, filter_suffixes, purpose=FileBrowserPurpose.import_heightmap
+    )
+
+
+def make_heightmap_export_browser(
+    directory: Path,
+    filter_suffix: str,
+    initial_name: str,
+) -> FileBrowserState:
+    """save-mode browser for exporting a composited heightmap"""
+    return make_save_browser(
+        directory,
+        filter_suffix,
+        initial_name,
+        purpose=FileBrowserPurpose.export_heightmap,
     )
 
 
@@ -200,8 +231,11 @@ def parent_directory(path: Path) -> Path | None:
     return parent
 
 
-def list_browser_entries(directory: Path, filter_suffix: str) -> list[BrowserEntry]:
-    """directories first, then files matching filter_suffix"""
+def list_browser_entries(
+    directory: Path, filter_suffixes: tuple[str, ...]
+) -> list[BrowserEntry]:
+    """directories first, then files matching any filter suffix"""
+    allowed: set[str] = set(filter_suffixes)
     entries: list[BrowserEntry] = []
     try:
         children: list[Path] = list(directory.iterdir())
@@ -216,7 +250,7 @@ def list_browser_entries(directory: Path, filter_suffix: str) -> list[BrowserEnt
         if is_dir:
             entries.append(BrowserEntry(name=child.name, is_dir=True, path=child))
             continue
-        if child.suffix.lower() == filter_suffix:
+        if child.suffix.lower() in allowed:
             entries.append(BrowserEntry(name=child.name, is_dir=False, path=child))
     entries.sort(key=lambda item: (not item.is_dir, item.name.lower()))
     return entries
@@ -227,6 +261,11 @@ def ensure_suffix(path: Path, suffix: str) -> Path:
     if path.suffix.lower() == suffix.lower():
         return path
     return path.with_suffix(suffix)
+
+
+def filter_suffix_label(filter_suffixes: tuple[str, ...]) -> str:
+    """human-readable suffix list for errors"""
+    return "/".join(filter_suffixes)
 
 
 def browser_window_rect(screen_w: int, screen_h: int) -> Rectangle:
@@ -262,8 +301,8 @@ def resolve_confirm_path(state: FileBrowserState) -> Path | None:
             if not path.is_file():
                 state.error = "select a file"
                 return None
-            if path.suffix.lower() != state.filter_suffix:
-                state.error = f"choose a {state.filter_suffix} file"
+            if path.suffix.lower() not in state.filter_suffixes:
+                state.error = f"choose a {filter_suffix_label(state.filter_suffixes)} file"
                 return None
             return path.resolve()
         case FileBrowserMode.save:
@@ -271,8 +310,9 @@ def resolve_confirm_path(state: FileBrowserState) -> Path | None:
             if name == "":
                 state.error = "enter a file name"
                 return None
+            primary_suffix: str = state.filter_suffixes[0]
             return ensure_suffix(
-                state.directory / name, state.filter_suffix
+                state.directory / name, primary_suffix
             ).resolve()
 
 
@@ -426,7 +466,7 @@ def update_file_browser(
 
     entries: list[BrowserEntry] = []
     try:
-        entries = list_browser_entries(state.directory, state.filter_suffix)
+        entries = list_browser_entries(state.directory, state.filter_suffixes)
     except OSError as exc:
         state.error = str(exc)
 

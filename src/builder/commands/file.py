@@ -6,12 +6,17 @@ from pathlib import Path
 
 from builder.commands.command_context import CommandContext
 from builder.commands.commands_types import Command
+from builder.heightfield.asc_height_decode import AscImportHints, asc_import_hints
+from builder.heightfield.height_export import export_composited_height
 from builder.heightfield.heightfield_types import (
     CatalogHeightSource,
     HeightBlendMode,
     HeightEditLayer,
+    Heightfield,
+    normalize_heightfield,
 )
 from builder.heightfield.heightmap_catalog import (
+    HeightmapBuffer,
     heightmap_id_for_path,
     import_heightmap_image,
 )
@@ -32,7 +37,31 @@ from builder.ui.file_browser import (
 )
 
 mesh_file_suffix: str = ".fbx"
-heightmap_file_suffix: str = ".png"
+heightmap_file_suffixes: tuple[str, ...] = (".png", ".asc")
+
+
+def apply_asc_base_import_hints(
+    heightfield: Heightfield, hints: AscImportHints
+) -> Heightfield:
+    """apply ASC cellsize world size and optional meta elevation bounds"""
+    from dataclasses import replace
+
+    updated: Heightfield = replace(
+        heightfield,
+        size_x=replace(heightfield.size_x, value=hints.size_x),
+        size_z=replace(heightfield.size_z, value=hints.size_z),
+    )
+    if hints.height_min is not None and hints.height_max is not None:
+        updated = replace(
+            updated,
+            base_height_min=replace(
+                updated.base_height_min, value=hints.height_min
+            ),
+            base_height_max=replace(
+                updated.base_height_max, value=hints.height_max
+            ),
+        )
+    return normalize_heightfield(updated)
 
 
 def remembered_browser_directory(
@@ -232,6 +261,9 @@ def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
             status_verb = "Replaced"
         elif heightfield.base is None:
             updated = replace(heightfield, base=heightmap_id)
+            if image_path.suffix.lower() == ".asc":
+                hints: AscImportHints = asc_import_hints(image_path)
+                updated = apply_asc_base_import_hints(updated, hints)
             status_verb = "Set base"
         else:
             edit_layer: HeightEditLayer = HeightEditLayer(
@@ -260,6 +292,41 @@ def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
     context.ui.status = (
         f"{status_verb} heightmap '{asset.label}' "
         f"({asset.width}x{asset.height} {asset.sample_type.name})"
+    )
+
+
+def apply_export_heightmap_path(context: CommandContext, path: Path) -> None:
+    """write composited enabled-layer heights to .asc or .png"""
+    group_id: str | None = context.ui.heightfield_layer_target
+    context.ui.heightfield_layer_target = None
+    context.ui.heightfield_layer_replace_index = None
+    context.application.journal.record(
+        "export_heightmap", path=path, group_id=group_id
+    )
+    if group_id is None:
+        context.ui.status = "No heightfield selected for export"
+        return
+    group: Node | None = context.scene.nodes.nodes.get(group_id)
+    if group is None or group.heightfield is None:
+        context.ui.status = "Heightfield no longer available"
+        return
+    export_path: Path = path.resolve()
+    try:
+        buffer: HeightmapBuffer = export_composited_height(
+            context.application.heightmap_catalog,
+            group.heightfield,
+            export_path,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        log_exception("export heightmap failed", exc)
+        context.ui.status = f"Export failed: {exc}"
+        return
+    context.application.browser_directories[FileBrowserPurpose.export_heightmap] = (
+        export_path.parent
+    )
+    context.ui.status = (
+        f"Exported heightmap {export_path.name} "
+        f"({buffer.width}x{buffer.height})"
     )
 
 

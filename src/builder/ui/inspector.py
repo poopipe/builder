@@ -932,7 +932,7 @@ def update_heightfield_inspector(
         ui.clear_focus()
         ui.heightfield_layer_target = group.id
         ui.heightfield_layer_replace_index = None
-        ui.file_browser = make_heightmap_browser(Path.cwd(), ".png")
+        ui.file_browser = make_heightmap_browser(Path.cwd())
         ui.status = (
             "Set base heightmap…"
             if heightfield.base is None
@@ -942,9 +942,9 @@ def update_heightfield_inspector(
     buttons.append(
         Button(
             label=(
-                "+ Base heightmap (.png)"
+                "+ Base heightmap (.png/.asc)"
                 if heightfield.base is None
-                else "+ Edit layer (.png)"
+                else "+ Edit layer (.png/.asc)"
             ),
             on_click=open_heightmap_browser,
             rect=Rectangle(x, y, inner_w, row_h),

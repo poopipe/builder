@@ -45,7 +45,10 @@ from builder.heightfield.regenerate import HeightfieldSceneHost, set_heightfield
 from builder.scene.scene_types import Node
 from builder.scene.selection import subtree_ids
 from builder.session_journal import SessionJournal, log_exception
-from builder.ui.file_browser import make_heightmap_browser
+from builder.ui.file_browser import (
+    make_heightmap_browser,
+    make_heightmap_export_browser,
+)
 from builder.ui.inspector import set_heightfield_edit_layers
 from builder.ui.text_field import (
     FieldId,
@@ -641,6 +644,41 @@ def update_height_layers_panel(
     )
     y += row_h + ui_button_gap
 
+    def export_asc() -> None:
+        ui.clear_focus()
+        ui.heightfield_layer_target = group_id
+        ui.heightfield_layer_replace_index = None
+        ui.file_browser = make_heightmap_export_browser(
+            Path.cwd(), ".asc", "height.asc"
+        )
+        ui.status = "Export composited height (.asc)…"
+
+    def export_png() -> None:
+        ui.clear_focus()
+        ui.heightfield_layer_target = group_id
+        ui.heightfield_layer_replace_index = None
+        ui.file_browser = make_heightmap_export_browser(
+            Path.cwd(), ".png", "height.png"
+        )
+        ui.status = "Export composited height (.png)…"
+
+    buttons.append(
+        Button(
+            label="Export .asc…",
+            on_click=export_asc,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="Export .png…",
+            on_click=export_png,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+
     selected_index: int | None = ui.height_layers_selected_index
     if selected_index is not None and (
         selected_index < 0 or selected_index >= len(heightfield.edit_layers)
@@ -989,7 +1027,7 @@ def update_height_layers_panel(
                 ui.clear_focus()
                 ui.heightfield_layer_target = group_id
                 ui.heightfield_layer_replace_index = selected_index
-                ui.file_browser = make_heightmap_browser(Path.cwd(), ".png")
+                ui.file_browser = make_heightmap_browser(Path.cwd())
                 ui.status = "Replace layer heightmap…"
 
             buttons.append(
