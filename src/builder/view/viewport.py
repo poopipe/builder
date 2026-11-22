@@ -51,6 +51,22 @@ from builder.heightfield.gpu import (
 from builder.heightfield.sculpt_stroke import draw_sculpt_brush_preview
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.heightfield.pick import HeightfieldPickHit, pick_nearest_heightfield
+from builder.heightfield.vector.circle_handle import (
+    CircleRadiusDrag,
+    apply_circle_radius_drag,
+    pick_circle_radius_handle,
+)
+from builder.heightfield.vector.overlay import draw_vector_overlays
+from builder.heightfield.vector.pick import (
+    VectorPointPickHit,
+    pick_nearest_vector_point,
+)
+from builder.heightfield.vector.rasterize import regenerate_vectors_touching
+from builder.heightfield.vector.road_handle import (
+    RoadHeightDrag,
+    apply_road_height_drag,
+    pick_road_height_handle,
+)
 from builder.io.mesh_import import ImportedMesh, mesh_id_for_import
 from builder.meshes.builtins import (
     make_cone,
@@ -80,11 +96,13 @@ from builder.view.gizmo import (
     begin_gizmo_drag,
     draw_gizmo,
     end_gizmo_drag,
+    filter_gizmo_axes_for_selection,
     gizmo_axis_directions,
     gizmo_size,
     hit_test_gizmo,
     selection_pivot,
     selection_rotation,
+    snap_vector_points_to_plane,
 )
 from builder.view.gizmo_types import GizmoAxis
 from builder.view.grid import draw_ground_grid
@@ -113,7 +131,7 @@ class OrbitState:
     pitch: float = 30.0
     distance: float = 10.0
     zoom_speed: float = 1.0
-    move_speed: float = 1.0
+    move_speed: float = 100.0
     view_distance: float = view_distance_default
     target: Vector3 | None = None
 
@@ -170,6 +188,8 @@ class Viewport:
         self.show_heightfield_wireframe: bool = False
         self.dragging_orbit: bool = False
         self.dragging_pan: bool = False
+        self.circle_radius_drag: CircleRadiusDrag | None = None
+        self.road_height_drag: RoadHeightDrag | None = None
         self.last_mouse: Vector2 = Vector2(0.0, 0.0)
 
     def apply_orbit(self) -> None:
@@ -274,37 +294,54 @@ class Viewport:
         )
 
     def handle_selection_click(
-        self, ray: Ray, heightmap_catalog: HeightmapCatalog
+        self,
+        ray: Ray,
+        heightmap_catalog: HeightmapCatalog,
+        viewport_height_px: float,
     ) -> None:
-        """select a group from the nearest mesh or heightfield hit, or clear"""
+        """select a vector point, group from mesh/heightfield hit, or clear"""
+        additive: bool = is_key_down(KeyboardKey.KEY_LEFT_CONTROL) or is_key_down(
+            KeyboardKey.KEY_RIGHT_CONTROL
+        )
+        point_hit: VectorPointPickHit | None = pick_nearest_vector_point(
+            self.nodes.nodes,
+            ray,
+            self.camera,
+            viewport_height_px,
+        )
         mesh_hit: MeshPickHit | None = pick_nearest_mesh_node(
             self.nodes, self.mesh_table, ray, self.draw_cache
         )
         field_hit: HeightfieldPickHit | None = pick_nearest_heightfield(
             self.nodes, heightmap_catalog, ray, self.draw_cache
         )
+        # point cubes beat the heightfield volume aabb; only lose to a closer mesh
         hit_id: str | None = None
-        if mesh_hit is not None and field_hit is not None:
-            hit_id = (
-                mesh_hit.node_id
-                if mesh_hit.distance <= field_hit.distance
-                else field_hit.group_id
-            )
-        elif mesh_hit is not None:
-            hit_id = mesh_hit.node_id
-        elif field_hit is not None:
-            hit_id = field_hit.group_id
+        select_as_group: bool = True
+        if point_hit is not None and (
+            mesh_hit is None or point_hit.distance <= mesh_hit.distance
+        ):
+            hit_id = point_hit.point_id
+            select_as_group = False
+        else:
+            best_distance: float = float("inf")
+            if mesh_hit is not None:
+                best_distance = mesh_hit.distance
+                hit_id = mesh_hit.node_id
+                select_as_group = True
+            if field_hit is not None and field_hit.distance < best_distance:
+                hit_id = field_hit.group_id
+                select_as_group = True
         if hit_id is None:
             self.clear_selection()
             return
-        group_id: str = root_group_id(self.nodes.nodes, hit_id)
-        additive: bool = is_key_down(KeyboardKey.KEY_LEFT_CONTROL) or is_key_down(
-            KeyboardKey.KEY_RIGHT_CONTROL
+        selected_id: str = (
+            root_group_id(self.nodes.nodes, hit_id) if select_as_group else hit_id
         )
         if additive:
-            self.nodes.toggle_selection(group_id)
+            self.nodes.toggle_selection(selected_id)
         else:
-            self.nodes.set_selection([group_id])
+            self.nodes.set_selection([selected_id])
         end_gizmo_drag(self.gizmo)
 
     def fly_keys_held(self) -> bool:
@@ -390,13 +427,72 @@ class Viewport:
                     if self.gizmo.drag is not None
                     else []
                 )
+                radius_shape_ids: list[str] = (
+                    [self.circle_radius_drag.shape_id]
+                    if self.circle_radius_drag is not None
+                    else []
+                )
+                road_point_ids: list[str] = (
+                    [self.road_height_drag.point_id]
+                    if self.road_height_drag is not None
+                    else []
+                )
+                if dragged:
+                    snap_vector_points_to_plane(self.nodes, dragged)
                 end_gizmo_drag(self.gizmo)
+                self.circle_radius_drag = None
+                self.road_height_drag = None
                 if dragged:
                     self.record_gizmo_commit(dragged)
                     regenerate_splines_touching(self.nodes, dragged)
+                    regenerate_vectors_touching(
+                        heightmap_catalog, self.nodes.nodes, dragged
+                    )
+                elif radius_shape_ids:
+                    regenerate_vectors_touching(
+                        heightmap_catalog, self.nodes.nodes, radius_shape_ids
+                    )
+                elif road_point_ids:
+                    regenerate_vectors_touching(
+                        heightmap_catalog, self.nodes.nodes, road_point_ids
+                    )
             return
 
         ray: Ray = viewport_world_ray(self.camera, mouse)
+        if self.circle_radius_drag is not None:
+            if is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT):
+                apply_circle_radius_drag(
+                    self.nodes,
+                    self.circle_radius_drag,
+                    ray,
+                )
+            if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
+                release_radius_ids: list[str] = [
+                    self.circle_radius_drag.shape_id
+                ]
+                self.circle_radius_drag = None
+                regenerate_vectors_touching(
+                    heightmap_catalog, self.nodes.nodes, release_radius_ids
+                )
+            return
+
+        if self.road_height_drag is not None:
+            if is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT):
+                apply_road_height_drag(
+                    self.nodes,
+                    self.road_height_drag,
+                    ray,
+                )
+            if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
+                release_road_ids: list[str] = [
+                    self.road_height_drag.point_id
+                ]
+                self.road_height_drag = None
+                regenerate_vectors_touching(
+                    heightmap_catalog, self.nodes.nodes, release_road_ids
+                )
+            return
+
         pivot: Vector3 | None = selection_pivot(self.nodes, self.nodes.selected_ids)
         axes: dict[GizmoAxis, Vector3] | None = None
         size: float = 1.0
@@ -404,8 +500,37 @@ class Viewport:
             rotation: Quaternion = selection_rotation(
                 self.nodes, self.nodes.selected_ids
             )
-            axes = gizmo_axis_directions(self.gizmo.space, rotation)
+            axes = filter_gizmo_axes_for_selection(
+                gizmo_axis_directions(self.gizmo.space, rotation),
+                self.nodes,
+                self.nodes.selected_ids,
+            )
             size = gizmo_size(self.camera, pivot)
+
+        if not block_left_click and is_mouse_button_pressed(
+            MouseButton.MOUSE_BUTTON_LEFT
+        ):
+            radius_drag: CircleRadiusDrag | None = pick_circle_radius_handle(
+                self.nodes.nodes,
+                ray,
+                self.camera,
+                float(view_rect.height),
+                list(self.nodes.selected_ids),
+            )
+            if radius_drag is not None:
+                self.circle_radius_drag = radius_drag
+                return
+            height_drag: RoadHeightDrag | None = pick_road_height_handle(
+                heightmap_catalog,
+                self.nodes.nodes,
+                ray,
+                self.camera,
+                float(view_rect.height),
+                list(self.nodes.selected_ids),
+            )
+            if height_drag is not None:
+                self.road_height_drag = height_drag
+                return
 
         if self.gizmo.drag is not None:
             if is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT):
@@ -415,11 +540,18 @@ class Viewport:
                     ray,
                     self.camera.position,
                 )
+                snap_vector_points_to_plane(
+                    self.nodes, self.nodes.selected_ids
+                )
             if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
                 dragged: list[str] = list(self.gizmo.drag.start_transforms.keys())
+                snap_vector_points_to_plane(self.nodes, dragged)
                 end_gizmo_drag(self.gizmo)
                 self.record_gizmo_commit(dragged)
                 regenerate_splines_touching(self.nodes, dragged)
+                regenerate_vectors_touching(
+                    heightmap_catalog, self.nodes.nodes, dragged
+                )
             return
 
         if not block_left_click and (
@@ -447,7 +579,9 @@ class Viewport:
             not block_left_click
             and is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
         ):
-            self.handle_selection_click(ray, heightmap_catalog)
+            self.handle_selection_click(
+                ray, heightmap_catalog, float(view_rect.height)
+            )
             return
 
         if is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_RIGHT):
@@ -541,6 +675,17 @@ class Viewport:
                 self.camera.position,
                 wireframe=self.show_heightfield_wireframe,
             )
+        node: Node
+        for node in self.nodes.nodes.values():
+            if node.heightfield is not None:
+                draw_vector_overlays(
+                    heightmap_catalog,
+                    self.nodes.nodes,
+                    node,
+                    self.camera,
+                    float(view_rect.height),
+                    self.nodes.selected_ids,
+                )
 
         # flush scene draws, then submit gizmos with depth off and flush again
         # before restoring depth — otherwise EndMode3D draws them with depth on
@@ -555,8 +700,10 @@ class Viewport:
             rotation: Quaternion = selection_rotation(
                 self.nodes, self.nodes.selected_ids
             )
-            axes: dict[GizmoAxis, Vector3] = gizmo_axis_directions(
-                self.gizmo.space, rotation
+            axes: dict[GizmoAxis, Vector3] = filter_gizmo_axes_for_selection(
+                gizmo_axis_directions(self.gizmo.space, rotation),
+                self.nodes,
+                self.nodes.selected_ids,
             )
             draw_gizmo(
                 self.gizmo,

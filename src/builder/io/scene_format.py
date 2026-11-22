@@ -35,15 +35,28 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightType,
     SculptHeightMode,
     SculptHeightSource,
+    VectorHeightSource,
+    VectorRoadHeightSource,
+    VectorSculptHeightSource,
     height_layer_source_type,
 )
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapId
 from builder.heightfield.regenerate import is_heightfield_tile_child
+from builder.heightfield.vector.registry import (
+    get_vector_shape_spec,
+    known_vector_shape_kind,
+)
+from builder.heightfield.vector.vector_types import (
+    VectorApplyMode,
+    VectorLayerRecipe,
+    VectorPointRecipe,
+    VectorShapeRecipe,
+)
 from builder.modifiers.registry import get_modifier_spec, known_modifier_kind
 from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 17
+scene_format_version: int = 24
 scene_file_suffix: str = ".scene"
 
 
@@ -419,6 +432,109 @@ def mesh_asset_from_json(data: Any) -> MeshAsset:
     )
 
 
+def vector_layer_to_json(_layer: VectorLayerRecipe) -> dict[str, Any]:
+    """encode a vector layer recipe"""
+    return {}
+
+
+def vector_layer_from_json(data: Any) -> VectorLayerRecipe:
+    """decode a vector layer recipe"""
+    if not isinstance(data, dict):
+        raise ValueError("vector_layer must be an object")
+    return VectorLayerRecipe()
+
+
+def vector_shape_to_json(shape: VectorShapeRecipe) -> dict[str, Any]:
+    """encode a vector shape recipe"""
+    return {
+        "kind": shape.kind,
+        "apply_mode": shape.apply_mode.name,
+        "brush_kind": shape.brush_kind,
+        "offset": float(shape.offset.value),
+        "intensity": float(shape.intensity.value),
+        "radius": float(shape.radius.value),
+        "enabled": bool(shape.enabled),
+        "params": params_to_json(shape.params),
+    }
+
+
+def vector_point_to_json(point: VectorPointRecipe) -> dict[str, Any]:
+    """encode a vector point recipe"""
+    return {"width_scale": float(point.width_scale.value)}
+
+
+def vector_point_from_json(data: Any) -> VectorPointRecipe:
+    """decode a vector point recipe"""
+    if not isinstance(data, dict):
+        raise ValueError("vector_point must be an object")
+    scale_raw: Any = data.get("width_scale", 1.0)
+    if isinstance(scale_raw, bool) or not isinstance(scale_raw, (int, float)):
+        raise ValueError("vector_point.width_scale must be a number")
+    return VectorPointRecipe(
+        width_scale=FloatParam(
+            float(scale_raw),
+            label="Width scale",
+            step=0.05,
+            minimum=0.05,
+        )
+    )
+
+
+def vector_shape_from_json(data: Any) -> VectorShapeRecipe:
+    """decode a vector shape recipe"""
+    if not isinstance(data, dict):
+        raise ValueError("vector_shape must be an object")
+    kind_raw: Any = data.get("kind")
+    if not isinstance(kind_raw, str) or kind_raw == "":
+        raise ValueError("vector_shape.kind must be a non-empty string")
+    if not known_vector_shape_kind(kind_raw):
+        raise ValueError(f"unknown vector shape kind: {kind_raw}")
+    apply_mode: VectorApplyMode = enum_from_name(
+        VectorApplyMode, data.get("apply_mode"), label="vector_shape.apply_mode"
+    )
+    brush_kind_raw: Any = data.get("brush_kind", "add")
+    if not isinstance(brush_kind_raw, str) or brush_kind_raw == "":
+        raise ValueError("vector_shape.brush_kind must be a non-empty string")
+    if brush_kind_raw == "subtract":
+        raise ValueError(
+            "vector_shape.brush_kind 'subtract' is removed; use add with negative offset"
+        )
+    offset_raw: Any = data.get("offset")
+    intensity_raw: Any = data.get("intensity")
+    radius_raw: Any = data.get("radius", 4.0)
+    if isinstance(offset_raw, bool) or not isinstance(offset_raw, (int, float)):
+        raise ValueError("vector_shape.offset must be a number")
+    if isinstance(intensity_raw, bool) or not isinstance(
+        intensity_raw, (int, float)
+    ):
+        raise ValueError("vector_shape.intensity must be a number")
+    if isinstance(radius_raw, bool) or not isinstance(radius_raw, (int, float)):
+        raise ValueError("vector_shape.radius must be a number")
+    enabled_raw: Any = data.get("enabled", True)
+    if not isinstance(enabled_raw, bool):
+        raise ValueError("vector_shape.enabled must be a boolean")
+    params_raw: Any = data.get("params", {})
+    if not isinstance(params_raw, dict):
+        raise ValueError("vector_shape.params must be an object")
+    spec = get_vector_shape_spec(kind_raw)
+    params: Any = typed_params_from_json(spec.params_type, params_raw)
+
+    return VectorShapeRecipe(
+        kind=kind_raw,
+        apply_mode=apply_mode,
+        brush_kind=brush_kind_raw,
+        offset=FloatParam(float(offset_raw), label="Offset", step=0.25),
+        intensity=FloatParam(
+            float(intensity_raw),
+            label="Intensity",
+            step=0.05,
+        ),
+        radius=FloatParam(float(radius_raw), label="Radius", step=0.25, minimum=0.1),
+        params=params,
+        enabled=enabled_raw,
+    )
+
+
 def node_to_json(node: Node) -> dict[str, Any]:
     """encode one scene node"""
     payload: dict[str, Any] = {
@@ -438,6 +554,12 @@ def node_to_json(node: Node) -> dict[str, Any]:
         payload["generator"] = generator_to_json(node.generator)
     if node.heightfield is not None:
         payload["heightfield"] = heightfield_to_json(node.heightfield)
+    if node.vector_layer is not None:
+        payload["vector_layer"] = vector_layer_to_json(node.vector_layer)
+    if node.vector_shape is not None:
+        payload["vector_shape"] = vector_shape_to_json(node.vector_shape)
+    if node.vector_point is not None:
+        payload["vector_point"] = vector_point_to_json(node.vector_point)
     return payload
 
 
@@ -476,8 +598,37 @@ def node_from_json(data: Any) -> Node:
     heightfield: Heightfield | None = None
     if "heightfield" in data and data["heightfield"] is not None:
         heightfield = heightfield_from_json(data["heightfield"])
-    if generator is not None and heightfield is not None:
-        raise ValueError("node cannot have both generator and heightfield")
+    vector_layer: VectorLayerRecipe | None = None
+    if "vector_layer" in data and data["vector_layer"] is not None:
+        vector_layer = vector_layer_from_json(data["vector_layer"])
+    vector_shape: VectorShapeRecipe | None = None
+    if "vector_shape" in data and data["vector_shape"] is not None:
+        vector_shape = vector_shape_from_json(data["vector_shape"])
+    vector_point: VectorPointRecipe | None = None
+    if "vector_point" in data and data["vector_point"] is not None:
+        vector_point = vector_point_from_json(data["vector_point"])
+    recipe_count: int = sum(
+        1
+        for flag in (
+            generator is not None,
+            heightfield is not None,
+            vector_layer is not None,
+            vector_shape is not None,
+        )
+        if flag
+    )
+    if recipe_count > 1:
+        raise ValueError(
+            "node cannot combine generator/heightfield/vector_layer/vector_shape"
+        )
+    if vector_point is not None and role is not NodeRole.vector_point:
+        raise ValueError("vector_point recipe requires role vector_point")
+    if role is NodeRole.vector_point and vector_point is None:
+        raise ValueError("vector_point role requires a vector_point recipe")
+    if vector_point is not None and recipe_count > 0:
+        raise ValueError(
+            "vector_point cannot combine with generator/heightfield/vector_layer/vector_shape"
+        )
     return Node(
         id=node_id,
         parent_id=parent_id,
@@ -485,6 +636,9 @@ def node_from_json(data: Any) -> Node:
         mesh_id=mesh_id,
         generator=generator,
         heightfield=heightfield,
+        vector_layer=vector_layer,
+        vector_shape=vector_shape,
+        vector_point=vector_point,
         name=name_raw,
         role=role,
     )
@@ -522,6 +676,30 @@ def height_layer_source_to_json(source: HeightLayerSource) -> dict[str, Any]:
                 "source_type": source_type.name,
                 "procedural_type": procedural_type.name,
                 "constant_value": float(constant_value),
+            }
+        case VectorHeightSource(
+            layer_node_id=layer_node_id, heightmap_id=heightmap_id
+        ):
+            return {
+                "source_type": source_type.name,
+                "layer_node_id": layer_node_id,
+                "heightmap_id": heightmap_id.name,
+            }
+        case VectorSculptHeightSource(
+            layer_node_id=layer_node_id, heightmap_id=heightmap_id
+        ):
+            return {
+                "source_type": source_type.name,
+                "layer_node_id": layer_node_id,
+                "heightmap_id": heightmap_id.name,
+            }
+        case VectorRoadHeightSource(
+            layer_node_id=layer_node_id, heightmap_id=heightmap_id
+        ):
+            return {
+                "source_type": source_type.name,
+                "layer_node_id": layer_node_id,
+                "heightmap_id": heightmap_id.name,
             }
 
 
@@ -585,6 +763,39 @@ def height_layer_source_from_json(data: Any, label: str) -> HeightLayerSource:
             return ProceduralHeightSource(
                 procedural_type=procedural_type,
                 constant_value=float(constant_raw),
+            )
+        case HeightLayerSourceType.vector:
+            layer_node_raw: Any = data.get("layer_node_id")
+            if not isinstance(layer_node_raw, str) or layer_node_raw == "":
+                raise ValueError(f"{label}.layer_node_id must be a non-empty string")
+            vector_map_id: Any = data.get("heightmap_id")
+            if not isinstance(vector_map_id, str) or vector_map_id == "":
+                raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            return VectorHeightSource(
+                layer_node_id=layer_node_raw,
+                heightmap_id=HeightmapId(vector_map_id),
+            )
+        case HeightLayerSourceType.vector_sculpt:
+            sculpt_layer_raw: Any = data.get("layer_node_id")
+            if not isinstance(sculpt_layer_raw, str) or sculpt_layer_raw == "":
+                raise ValueError(f"{label}.layer_node_id must be a non-empty string")
+            sculpt_map_id: Any = data.get("heightmap_id")
+            if not isinstance(sculpt_map_id, str) or sculpt_map_id == "":
+                raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            return VectorSculptHeightSource(
+                layer_node_id=sculpt_layer_raw,
+                heightmap_id=HeightmapId(sculpt_map_id),
+            )
+        case HeightLayerSourceType.vector_road:
+            road_layer_raw: Any = data.get("layer_node_id")
+            if not isinstance(road_layer_raw, str) or road_layer_raw == "":
+                raise ValueError(f"{label}.layer_node_id must be a non-empty string")
+            road_map_id: Any = data.get("heightmap_id")
+            if not isinstance(road_map_id, str) or road_map_id == "":
+                raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            return VectorRoadHeightSource(
+                layer_node_id=road_layer_raw,
+                heightmap_id=HeightmapId(road_map_id),
             )
 
 

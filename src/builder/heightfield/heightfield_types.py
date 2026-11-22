@@ -43,6 +43,9 @@ class HeightLayerSourceType(IntEnum):
     paint = 2
     procedural = 3
     sculpt = 4
+    vector = 5
+    vector_sculpt = 6
+    vector_road = 7
 
 
 class SculptHeightMode(IntEnum):
@@ -90,11 +93,38 @@ class ProceduralHeightSource:
     constant_value: float = 0.0
 
 
+@dataclass(frozen=True)
+class VectorHeightSource:
+    """derived paint raster from a live VectorLayer node hierarchy"""
+
+    layer_node_id: str
+    heightmap_id: HeightmapId
+
+
+@dataclass(frozen=True)
+class VectorSculptHeightSource:
+    """derived sculpt delta (metres) from a live VectorLayer node hierarchy"""
+
+    layer_node_id: str
+    heightmap_id: HeightmapId
+
+
+@dataclass(frozen=True)
+class VectorRoadHeightSource:
+    """derived sculpt delta that flattens terrain to a road ribbon"""
+
+    layer_node_id: str
+    heightmap_id: HeightmapId
+
+
 HeightLayerSource = (
     CatalogHeightSource
     | PaintHeightSource
     | SculptHeightSource
     | ProceduralHeightSource
+    | VectorHeightSource
+    | VectorSculptHeightSource
+    | VectorRoadHeightSource
 )
 
 
@@ -245,6 +275,12 @@ def height_layer_source_type(source: HeightLayerSource) -> HeightLayerSourceType
             return HeightLayerSourceType.sculpt
         case ProceduralHeightSource():
             return HeightLayerSourceType.procedural
+        case VectorHeightSource():
+            return HeightLayerSourceType.vector
+        case VectorSculptHeightSource():
+            return HeightLayerSourceType.vector_sculpt
+        case VectorRoadHeightSource():
+            return HeightLayerSourceType.vector_road
 
 
 def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapId, ...]:
@@ -258,6 +294,12 @@ def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapI
             if coverage_id is None:
                 return (heightmap_id,)
             return (heightmap_id, coverage_id)
+        case VectorHeightSource(heightmap_id=heightmap_id):
+            return (heightmap_id,)
+        case VectorSculptHeightSource(heightmap_id=heightmap_id):
+            return (heightmap_id,)
+        case VectorRoadHeightSource(heightmap_id=heightmap_id):
+            return (heightmap_id,)
         case ProceduralHeightSource() | None:
             return ()
 

@@ -25,7 +25,7 @@ from pyray import (
 from builder.generators.registry import get_spec
 from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
 from builder.scene.scene import Scene
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import Node, NodeRole
 from builder.ui.text_field import (
     FieldId,
     TextAction,
@@ -80,6 +80,17 @@ def group_display_name(node: Node) -> str:
         return get_spec(node.generator.kind).label
     if node.heightfield is not None:
         return "Heightfield"
+    if node.vector_layer is not None:
+        return "Vector"
+    if node.vector_shape is not None:
+        from builder.heightfield.vector.registry import get_vector_shape_spec
+
+        try:
+            return get_vector_shape_spec(node.vector_shape.kind).label
+        except KeyError:
+            return node.vector_shape.kind
+    if node.role is NodeRole.vector_point:
+        return "Point"
     return "Group"
 
 

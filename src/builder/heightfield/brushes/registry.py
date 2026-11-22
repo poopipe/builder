@@ -12,11 +12,9 @@ from builder.heightfield.brushes.flatten import (
     flatten_up_brush_spec,
 )
 from builder.heightfield.brushes.smooth import smooth_brush_spec
-from builder.heightfield.brushes.subtract import subtract_brush_spec
 
 brush_specs: tuple[BrushSpec, ...] = (
     add_brush_spec,
-    subtract_brush_spec,
     flatten_brush_spec,
     flatten_up_brush_spec,
     flatten_down_brush_spec,

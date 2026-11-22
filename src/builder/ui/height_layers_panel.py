@@ -35,10 +35,14 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightSource,
     SculptHeightMode,
     SculptHeightSource,
+    VectorHeightSource,
+    VectorRoadHeightSource,
+    VectorSculptHeightSource,
 )
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapCatalog
 from builder.heightfield.regenerate import HeightfieldSceneHost, set_heightfield
 from builder.scene.scene_types import Node
+from builder.scene.selection import subtree_ids
 from builder.session_journal import SessionJournal, log_exception
 from builder.ui.file_browser import make_heightmap_browser
 from builder.ui.inspector import set_heightfield_edit_layers
@@ -296,6 +300,12 @@ def source_label(catalog: HeightmapCatalog, source: HeightLayerSource) -> str:
             procedural_type=procedural_type, constant_value=constant_value
         ):
             return f"{procedural_type.name} ({constant_value:g})"
+        case VectorHeightSource(layer_node_id=layer_node_id):
+            return f"Vector: {layer_node_id}"
+        case VectorSculptHeightSource(layer_node_id=layer_node_id):
+            return f"Vector sculpt: {layer_node_id}"
+        case VectorRoadHeightSource(layer_node_id=layer_node_id):
+            return f"Road: {layer_node_id}"
 
 
 def next_blend_mode(current: HeightBlendMode) -> HeightBlendMode:
@@ -440,6 +450,12 @@ def update_height_layers_panel(
         match layer.height:
             case SculptHeightSource(mode=sculpt_mode):
                 detail = f"sculpt/{sculpt_mode.name}"
+            case VectorHeightSource():
+                detail = "vector"
+            case VectorSculptHeightSource():
+                detail = "vector sculpt"
+            case VectorRoadHeightSource():
+                detail = "road"
             case _:
                 detail = layer.blend.name
         entries.append(
@@ -528,6 +544,61 @@ def update_height_layers_panel(
         ui.height_layers_selected_index = len(updated.edit_layers) - 1
         ui.status = "Added sculpt layer"
 
+    def add_vector_layer() -> None:
+        from builder.heightfield.regenerate import set_heightfield
+        from builder.heightfield.vector.edit import append_vector_edit_layer
+
+        ui.clear_focus()
+        cache_dir = Path.cwd() / "heightmaps"
+        updated, new_nodes = append_vector_edit_layer(
+            catalog,
+            heightfield,
+            group_id,
+            cache_dir=cache_dir,
+        )
+        host.add_nodes(new_nodes)
+        set_heightfield(host, catalog, group_id, updated)
+        ui.height_layers_selected_index = len(updated.edit_layers) - 1
+        ui.status = "Added vector layer"
+
+    def add_vector_sculpt_layer() -> None:
+        from builder.heightfield.regenerate import set_heightfield
+        from builder.heightfield.vector.edit import (
+            append_vector_sculpt_edit_layer,
+        )
+
+        ui.clear_focus()
+        cache_dir = Path.cwd() / "heightmaps"
+        updated, new_nodes = append_vector_sculpt_edit_layer(
+            catalog,
+            heightfield,
+            group_id,
+            cache_dir=cache_dir,
+        )
+        host.add_nodes(new_nodes)
+        set_heightfield(host, catalog, group_id, updated)
+        ui.height_layers_selected_index = len(updated.edit_layers) - 1
+        ui.status = "Added vector sculpt layer"
+
+    def add_road_layer() -> None:
+        from builder.heightfield.regenerate import set_heightfield
+        from builder.heightfield.vector.edit import (
+            append_vector_road_edit_layer,
+        )
+
+        ui.clear_focus()
+        cache_dir = Path.cwd() / "heightmaps"
+        updated, new_nodes = append_vector_road_edit_layer(
+            catalog,
+            heightfield,
+            group_id,
+            cache_dir=cache_dir,
+        )
+        host.add_nodes(new_nodes)
+        set_heightfield(host, catalog, group_id, updated)
+        ui.height_layers_selected_index = len(updated.edit_layers) - 1
+        ui.status = "Added road layer"
+
     buttons.append(
         Button(
             label="+ Paint layer",
@@ -540,6 +611,30 @@ def update_height_layers_panel(
         Button(
             label="+ Sculpt layer",
             on_click=add_sculpt_layer,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="+ Vector layer",
+            on_click=add_vector_layer,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="+ Vector sculpt",
+            on_click=add_vector_sculpt_layer,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="+ Road",
+            on_click=add_road_layer,
             rect=Rectangle(x, y, inner_w, row_h),
         )
     )
@@ -765,10 +860,27 @@ def update_height_layers_panel(
 
     selected: HeightEditLayer = heightfield.edit_layers[selected_index]
     is_sculpt: bool = isinstance(selected.height, SculptHeightSource)
-    is_paint: bool = isinstance(selected.height, PaintHeightSource)
+    is_vector_sculpt: bool = isinstance(
+        selected.height, VectorSculptHeightSource
+    )
+    is_road: bool = isinstance(selected.height, VectorRoadHeightSource)
+    is_paint: bool = isinstance(
+        selected.height, (PaintHeightSource, VectorHeightSource)
+    )
     float_fields: tuple[LayerEditFloat, ...]
 
-    if is_sculpt:
+    if is_vector_sculpt or is_road:
+        tex_label = f"Height: {source_label(catalog, selected.height)}"
+        buttons.append(
+            Button(
+                label=tex_label,
+                on_click=lambda: None,
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+        float_fields = (LayerEditFloat.opacity,)
+    elif is_sculpt:
         match selected.height:
             case SculptHeightSource(mode=current_mode):
                 pass
@@ -1075,6 +1187,22 @@ def update_height_layers_panel(
     def remove_layer() -> None:
         ui.clear_focus()
         layers = list(heightfield.edit_layers)
+        removed: HeightEditLayer = layers[selected_index]
+        match removed.height:
+            case VectorHeightSource(layer_node_id=layer_node_id):
+                host.nodes.remove_nodes(
+                    subtree_ids(host.nodes.nodes, [layer_node_id])
+                )
+            case VectorSculptHeightSource(layer_node_id=layer_node_id):
+                host.nodes.remove_nodes(
+                    subtree_ids(host.nodes.nodes, [layer_node_id])
+                )
+            case VectorRoadHeightSource(layer_node_id=layer_node_id):
+                host.nodes.remove_nodes(
+                    subtree_ids(host.nodes.nodes, [layer_node_id])
+                )
+            case _:
+                pass
         del layers[selected_index]
         ui.height_layers_selected_index = None if len(layers) == 0 else min(
             selected_index, len(layers) - 1

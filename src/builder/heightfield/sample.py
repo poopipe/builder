@@ -16,6 +16,9 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightType,
     SculptHeightMode,
     SculptHeightSource,
+    VectorHeightSource,
+    VectorRoadHeightSource,
+    VectorSculptHeightSource,
 )
 from builder.heightfield.heightmap_catalog import (
     HeightmapAsset,
@@ -67,6 +70,9 @@ def layer_source_sample_type(
             CatalogHeightSource(heightmap_id=heightmap_id)
             | PaintHeightSource(heightmap_id=heightmap_id)
             | SculptHeightSource(heightmap_id=heightmap_id)
+            | VectorHeightSource(heightmap_id=heightmap_id)
+            | VectorSculptHeightSource(heightmap_id=heightmap_id)
+            | VectorRoadHeightSource(heightmap_id=heightmap_id)
         ):
             asset: HeightmapAsset | None = catalog.entries.get(heightmap_id)
             if asset is None:
@@ -186,6 +192,9 @@ def sample_source(
             CatalogHeightSource(heightmap_id=heightmap_id)
             | PaintHeightSource(heightmap_id=heightmap_id)
             | SculptHeightSource(heightmap_id=heightmap_id)
+            | VectorHeightSource(heightmap_id=heightmap_id)
+            | VectorSculptHeightSource(heightmap_id=heightmap_id)
+            | VectorRoadHeightSource(heightmap_id=heightmap_id)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -280,6 +289,18 @@ def apply_edit_layer_height(
                             )
                     m: float = clamp01(coverage) * opacity
                     return accum * (1.0 - m) + delta_or_abs * m
+        case VectorSculptHeightSource(heightmap_id=heightmap_id) | VectorRoadHeightSource(
+            heightmap_id=heightmap_id
+        ):
+            sculpt_buf: HeightmapBuffer | None = ensure_heightmap_buffer(
+                catalog, heightmap_id
+            )
+            delta: float = (
+                0.0
+                if sculpt_buf is None
+                else sample_buffer(sculpt_buf, layer_u, layer_v, wrap=True)
+            )
+            return accum + delta * opacity
         case _:
             raw: float = sample_source(
                 catalog, layer.height, layer_u, layer_v, missing=0.0, wrap=True
@@ -350,6 +371,9 @@ def source_sample_bounds(
             CatalogHeightSource(heightmap_id=heightmap_id)
             | PaintHeightSource(heightmap_id=heightmap_id)
             | SculptHeightSource(heightmap_id=heightmap_id)
+            | VectorHeightSource(heightmap_id=heightmap_id)
+            | VectorSculptHeightSource(heightmap_id=heightmap_id)
+            | VectorRoadHeightSource(heightmap_id=heightmap_id)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -412,6 +436,11 @@ def layer_height_bounds(
         opacity: float = clamp01(float(layer.opacity.value))
         match layer.height:
             case SculptHeightSource(mode=SculptHeightMode.delta):
+                s0, s1 = source_sample_bounds(catalog, layer.height)
+                height_min += s0 * opacity
+                height_max += s1 * opacity
+                continue
+            case VectorSculptHeightSource() | VectorRoadHeightSource():
                 s0, s1 = source_sample_bounds(catalog, layer.height)
                 height_min += s0 * opacity
                 height_max += s1 * opacity

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Protocol
 
@@ -32,6 +33,10 @@ class HeightfieldSceneHost(Protocol):
 
     def unload_mesh(self, mesh_id: MeshId) -> None:
         """unload one prepared mesh if present"""
+        ...
+
+    def add_nodes(self, nodes: Sequence[Node]) -> None:
+        """insert or replace nodes by id"""
         ...
 
 
@@ -74,6 +79,31 @@ def selected_heightfield_group(scene: Scene) -> Node | None:
     if node is None or node.heightfield is None:
         return None
     return node
+
+
+def selected_or_ancestor_heightfield_group(scene: Scene) -> Node | None:
+    """return selected heightfield, or the heightfield ancestor of the selection
+
+    keeps inspector / layers panel live while editing vector points under it
+    """
+    direct: Node | None = selected_heightfield_group(scene)
+    if direct is not None:
+        return direct
+    if len(scene.selected_ids) != 1:
+        return None
+    from builder.heightfield.vector.rasterize import (
+        find_heightfield_group_for_descendant,
+    )
+
+    ancestor_id: str | None = find_heightfield_group_for_descendant(
+        scene.nodes, scene.selected_ids[0]
+    )
+    if ancestor_id is None:
+        return None
+    ancestor: Node | None = scene.nodes.get(ancestor_id)
+    if ancestor is None or ancestor.heightfield is None:
+        return None
+    return ancestor
 
 
 def clear_heightfield_tiles(host: HeightfieldSceneHost, group_id: str) -> None:
@@ -127,6 +157,9 @@ def regenerate_heightfield(
     clear_heightfield_tiles(host, group_id)
     # validate size/spacing tile math; markers are not instantiated
     heightfield_layout(heightfield)
+    from builder.heightfield.vector.rasterize import regenerate_vector_sources
+
+    regenerate_vector_sources(catalog, heightfield, scene.nodes)
 
 
 def set_heightfield(

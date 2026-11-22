@@ -4,3 +4,4 @@ __pycache__
 ufbx_bridge/build/
 *.scene
 logs/
+heightmaps/

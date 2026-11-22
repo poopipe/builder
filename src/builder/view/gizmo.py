@@ -29,8 +29,9 @@ from pyray import (
     vector3_subtract,
 )
 
+from builder.heightfield.vector.coords import vector_point_belongs_to_road
 from builder.scene.scene import Scene
-from builder.scene.scene_types import Node, Quaternion
+from builder.scene.scene_types import Node, NodeRole, Quaternion
 from builder.scene.transform_ops import (
     rotate_transform_local,
     rotate_transform_world,
@@ -149,6 +150,87 @@ def gizmo_axis_directions(
         axis: vector3_normalize(vector3_rotate_by_quaternion(direction, local_rotation))
         for axis, direction in local_axes.items()
     }
+
+
+def selection_is_vector_points_only(
+    scene: Scene, selected_ids: Sequence[str]
+) -> bool:
+    """true when selection is non-empty and every id is a vector_point"""
+    if not selected_ids:
+        return False
+    group_id: str
+    for group_id in selected_ids:
+        node: Node | None = scene.nodes.get(group_id)
+        if node is None or node.role is not NodeRole.vector_point:
+            return False
+    return True
+
+
+def selection_is_road_vector_points(
+    scene: Scene, selected_ids: Sequence[str]
+) -> bool:
+    """true when every selected id is a road vector_point"""
+    if len(selected_ids) == 0:
+        return False
+    group_id: str
+    for group_id in selected_ids:
+        node: Node | None = scene.nodes.get(group_id)
+        if node is None or node.role is not NodeRole.vector_point:
+            return False
+        if not vector_point_belongs_to_road(scene.nodes, group_id):
+            return False
+    return True
+
+
+def filter_gizmo_axes_for_selection(
+    axes: dict[GizmoAxis, Vector3],
+    scene: Scene,
+    selected_ids: Sequence[str],
+) -> dict[GizmoAxis, Vector3]:
+    """omit Y when editing non-road vector points so they stay on the work plane"""
+    if not selection_is_vector_points_only(scene, selected_ids):
+        return axes
+    if selection_is_road_vector_points(scene, selected_ids):
+        return axes
+    return {
+        axis: direction
+        for axis, direction in axes.items()
+        if axis is not GizmoAxis.y
+    }
+
+
+def snap_vector_point_translation(
+    node: Node, *, allow_y: bool = False
+) -> Node:
+    """force a vector_point onto its parent-local work plane (y=0)"""
+    if node.role is not NodeRole.vector_point or allow_y:
+        return node
+    translation: Vector3 = node.transform.translation
+    if abs(float(translation.y)) < 1e-12:
+        return node
+    return replace(
+        node,
+        transform=Transform(
+            Vector3(float(translation.x), 0.0, float(translation.z)),
+            node.transform.rotation,
+            node.transform.scale,
+        ),
+    )
+
+
+def snap_vector_points_to_plane(
+    scene: Scene, selected_ids: Sequence[str]
+) -> None:
+    """keep selected non-road vector_point nodes at local y=0 after a gizmo drag"""
+    group_id: str
+    for group_id in selected_ids:
+        node: Node | None = scene.nodes.get(group_id)
+        if node is None:
+            continue
+        allow_y: bool = vector_point_belongs_to_road(scene.nodes, group_id)
+        snapped: Node = snap_vector_point_translation(node, allow_y=allow_y)
+        if snapped is not node:
+            scene.set_node(snapped)
 
 
 def gizmo_size(camera: Camera3D, pivot: Vector3) -> float:
@@ -455,10 +537,18 @@ def apply_drag_to_scene(
             local_delta: Vector3 = world_delta_to_local(
                 scene.nodes, group_id, delta
             )
+            allow_y: bool = vector_point_belongs_to_road(
+                scene.nodes, group_id
+            )
             scene.set_node(
-                replace(
-                    scene.nodes[group_id],
-                    transform=translate_transform(start_transform, local_delta),
+                snap_vector_point_translation(
+                    replace(
+                        scene.nodes[group_id],
+                        transform=translate_transform(
+                            start_transform, local_delta
+                        ),
+                    ),
+                    allow_y=allow_y,
                 )
             )
         return

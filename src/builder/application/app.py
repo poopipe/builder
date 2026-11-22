@@ -59,7 +59,7 @@ from builder.commands.scene import (
     cmd_unparent,
 )
 from builder.generators.regenerate import selected_parametric_group
-from builder.heightfield.regenerate import selected_heightfield_group
+from builder.heightfield.regenerate import selected_or_ancestor_heightfield_group
 from builder.scene.scene_types import MeshId, Node
 from builder.session_journal import log_exception
 from builder.ui.file_browser import (
@@ -76,6 +76,17 @@ from builder.ui.inspector import (
     draw_inspector,
     sync_inspector_focus,
     update_inspector,
+)
+from builder.ui.vector_layer_inspector import (
+    draw_vector_layer_inspector,
+    selected_vector_layer_group,
+    update_vector_layer_inspector,
+)
+from builder.ui.vector_shape_inspector import (
+    VectorShapeFloatRow,
+    draw_vector_shape_inspector,
+    selected_vector_shape_group,
+    update_vector_shape_inspector,
 )
 from builder.ui.modifiers_panel import (
     ModifierPanelRow,
@@ -261,7 +272,11 @@ class Application:
         self.handle_dropped_files()
         group: Node | None = selected_parametric_group(self.scene.nodes)
         if group is None:
-            group = selected_heightfield_group(self.scene.nodes)
+            group = selected_or_ancestor_heightfield_group(self.scene.nodes)
+        vector_shape: Node | None = selected_vector_shape_group(self.scene.nodes)
+        vector_layer: Node | None = None
+        if vector_shape is None:
+            vector_layer = selected_vector_layer_group(self.scene.nodes)
         sync_inspector_focus(self.ui, group)
         sync_modifiers_focus(self.ui, group)
         apply_text_exit_key(self.ui)
@@ -275,7 +290,13 @@ class Application:
         sculpt_width: int = (
             ui_sculpt_panel_width if self.ui.sculpt_panel_open else 0
         )
-        inspector_width: int = ui_inspector_panel_width if group is not None else 0
+        inspector_width: int = (
+            ui_inspector_panel_width
+            if group is not None
+            or vector_shape is not None
+            or vector_layer is not None
+            else 0
+        )
         modifiers_width: int = (
             ui_modifiers_panel_width
             if group is not None and group.generator is not None
@@ -429,7 +450,7 @@ class Application:
         height_layer_buttons: list[Button] = []
         height_layers_blend_label: Rectangle | None = None
         height_layers_empty: str | None = None
-        heightfield_group: Node | None = selected_heightfield_group(
+        heightfield_group: Node | None = selected_or_ancestor_heightfield_group(
             self.scene.nodes
         )
         if self.ui.height_layers_panel_open and not browser_open:
@@ -447,7 +468,9 @@ class Application:
                 heightfield_group,
                 journal=self.application.journal,
             )
-            heightfield_group = selected_heightfield_group(self.scene.nodes)
+            heightfield_group = selected_or_ancestor_heightfield_group(
+                self.scene.nodes
+            )
 
         sculpt_brush_rows: list[SculptBrushRow] = []
         sculpt_float_rows: list[SculptFloatRow] = []
@@ -459,9 +482,62 @@ class Application:
 
         inspector_buttons: list[Button] = []
         inspector_rows: list[ParamRowRects] = []
+        vector_inspector_buttons: list[Button] = []
+        vector_float_rows: list[VectorShapeFloatRow] = []
+        vector_layer_buttons: list[Button] = []
         modifiers_buttons: list[Button] = []
         modifiers_rows: list[ModifierPanelRow] = []
-        if group is not None and not browser_open:
+        if vector_shape is not None and not browser_open:
+            vector_inspector_buttons, vector_float_rows = (
+                update_vector_shape_inspector(
+                    self.scene.nodes,
+                    self.application.heightmap_catalog,
+                    self.ui,
+                    layout.inspector,
+                    vector_shape,
+                )
+            )
+            refreshed_shape: Node | None = self.scene.nodes.nodes.get(
+                vector_shape.id
+            )
+            vector_shape = (
+                refreshed_shape
+                if refreshed_shape is not None
+                and refreshed_shape.vector_shape is not None
+                else None
+            )
+        elif vector_layer is not None and not browser_open:
+            vector_layer_buttons = update_vector_layer_inspector(
+                self.scene.nodes,
+                self.application.heightmap_catalog,
+                self.ui,
+                layout.inspector,
+                vector_layer,
+            )
+            # add-shape may change selection to the new shape
+            vector_shape = selected_vector_shape_group(self.scene.nodes)
+            if vector_shape is not None:
+                vector_layer = None
+                vector_inspector_buttons, vector_float_rows = (
+                    update_vector_shape_inspector(
+                        self.scene.nodes,
+                        self.application.heightmap_catalog,
+                        self.ui,
+                        layout.inspector,
+                        vector_shape,
+                    )
+                )
+            else:
+                refreshed_layer: Node | None = self.scene.nodes.nodes.get(
+                    vector_layer.id
+                )
+                vector_layer = (
+                    refreshed_layer
+                    if refreshed_layer is not None
+                    and refreshed_layer.vector_layer is not None
+                    else None
+                )
+        elif group is not None and not browser_open:
             group_id: str = group.id
             inspector_buttons, inspector_rows = update_inspector(
                 self.scene.nodes,
@@ -712,7 +788,23 @@ class Application:
                 sculpt_float_rows,
                 sculpt_buttons,
             )
-        if group is not None:
+        if vector_shape is not None:
+            draw_vector_shape_inspector(
+                self.font,
+                layout.inspector,
+                self.ui,
+                vector_shape,
+                vector_inspector_buttons,
+                vector_float_rows,
+            )
+        elif vector_layer is not None:
+            draw_vector_layer_inspector(
+                self.font,
+                layout.inspector,
+                vector_layer,
+                vector_layer_buttons,
+            )
+        elif group is not None:
             draw_inspector(
                 self.font,
                 layout.inspector,

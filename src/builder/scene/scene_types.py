@@ -11,6 +11,11 @@ from pyray import Transform, Vector3, Vector4, quaternion_identity
 if TYPE_CHECKING:
     from builder.generators.generator_types import Generator
     from builder.heightfield.heightfield_types import Heightfield
+    from builder.heightfield.vector.vector_types import (
+        VectorLayerRecipe,
+        VectorPointRecipe,
+        VectorShapeRecipe,
+    )
 
 # raylib stores quaternions as Vector4 (x, y, z, w); stubs have no Quaternion type
 type Quaternion = Vector4
@@ -28,6 +33,7 @@ class NodeRole(IntEnum):
     bezier_point = 1
     bezier_handle_in = 2
     bezier_handle_out = 3
+    vector_point = 4
 
 
 @dataclass(frozen=True)
@@ -36,7 +42,8 @@ class Node:
 
     name is a display label shown in the outliner; empty means derive one.
     role tags control-point / handle nodes for spline generators.
-    generator and heightfield are mutually exclusive recipes on a group
+    generator, heightfield, vector_layer, and vector_shape are mutually exclusive
+    vector_point is only valid with role=vector_point
     """
 
     id: str
@@ -45,6 +52,9 @@ class Node:
     mesh_id: MeshId | None
     generator: Generator | None = None
     heightfield: Heightfield | None = None
+    vector_layer: VectorLayerRecipe | None = None
+    vector_shape: VectorShapeRecipe | None = None
+    vector_point: VectorPointRecipe | None = None
     name: str = ""
     role: NodeRole = NodeRole.none
 

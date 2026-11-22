@@ -67,6 +67,9 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightType,
     SculptHeightMode,
     SculptHeightSource,
+    VectorHeightSource,
+    VectorRoadHeightSource,
+    VectorSculptHeightSource,
 )
 from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.heightmap_catalog import (
@@ -206,6 +209,19 @@ def source_cache_key(
         case SculptHeightSource(heightmap_id=heightmap_id, mode=mode):
             sculpt_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
             return f"sculpt:{heightmap_id.name}:{mode.name}:{sculpt_rev}"
+        case VectorHeightSource(heightmap_id=heightmap_id, layer_node_id=layer_node_id):
+            vector_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return f"vector:{heightmap_id.name}:{layer_node_id}:{vector_rev}"
+        case VectorSculptHeightSource(
+            heightmap_id=heightmap_id, layer_node_id=layer_node_id
+        ):
+            vs_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return f"vector_sculpt:{heightmap_id.name}:{layer_node_id}:{vs_rev}"
+        case VectorRoadHeightSource(
+            heightmap_id=heightmap_id, layer_node_id=layer_node_id
+        ):
+            vr_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return f"vector_road:{heightmap_id.name}:{layer_node_id}:{vr_rev}"
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -254,6 +270,12 @@ def upload_source_texture(
             key_prefix = f"paint:{heightmap_id.name}:"
         case SculptHeightSource(heightmap_id=heightmap_id):
             key_prefix = f"sculpt:{heightmap_id.name}:"
+        case VectorHeightSource(heightmap_id=heightmap_id):
+            key_prefix = f"vector:{heightmap_id.name}:"
+        case VectorSculptHeightSource(heightmap_id=heightmap_id):
+            key_prefix = f"vector_sculpt:{heightmap_id.name}:"
+        case VectorRoadHeightSource(heightmap_id=heightmap_id):
+            key_prefix = f"vector_road:{heightmap_id.name}:"
         case _:
             key_prefix = None
     reusable: HeightTexture | None = None
@@ -274,6 +296,9 @@ def upload_source_texture(
             CatalogHeightSource(heightmap_id=heightmap_id)
             | PaintHeightSource(heightmap_id=heightmap_id)
             | SculptHeightSource(heightmap_id=heightmap_id)
+            | VectorHeightSource(heightmap_id=heightmap_id)
+            | VectorSculptHeightSource(heightmap_id=heightmap_id)
+            | VectorRoadHeightSource(heightmap_id=heightmap_id)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -350,6 +375,31 @@ def source_key_parts(
             return (
                 f"s:{heightmap_id.name}:{mode.name}:{cov_name}:{sculpt_rev}",
                 cov_rev,
+                0.0,
+            )
+        case VectorHeightSource(heightmap_id=heightmap_id, layer_node_id=layer_node_id):
+            vector_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return (
+                f"v:{heightmap_id.name}:{layer_node_id}:{vector_rev}",
+                0.0,
+                0.0,
+            )
+        case VectorSculptHeightSource(
+            heightmap_id=heightmap_id, layer_node_id=layer_node_id
+        ):
+            vs_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return (
+                f"vs:{heightmap_id.name}:{layer_node_id}:{vs_rev}",
+                0.0,
+                0.0,
+            )
+        case VectorRoadHeightSource(
+            heightmap_id=heightmap_id, layer_node_id=layer_node_id
+        ):
+            vr_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            return (
+                f"vr:{heightmap_id.name}:{layer_node_id}:{vr_rev}",
+                0.0,
                 0.0,
             )
         case ProceduralHeightSource(
@@ -556,6 +606,26 @@ def composite_height_texture(
     layer: HeightEditLayer
     for layer in enabled_layers:
         match layer.height:
+            case VectorSculptHeightSource() | VectorRoadHeightSource():
+                layer_tex = upload_source_texture(cache, catalog, layer.height)
+                draw_blend_pass(
+                    cache,
+                    write_target,
+                    read_target.texture,
+                    layer_tex,
+                    cache.solid_one.texture,
+                    blend_mode=int(HeightBlendMode.add),
+                    use_mask=False,
+                    opacity=float(layer.opacity.value),
+                    layer_amp=1.0,
+                    layer_bias=0.0,
+                    uv_scale_u=float(layer.uv_scale_u),
+                    uv_scale_v=float(layer.uv_scale_v),
+                    uv_offset_u=float(layer.uv_offset_u),
+                    uv_offset_v=float(layer.uv_offset_v),
+                )
+                read_target, write_target = write_target, read_target
+                continue
             case SculptHeightSource(
                 heightmap_id=heightmap_id,
                 mode=sculpt_mode,

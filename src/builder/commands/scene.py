@@ -263,7 +263,55 @@ def delete_selection(context: CommandContext, _: None) -> None:
         if node.mesh_id in catalog_ids:
             continue
         context.scene.unload_mesh(node.mesh_id)
+    # capture vector layers touched before removal so remaining shapes re-rasterize
+    from builder.heightfield.vector.edit import strip_vector_sources_from_heightfield
+    from builder.heightfield.vector.rasterize import (
+        find_heightfield_group_for_descendant,
+        find_vector_layer_ancestor,
+        regenerate_vectors_touching,
+    )
+    from builder.heightfield.regenerate import set_heightfield
+
+    vector_touch: list[str] = []
+    # heightfield id -> vector layer node ids being deleted with the selection
+    hf_removed_layers: dict[str, set[str]] = {}
+    removed_id: str
+    for removed_id in to_remove:
+        removed_node: Node | None = context.scene.nodes.nodes.get(removed_id)
+        if removed_node is not None and removed_node.vector_layer is not None:
+            hf_id: str | None = find_heightfield_group_for_descendant(
+                context.scene.nodes.nodes, removed_id
+            )
+            if hf_id is not None and hf_id not in to_remove:
+                hf_removed_layers.setdefault(hf_id, set()).add(removed_id)
+        layer_id: str | None = find_vector_layer_ancestor(
+            context.scene.nodes.nodes, removed_id
+        )
+        if layer_id is not None and layer_id not in to_remove:
+            vector_touch.append(layer_id)
     context.scene.nodes.remove_nodes(to_remove)
+    group_id: str
+    layer_ids: set[str]
+    for group_id, layer_ids in hf_removed_layers.items():
+        group: Node | None = context.scene.nodes.nodes.get(group_id)
+        if group is None or group.heightfield is None:
+            continue
+        stripped = strip_vector_sources_from_heightfield(
+            group.heightfield, layer_ids
+        )
+        if stripped is not group.heightfield:
+            set_heightfield(
+                context.scene,
+                context.application.heightmap_catalog,
+                group_id,
+                stripped,
+            )
+    if vector_touch:
+        regenerate_vectors_touching(
+            context.application.heightmap_catalog,
+            context.scene.nodes.nodes,
+            vector_touch,
+        )
     context.scene.clear_selection()
     count: int = len(selected)
     label: str = "group" if count == 1 else "groups"
