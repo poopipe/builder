@@ -111,10 +111,11 @@ class VectorSculptHeightSource:
 
 @dataclass(frozen=True)
 class VectorRoadHeightSource:
-    """derived sculpt delta that flattens terrain to a road ribbon"""
+    """absolute ribbon height + coverage that lerps the stack below"""
 
     layer_node_id: str
     heightmap_id: HeightmapId
+    coverage_id: HeightmapId
 
 
 HeightLayerSource = (
@@ -298,8 +299,10 @@ def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapI
             return (heightmap_id,)
         case VectorSculptHeightSource(heightmap_id=heightmap_id):
             return (heightmap_id,)
-        case VectorRoadHeightSource(heightmap_id=heightmap_id):
-            return (heightmap_id,)
+        case VectorRoadHeightSource(
+            heightmap_id=heightmap_id, coverage_id=coverage_id
+        ):
+            return (heightmap_id, coverage_id)
         case ProceduralHeightSource() | None:
             return ()
 
@@ -314,3 +317,21 @@ def catalog_ids_for_heightfield(heightfield: Heightfield) -> tuple[HeightmapId, 
         ids.extend(catalog_ids_for_source(layer.height))
         ids.extend(catalog_ids_for_source(layer.mask))
     return tuple(ids)
+
+
+def move_edit_layer(
+    layers: tuple[HeightEditLayer, ...],
+    index: int,
+    delta: int,
+) -> tuple[tuple[HeightEditLayer, ...], int] | None:
+    """swap layer with neighbor; None if out of range (nothing before index 0 / base)"""
+    if delta not in (-1, 1):
+        return None
+    if index < 0 or index >= len(layers):
+        return None
+    target: int = index + delta
+    if target < 0 or target >= len(layers):
+        return None
+    items: list[HeightEditLayer] = list(layers)
+    items[index], items[target] = items[target], items[index]
+    return (tuple(items), target)

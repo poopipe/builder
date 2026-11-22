@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,7 @@ from builder.ui.modifiers_panel import (
     sync_modifiers_focus,
     update_modifiers_panel,
 )
+from builder.heightfield.heightfield_types import Heightfield
 from builder.heightfield.sculpt_stroke import (
     FieldUvHit,
     SculptStrokeState,
@@ -680,7 +682,7 @@ class Application:
                         hit.u,
                         hit.v,
                     )
-                    apply_sculpt_stamp(
+                    stamped_hf: Heightfield | None = apply_sculpt_stamp(
                         self.application.heightmap_catalog,
                         heightfield_group.heightfield,
                         self.sculpt_stroke,
@@ -690,6 +692,15 @@ class Application:
                         self.ui.sculpt_radius,
                         self.ui.sculpt_intensity,
                     )
+                    if stamped_hf is not None:
+                        self.scene.nodes.add_nodes(
+                            [
+                                replace(
+                                    heightfield_group,
+                                    heightfield=stamped_hf,
+                                )
+                            ]
+                        )
                     self.ui.status = (
                         f"Sculpt {self.ui.sculpt_brush_kind} "
                         f"r={self.ui.sculpt_radius:g}"
@@ -701,16 +712,34 @@ class Application:
                 and self.sculpt_stroke is not None
                 and hit is not None
             ):
-                apply_sculpt_stamp(
-                    self.application.heightmap_catalog,
-                    heightfield_group.heightfield,
-                    self.sculpt_stroke,
-                    self.ui.sculpt_brush_kind,
-                    hit.u,
-                    hit.v,
-                    self.ui.sculpt_radius,
-                    self.ui.sculpt_intensity,
+                live_group: Node | None = self.scene.nodes.nodes.get(
+                    heightfield_group.id
                 )
+                live_hf: Heightfield | None = (
+                    None
+                    if live_group is None
+                    else live_group.heightfield
+                )
+                if live_hf is not None and live_group is not None:
+                    stamped_hf = apply_sculpt_stamp(
+                        self.application.heightmap_catalog,
+                        live_hf,
+                        self.sculpt_stroke,
+                        self.ui.sculpt_brush_kind,
+                        hit.u,
+                        hit.v,
+                        self.ui.sculpt_radius,
+                        self.ui.sculpt_intensity,
+                    )
+                    if stamped_hf is not None:
+                        self.scene.nodes.add_nodes(
+                            [
+                                replace(
+                                    live_group,
+                                    heightfield=stamped_hf,
+                                )
+                            ]
+                        )
             if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
                 self.sculpt_stroke = None
         elif self.sculpt_stroke is not None:

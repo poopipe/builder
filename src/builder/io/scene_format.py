@@ -57,7 +57,7 @@ from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.path.path_types import PathPointRecipe
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 26
+scene_format_version: int = 27
 scene_file_suffix: str = ".scene"
 
 
@@ -717,12 +717,15 @@ def height_layer_source_to_json(source: HeightLayerSource) -> dict[str, Any]:
                 "heightmap_id": heightmap_id.name,
             }
         case VectorRoadHeightSource(
-            layer_node_id=layer_node_id, heightmap_id=heightmap_id
+            layer_node_id=layer_node_id,
+            heightmap_id=heightmap_id,
+            coverage_id=coverage_id,
         ):
             return {
                 "source_type": source_type.name,
                 "layer_node_id": layer_node_id,
                 "heightmap_id": heightmap_id.name,
+                "coverage_id": coverage_id.name,
             }
 
 
@@ -816,9 +819,13 @@ def height_layer_source_from_json(data: Any, label: str) -> HeightLayerSource:
             road_map_id: Any = data.get("heightmap_id")
             if not isinstance(road_map_id, str) or road_map_id == "":
                 raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            road_cov_raw: Any = data.get("coverage_id")
+            if not isinstance(road_cov_raw, str) or road_cov_raw == "":
+                raise ValueError(f"{label}.coverage_id must be a non-empty string")
             return VectorRoadHeightSource(
                 layer_node_id=road_layer_raw,
                 heightmap_id=HeightmapId(road_map_id),
+                coverage_id=HeightmapId(road_cov_raw),
             )
 
 

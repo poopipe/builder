@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 from math import cos, pi, sin
+from pathlib import Path
 
 from pyray import (
     Color,
@@ -215,8 +216,10 @@ def apply_sculpt_stamp(
     v: float,
     radius_metres: float,
     intensity: float,
-) -> bool:
-    """stamp the active brush at field uv"""
+    *,
+    cache_dir: Path | None = None,
+) -> Heightfield | None:
+    """stamp the active brush at field uv; sculpt may return an updated recipe"""
     radius_u: float
     radius_v: float
     radius_u, radius_v = world_radius_to_uv(heightfield, radius_metres)
@@ -232,11 +235,14 @@ def apply_sculpt_stamp(
                 flatten_target=stroke.flatten_target,
             )
             params = default_brush_params(brush_kind)
-            return stamp_paint_layer(
+            stamp_paint_layer(
                 catalog, stroke.heightmap_id, brush_kind, params, context
             )
+            return None
         case SculptTargetType.sculpt:
-            return stamp_sculpt_layer(
+            _ok: bool
+            updated: Heightfield
+            _ok, updated = stamp_sculpt_layer(
                 catalog,
                 heightfield,
                 stroke.layer_index,
@@ -247,7 +253,9 @@ def apply_sculpt_stamp(
                 radius_v,
                 intensity,
                 stroke.flatten_target,
+                cache_dir=cache_dir,
             )
+            return updated
 
 
 sculpt_preview_y_bias: float = 0.15

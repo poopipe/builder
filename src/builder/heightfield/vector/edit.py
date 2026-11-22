@@ -270,6 +270,13 @@ def append_vector_road_edit_layer(
         height=height,
         cache_dir=cache_dir,
     )
+    coverage_id: HeightmapId = create_paint_heightmap(
+        catalog,
+        label=f"{label} Coverage",
+        width=width,
+        height=height,
+        cache_dir=cache_dir,
+    )
     layer_id: str = new_node_id()
     shape_id: str = new_node_id()
     shape_recipe: VectorShapeRecipe = default_road_shape_recipe(
@@ -297,7 +304,9 @@ def append_vector_road_edit_layer(
     edit: HeightEditLayer = HeightEditLayer(
         name=label,
         height=VectorRoadHeightSource(
-            layer_node_id=layer_id, heightmap_id=heightmap_id
+            layer_node_id=layer_id,
+            heightmap_id=heightmap_id,
+            coverage_id=coverage_id,
         ),
     )
     updated: Heightfield = replace(

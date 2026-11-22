@@ -84,12 +84,24 @@ def surface_y(
     z: float,
     size_x: float,
     size_z: float,
+    *,
+    below_layer_index: int | None = None,
 ) -> float:
-    """composited height at local xz, plus overlay lift"""
+    """composited height at local xz, plus overlay lift
+
+    when below_layer_index is set, sample only the stack under that edit layer
+    """
     u: float
     v: float
     u, v = world_xz_to_uv(x, z, size_x, size_z)
-    return sample_height(catalog, heightfield, u, v) + overlay_lift
+    if below_layer_index is None:
+        return sample_height(catalog, heightfield, u, v) + overlay_lift
+    return (
+        sample_height_below(
+            catalog, heightfield, below_layer_index, u, v
+        )
+        + overlay_lift
+    )
 
 
 def draw_tube(
@@ -132,6 +144,8 @@ def draw_segment_draped(
     size_z: float,
     radius: float,
     color: Color,
+    *,
+    below_layer_index: int | None = None,
 ) -> None:
     """draw one xz segment draped onto the terrain"""
     dx: float = bx - ax
@@ -148,8 +162,24 @@ def draw_segment_draped(
         z0: float = az + dz * t0
         x1: float = ax + dx * t1
         z1: float = az + dz * t1
-        y0: float = surface_y(catalog, heightfield, x0, z0, size_x, size_z)
-        y1: float = surface_y(catalog, heightfield, x1, z1, size_x, size_z)
+        y0: float = surface_y(
+            catalog,
+            heightfield,
+            x0,
+            z0,
+            size_x,
+            size_z,
+            below_layer_index=below_layer_index,
+        )
+        y1: float = surface_y(
+            catalog,
+            heightfield,
+            x1,
+            z1,
+            size_x,
+            size_z,
+            below_layer_index=below_layer_index,
+        )
         draw_tube(
             Vector3(x0, y0, z0),
             Vector3(x1, y1, z1),
@@ -229,6 +259,8 @@ def draw_polyline_shadow(
     size_x: float,
     size_z: float,
     radius: float,
+    *,
+    below_layer_index: int | None = None,
 ) -> None:
     """drape polyline segments onto the terrain"""
     if len(points) < 2:
@@ -248,6 +280,7 @@ def draw_polyline_shadow(
             size_z,
             radius,
             shadow_color,
+            below_layer_index=below_layer_index,
         )
 
 
@@ -278,6 +311,8 @@ def draw_shape_shadow(
     size_x: float,
     size_z: float,
     radius: float,
+    *,
+    below_layer_index: int | None = None,
 ) -> None:
     """terrain shadow for one vector shape"""
     polyline = shape_polyline_points(nodes, shape, heightfield_group_id)
@@ -287,7 +322,14 @@ def draw_shape_shadow(
     closed: bool
     points, closed = polyline
     draw_polyline_shadow(
-        catalog, heightfield, points, closed, size_x, size_z, radius
+        catalog,
+        heightfield,
+        points,
+        closed,
+        size_x,
+        size_z,
+        radius,
+        below_layer_index=below_layer_index,
     )
 
 
@@ -318,7 +360,13 @@ def draw_road_point_stems(
         offset_y: float
         point_id, px, pz, offset_y = entry
         shadow: float = surface_y(
-            catalog, heightfield, px, pz, size_x, size_z
+            catalog,
+            heightfield,
+            px,
+            pz,
+            size_x,
+            size_z,
+            below_layer_index=road_index,
         )
         u: float
         v: float
@@ -529,6 +577,9 @@ def draw_vector_overlays(
         if shape.vector_shape is not None
     ]
     is_road: bool = vector_layer_is_road(heightfield, layer.id)
+    road_index: int | None = (
+        vector_road_layer_index(heightfield, layer.id) if is_road else None
+    )
     # shadow only for the selected shape, before the translucent plane
     if selected_shape_id is not None:
         shape: Node
@@ -544,6 +595,7 @@ def draw_vector_overlays(
                 size_x,
                 size_z,
                 shadow_radius,
+                below_layer_index=road_index,
             )
             if is_road:
                 draw_road_point_stems(

@@ -11,13 +11,19 @@ from pyray import Camera3D, CameraProjection, Ray, Vector3
 
 from builder.generators.param_types import BoolParam, FloatParam
 from builder.heightfield.heightfield_types import (
+    HeightBlendMode,
+    HeightEditLayer,
     Heightfield,
+    ProceduralHeightSource,
+    ProceduralHeightType,
     VectorHeightSource,
     VectorRoadHeightSource,
     VectorSculptHeightSource,
     default_heightfield,
 )
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.paint import create_paint_heightmap
+from builder.heightfield.sample import sample_height
 from builder.heightfield.vector.circle import CircleShapeParams, circle_rasterize
 from builder.heightfield.vector.coords import (
     vector_layer_plane_y,
@@ -380,9 +386,9 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
             )
             self.assertIsNotNone(layer_decoded.vector_layer)
             self.assertIsNotNone(shape_decoded.vector_shape)
-            self.assertEqual(scene_format_version, 26)
+            self.assertEqual(scene_format_version, 27)
 
-    def test_document_version_is_26(self) -> None:
+    def test_document_version_is_27(self) -> None:
         document: SceneDocument = SceneDocument(
             version=scene_format_version,
             active_mesh_id=builtin_cube,
@@ -408,7 +414,7 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
         )
         text: str = dumps_document(document, {}, {}, {})
         loaded, _warnings = loads_document(text)
-        self.assertEqual(loaded.version, 26)
+        self.assertEqual(loaded.version, 27)
 
 
 class TestVectorSculpt(unittest.TestCase):
@@ -722,7 +728,9 @@ class TestVectorRoad(unittest.TestCase):
             self.assertEqual(len(updated.edit_layers), 1)
             match updated.edit_layers[0].height:
                 case VectorRoadHeightSource(
-                    layer_node_id=layer_node_id, heightmap_id=heightmap_id
+                    layer_node_id=layer_node_id,
+                    heightmap_id=heightmap_id,
+                    coverage_id=coverage_id,
                 ):
                     self.assertTrue(
                         any(
@@ -732,6 +740,7 @@ class TestVectorRoad(unittest.TestCase):
                         )
                     )
                     self.assertIn(heightmap_id, catalog.buffers)
+                    self.assertIn(coverage_id, catalog.buffers)
                 case _:
                     self.fail("expected VectorRoadHeightSource")
 
@@ -781,12 +790,17 @@ class TestVectorRoad(unittest.TestCase):
                     restored = height_layer_source_from_json(
                         payload, "test"
                     )
+                    self.assertIn("coverage_id", payload)
                     match restored:
                         case VectorRoadHeightSource(
-                            layer_node_id=layer_node_id
+                            layer_node_id=layer_node_id,
+                            coverage_id=coverage_id,
                         ):
                             self.assertEqual(
                                 layer_node_id, source.layer_node_id
+                            )
+                            self.assertEqual(
+                                coverage_id, source.coverage_id
                             )
                         case _:
                             self.fail("expected VectorRoadHeightSource")
@@ -808,6 +822,7 @@ class TestVectorRoad(unittest.TestCase):
         width: int = 32
         height: int = 32
         samples: list[float] = [0.0] * (width * height)
+        coverage: list[float] = [0.0] * (width * height)
 
         def below_at_uv(_u: float, _v: float) -> float:
             return 0.0
@@ -835,14 +850,17 @@ class TestVectorRoad(unittest.TestCase):
             sculpt_metres=True,
             below_at_uv=below_at_uv,
             ribbon_height_at_xz=ribbon_height,
+            coverage_samples=coverage,
         )
         # center texel on the path
         apply_weighted_sample(context, (height // 2) * width + (width // 2), 0.5, 0.5, 1.0)
         center: int = (height // 2) * width + (width // 2)
         self.assertAlmostEqual(samples[center], 5.0, places=2)
+        self.assertAlmostEqual(coverage[center], 1.0, places=2)
         # far off the path remains zero when weight is 0
         apply_weighted_sample(context, 0, 0.0, 0.0, 0.0)
         self.assertEqual(samples[0], 0.0)
+        self.assertEqual(coverage[0], 0.0)
 
     def test_road_point_y_not_snapped(self) -> None:
         point: Node = Node(
@@ -929,6 +947,7 @@ class TestVectorRoad(unittest.TestCase):
         width: int = 64
         height: int = 64
         samples: list[float] = [0.0] * (width * height)
+        coverage: list[float] = [0.0] * (width * height)
         target: float = 6.0
 
         def below_at_uv(_u: float, _v: float) -> float:
@@ -951,6 +970,7 @@ class TestVectorRoad(unittest.TestCase):
             sculpt_metres=True,
             below_at_uv=below_at_uv,
             ribbon_height_at_xz=ribbon_height,
+            coverage_samples=coverage,
         )
         polyline_rasterize(
             context,
@@ -1006,6 +1026,7 @@ class TestVectorRoad(unittest.TestCase):
         width: int = 64
         height: int = 64
         samples: list[float] = [0.0] * (width * height)
+        coverage: list[float] = [0.0] * (width * height)
         target: float = 5.0
         base_radius: float = 4.0
         points_xzw = road_half_width_points(
@@ -1037,6 +1058,7 @@ class TestVectorRoad(unittest.TestCase):
             below_at_uv=below_at_uv,
             ribbon_height_at_xz=ribbon_height,
             ribbon_half_width_at_xz=half_width_at,
+            coverage_samples=coverage,
         )
         polyline_rasterize(
             context,
@@ -1057,6 +1079,116 @@ class TestVectorRoad(unittest.TestCase):
         right_x: int = int(right_u * width)
         wide_i: int = int(far_v * height) * width + right_x
         self.assertGreater(samples[wide_i], 0.0)
+
+    def test_road_lerps_current_stack_below_to_absolute(self) -> None:
+        """road coverage lerps accum toward stored absolute, not a baked delta"""
+        catalog: HeightmapCatalog = HeightmapCatalog()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir: Path = Path(tmp)
+            height_id = create_paint_heightmap(
+                catalog,
+                label="road",
+                width=4,
+                height=4,
+                cache_dir=cache_dir,
+            )
+            coverage_id = create_paint_heightmap(
+                catalog,
+                label="road_cov",
+                width=4,
+                height=4,
+                cache_dir=cache_dir,
+            )
+            catalog.buffers[height_id].samples[:] = [4.0] * 16
+            catalog.buffers[coverage_id].samples[:] = [1.0] * 16
+            bump: HeightEditLayer = HeightEditLayer(
+                name="bump",
+                height=ProceduralHeightSource(
+                    ProceduralHeightType.constant, 10.0
+                ),
+                blend=HeightBlendMode.add,
+                amplitude=1.0,
+                offset=0.0,
+            )
+            road: HeightEditLayer = HeightEditLayer(
+                name="road",
+                height=VectorRoadHeightSource(
+                    layer_node_id="layer",
+                    heightmap_id=height_id,
+                    coverage_id=coverage_id,
+                ),
+            )
+            heightfield: Heightfield = Heightfield(
+                base=None,
+                base_height_min=FloatParam(0.0, label="Height Min"),
+                base_height_max=FloatParam(0.0, label="Height Max"),
+                edit_layers=(bump, road),
+            )
+            # lerp(10, 4, 1) = 4
+            self.assertAlmostEqual(
+                sample_height(catalog, heightfield, 0.5, 0.5), 4.0
+            )
+            # raise the below stack without re-baking the road
+            taller: HeightEditLayer = replace(
+                bump,
+                height=ProceduralHeightSource(
+                    ProceduralHeightType.constant, 20.0
+                ),
+            )
+            raised: Heightfield = replace(
+                heightfield, edit_layers=(taller, road)
+            )
+            # still absolute 4 — not 4 + (20-10) from a stale delta
+            self.assertAlmostEqual(
+                sample_height(catalog, raised, 0.5, 0.5), 4.0
+            )
+
+    def test_road_zero_coverage_keeps_stack_below(self) -> None:
+        catalog: HeightmapCatalog = HeightmapCatalog()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            height_id = create_paint_heightmap(
+                catalog,
+                label="road",
+                width=4,
+                height=4,
+                cache_dir=cache_dir,
+            )
+            coverage_id = create_paint_heightmap(
+                catalog,
+                label="road_cov",
+                width=4,
+                height=4,
+                cache_dir=cache_dir,
+            )
+            catalog.buffers[height_id].samples[:] = [4.0] * 16
+            catalog.buffers[coverage_id].samples[:] = [0.0] * 16
+            bump = HeightEditLayer(
+                name="bump",
+                height=ProceduralHeightSource(
+                    ProceduralHeightType.constant, 10.0
+                ),
+                blend=HeightBlendMode.add,
+                amplitude=1.0,
+                offset=0.0,
+            )
+            road = HeightEditLayer(
+                name="road",
+                height=VectorRoadHeightSource(
+                    layer_node_id="layer",
+                    heightmap_id=height_id,
+                    coverage_id=coverage_id,
+                ),
+            )
+            heightfield = Heightfield(
+                base=None,
+                base_height_min=FloatParam(0.0, label="Height Min"),
+                base_height_max=FloatParam(0.0, label="Height Max"),
+                edit_layers=(bump, road),
+            )
+            self.assertAlmostEqual(
+                sample_height(catalog, heightfield, 0.5, 0.5), 10.0
+            )
 
     def test_grade_1_uses_knot_absolute_lerp(self) -> None:
         def surface_at_xz(x: float, _z: float) -> float:

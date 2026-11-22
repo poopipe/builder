@@ -38,6 +38,7 @@ from builder.heightfield.heightfield_types import (
     VectorHeightSource,
     VectorRoadHeightSource,
     VectorSculptHeightSource,
+    move_edit_layer,
 )
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapCatalog
 from builder.heightfield.regenerate import HeightfieldSceneHost, set_heightfield
@@ -1217,6 +1218,19 @@ def update_height_layers_panel(
         )
         replace_layers(tuple(layers))
 
+    def move_selected(delta: int) -> None:
+        ui.clear_focus()
+        moved: tuple[tuple[HeightEditLayer, ...], int] | None = move_edit_layer(
+            heightfield.edit_layers, selected_index, delta
+        )
+        if moved is None:
+            return
+        new_layers: tuple[HeightEditLayer, ...]
+        new_index: int
+        new_layers, new_index = moved
+        ui.height_layers_selected_index = new_index
+        replace_layers(new_layers)
+
     buttons.append(
         Button(
             label="Enabled" if selected.enabled else "Disabled",
@@ -1225,6 +1239,24 @@ def update_height_layers_panel(
         )
     )
     y += row_h + ui_button_gap
+    if selected_index > 0:
+        buttons.append(
+            Button(
+                label="Move up",
+                on_click=lambda: move_selected(-1),
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+    if selected_index < len(heightfield.edit_layers) - 1:
+        buttons.append(
+            Button(
+                label="Move down",
+                on_click=lambda: move_selected(1),
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
     buttons.append(
         Button(
             label="Remove layer",

@@ -72,7 +72,7 @@ def layer_source_sample_type(
             | SculptHeightSource(heightmap_id=heightmap_id)
             | VectorHeightSource(heightmap_id=heightmap_id)
             | VectorSculptHeightSource(heightmap_id=heightmap_id)
-            | VectorRoadHeightSource(heightmap_id=heightmap_id)
+            | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
             asset: HeightmapAsset | None = catalog.entries.get(heightmap_id)
             if asset is None:
@@ -194,7 +194,7 @@ def sample_source(
             | SculptHeightSource(heightmap_id=heightmap_id)
             | VectorHeightSource(heightmap_id=heightmap_id)
             | VectorSculptHeightSource(heightmap_id=heightmap_id)
-            | VectorRoadHeightSource(heightmap_id=heightmap_id)
+            | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -289,9 +289,7 @@ def apply_edit_layer_height(
                             )
                     m: float = clamp01(coverage) * opacity
                     return accum * (1.0 - m) + delta_or_abs * m
-        case VectorSculptHeightSource(heightmap_id=heightmap_id) | VectorRoadHeightSource(
-            heightmap_id=heightmap_id
-        ):
+        case VectorSculptHeightSource(heightmap_id=heightmap_id):
             sculpt_buf: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
             )
@@ -301,6 +299,27 @@ def apply_edit_layer_height(
                 else sample_buffer(sculpt_buf, layer_u, layer_v, wrap=True)
             )
             return accum + delta * opacity
+        case VectorRoadHeightSource(
+            heightmap_id=heightmap_id, coverage_id=coverage_id
+        ):
+            road_buf: HeightmapBuffer | None = ensure_heightmap_buffer(
+                catalog, heightmap_id
+            )
+            absolute: float = (
+                0.0
+                if road_buf is None
+                else sample_buffer(road_buf, layer_u, layer_v, wrap=True)
+            )
+            road_coverage: float = 0.0
+            cov_buf: HeightmapBuffer | None = ensure_heightmap_buffer(
+                catalog, coverage_id
+            )
+            if cov_buf is not None:
+                road_coverage = sample_buffer(
+                    cov_buf, layer_u, layer_v, wrap=True
+                )
+            road_mix: float = clamp01(road_coverage) * opacity
+            return accum * (1.0 - road_mix) + absolute * road_mix
         case _:
             raw: float = sample_source(
                 catalog, layer.height, layer_u, layer_v, missing=0.0, wrap=True
@@ -373,7 +392,7 @@ def source_sample_bounds(
             | SculptHeightSource(heightmap_id=heightmap_id)
             | VectorHeightSource(heightmap_id=heightmap_id)
             | VectorSculptHeightSource(heightmap_id=heightmap_id)
-            | VectorRoadHeightSource(heightmap_id=heightmap_id)
+            | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -440,12 +459,14 @@ def layer_height_bounds(
                 height_min += s0 * opacity
                 height_max += s1 * opacity
                 continue
-            case VectorSculptHeightSource() | VectorRoadHeightSource():
+            case VectorSculptHeightSource():
                 s0, s1 = source_sample_bounds(catalog, layer.height)
                 height_min += s0 * opacity
                 height_max += s1 * opacity
                 continue
-            case SculptHeightSource(mode=SculptHeightMode.absolute):
+            case VectorRoadHeightSource() | SculptHeightSource(
+                mode=SculptHeightMode.absolute
+            ):
                 s0, s1 = source_sample_bounds(catalog, layer.height)
                 # coverage can pull toward absolute heights
                 height_min = height_min if height_min < s0 else s0

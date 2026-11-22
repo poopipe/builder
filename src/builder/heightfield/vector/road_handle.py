@@ -20,11 +20,12 @@ from pyray import (
 
 from builder.heightfield.heightfield_types import Heightfield, heightfield_layout
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
-from builder.heightfield.sample import sample_height
+from builder.heightfield.sample import sample_height_below
 from builder.heightfield.vector.coords import (
     node_hf_local_position,
     vector_layer_is_road,
     vector_point_belongs_to_road,
+    vector_road_layer_index,
 )
 from builder.heightfield.vector.overlay_scale import (
     overlay_line_pixels,
@@ -130,7 +131,13 @@ def pick_road_height_handle(
     su, sv = world_xz_to_uv(
         local_x, local_z, layout.size_x, layout.size_z
     )
-    shadow_y: float = sample_height(catalog, heightfield, su, sv) + _shadow_lift
+    road_index: int | None = vector_road_layer_index(heightfield, layer_id)
+    if road_index is None:
+        return None
+    shadow_y: float = (
+        sample_height_below(catalog, heightfield, road_index, su, sv)
+        + _shadow_lift
+    )
     hf_world: Matrix = world_matrix(nodes, hf_id)
     distance: float = vector3_distance(
         camera.position, matrix_translation(hf_world)

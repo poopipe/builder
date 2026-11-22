@@ -66,17 +66,58 @@ def neighborhood_average(
     return total / float(count)
 
 
+# normalized radius inside which flatten weight stays 1
+flatten_falloff_inner: float = 0.65
+
+
+def brush_normalized_dist(
+    u: float,
+    v: float,
+    context: BrushStrokeContext,
+) -> float:
+    """ellipse-normalized distance from brush center (1 at rim)"""
+    du: float = (
+        (u - context.center_u) / context.radius_u
+        if context.radius_u > 1e-8
+        else 0.0
+    )
+    dv: float = (
+        (v - context.center_v) / context.radius_v
+        if context.radius_v > 1e-8
+        else 0.0
+    )
+    return (du * du + dv * dv) ** 0.5
+
+
 def brush_falloff(
     u: float,
     v: float,
     context: BrushStrokeContext,
 ) -> float:
     """soft disk falloff 0..1 at field uv (smoothstep on normalized radius)"""
-    du: float = (u - context.center_u) / context.radius_u if context.radius_u > 1e-8 else 0.0
-    dv: float = (v - context.center_v) / context.radius_v if context.radius_v > 1e-8 else 0.0
-    dist: float = (du * du + dv * dv) ** 0.5
+    dist: float = brush_normalized_dist(u, v, context)
     if dist >= 1.0:
         return 0.0
     # smoothstep(0, 1, 1 - dist)
     t: float = 1.0 - dist
+    return t * t * (3.0 - 2.0 * t)
+
+
+def brush_falloff_flatten(
+    u: float,
+    v: float,
+    context: BrushStrokeContext,
+) -> float:
+    """flatten falloff: weight 1 across an inner plateau, soft only on the rim"""
+    dist: float = brush_normalized_dist(u, v, context)
+    if dist >= 1.0:
+        return 0.0
+    inner: float = flatten_falloff_inner
+    if dist <= inner:
+        return 1.0
+    # smoothstep across the outer band inner..1
+    span: float = 1.0 - inner
+    if span <= 1e-8:
+        return 1.0
+    t: float = (1.0 - dist) / span
     return t * t * (3.0 - 2.0 * t)

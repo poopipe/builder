@@ -69,6 +69,8 @@ class VectorRasterContext:
     ribbon_height_at_xz: RibbonTargetAtXz | None = None
     # when set, road stroke uses per-sample half-width (metres)
     ribbon_half_width_at_xz: RibbonScalarAtXz | None = None
+    # road coverage 0..1 (same size as samples); None for non-road rasters
+    coverage_samples: list[float] | None = None
 
 
 type RasterizeShape = Callable[

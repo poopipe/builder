@@ -13,6 +13,7 @@ from builder.heightfield.heightfield_types import (
     Heightfield,
     ProceduralHeightSource,
     ProceduralHeightType,
+    move_edit_layer,
 )
 from builder.heightfield.heightmap_catalog import (
     HeightmapAsset,
@@ -156,6 +157,65 @@ class TestSampleEditStack(unittest.TestCase):
         # right half → sample 1.0 → signed 1 → offset + amplitude
         at_hi: float = sample_height(catalog, heightfield, 0.75, 0.0)
         self.assertAlmostEqual(at_hi, 12.0)
+
+
+class TestMoveEditLayer(unittest.TestCase):
+    def test_swap_changes_composite_order(self) -> None:
+        catalog: HeightmapCatalog = HeightmapCatalog()
+        multiply: HeightEditLayer = HeightEditLayer(
+            name="multiply",
+            height=ProceduralHeightSource(ProceduralHeightType.constant, 2.0),
+            blend=HeightBlendMode.multiply,
+            opacity=FloatParam(1.0, label="Opacity"),
+            amplitude=1.0,
+            offset=0.0,
+        )
+        add: HeightEditLayer = HeightEditLayer(
+            name="add",
+            height=ProceduralHeightSource(ProceduralHeightType.constant, 3.0),
+            blend=HeightBlendMode.add,
+            opacity=FloatParam(1.0, label="Opacity"),
+            amplitude=1.0,
+            offset=0.0,
+        )
+        heightfield: Heightfield = Heightfield(
+            base=None,
+            base_height_min=FloatParam(1.0, label="Height Min"),
+            base_height_max=FloatParam(1.0, label="Height Max"),
+            edit_layers=(multiply, add),
+        )
+        # (1 * 2) + 3
+        self.assertAlmostEqual(sample_height(catalog, heightfield, 0.5, 0.5), 5.0)
+
+        moved: tuple[tuple[HeightEditLayer, ...], int] | None = move_edit_layer(
+            heightfield.edit_layers, 0, 1
+        )
+        self.assertIsNotNone(moved)
+        assert moved is not None
+        new_layers: tuple[HeightEditLayer, ...]
+        new_index: int
+        new_layers, new_index = moved
+        self.assertEqual(new_index, 1)
+        self.assertEqual(new_layers[0].name, "add")
+        self.assertEqual(new_layers[1].name, "multiply")
+        reordered: Heightfield = Heightfield(
+            base=None,
+            base_height_min=FloatParam(1.0, label="Height Min"),
+            base_height_max=FloatParam(1.0, label="Height Max"),
+            edit_layers=new_layers,
+        )
+        # (1 + 3) * 2
+        self.assertAlmostEqual(sample_height(catalog, reordered, 0.5, 0.5), 8.0)
+
+    def test_cannot_move_before_base(self) -> None:
+        layer: HeightEditLayer = HeightEditLayer(
+            name="only",
+            height=ProceduralHeightSource(ProceduralHeightType.constant, 1.0),
+            blend=HeightBlendMode.add,
+        )
+        layers: tuple[HeightEditLayer, ...] = (layer,)
+        self.assertIsNone(move_edit_layer(layers, 0, -1))
+        self.assertIsNone(move_edit_layer(layers, 0, 1))
 
 
 class TestHeightfieldSceneJson(unittest.TestCase):

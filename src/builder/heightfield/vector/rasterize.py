@@ -130,6 +130,7 @@ def rasterize_vector_layer(
     sculpt_metres: bool,
     layer_index: int,
     road_metres: bool = False,
+    coverage_id: HeightmapId | None = None,
 ) -> bool:
     """clear and rebuild one vector layer buffer from its shape children"""
     layer_node: Node | None = nodes.get(layer_node_id)
@@ -138,6 +139,13 @@ def rasterize_vector_layer(
     buffer: HeightmapBuffer | None = catalog.buffers.get(heightmap_id)
     if buffer is None:
         return False
+    coverage_buffer: HeightmapBuffer | None = None
+    if road_metres:
+        if coverage_id is None:
+            return False
+        coverage_buffer = catalog.buffers.get(coverage_id)
+        if coverage_buffer is None:
+            return False
     heightfield_group_id: str | None = find_heightfield_group_for_descendant(
         nodes, layer_node_id
     )
@@ -145,6 +153,8 @@ def rasterize_vector_layer(
         return False
     layout = heightfield_layout(heightfield)
     clear_buffer_samples(buffer)
+    if coverage_buffer is not None:
+        clear_buffer_samples(coverage_buffer)
 
     def below_at_uv(u: float, v: float) -> float:
         return sample_height_below(
@@ -277,9 +287,14 @@ def rasterize_vector_layer(
             below_at_uv=below_at_uv if (sculpt_metres or road_metres) else None,
             ribbon_height_at_xz=ribbon_height,
             ribbon_half_width_at_xz=ribbon_half_width,
+            coverage_samples=(
+                None if coverage_buffer is None else coverage_buffer.samples
+            ),
         )
         spec.rasterize(context, points, recipe.params)
     touch_heightmap_buffer(catalog, heightmap_id)
+    if coverage_id is not None:
+        touch_heightmap_buffer(catalog, coverage_id)
     return True
 
 
@@ -318,7 +333,9 @@ def regenerate_vector_sources(
                     layer_index=layer_index,
                 )
             case VectorRoadHeightSource(
-                layer_node_id=layer_node_id, heightmap_id=heightmap_id
+                layer_node_id=layer_node_id,
+                heightmap_id=heightmap_id,
+                coverage_id=coverage_id,
             ):
                 rasterize_vector_layer(
                     catalog,
@@ -329,6 +346,7 @@ def regenerate_vector_sources(
                     sculpt_metres=True,
                     layer_index=layer_index,
                     road_metres=True,
+                    coverage_id=coverage_id,
                 )
             case _:
                 pass
@@ -373,7 +391,9 @@ def regenerate_vector_layer_for_node(
                     layer_index=layer_index,
                 )
             case VectorRoadHeightSource(
-                layer_node_id=source_layer_id, heightmap_id=heightmap_id
+                layer_node_id=source_layer_id,
+                heightmap_id=heightmap_id,
+                coverage_id=coverage_id,
             ) if source_layer_id == layer_node_id:
                 return rasterize_vector_layer(
                     catalog,
@@ -384,6 +404,7 @@ def regenerate_vector_layer_for_node(
                     sculpt_metres=True,
                     layer_index=layer_index,
                     road_metres=True,
+                    coverage_id=coverage_id,
                 )
             case _:
                 pass

@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from builder.heightfield.brushes.brush_types import brush_falloff, neighborhood_average
+from builder.heightfield.brushes.brush_types import (
+    brush_falloff,
+    brush_falloff_flatten,
+    neighborhood_average,
+)
 from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.heightfield_types import (
     HeightEditLayer,
@@ -253,19 +257,45 @@ def stamp_sculpt_layer(
     radius_v: float,
     intensity_metres: float,
     flatten_target: float | None,
-) -> bool:
-    """apply one metre brush stamp to a sculpt layer using the stack below"""
+    *,
+    cache_dir: Path | None = None,
+) -> tuple[bool, Heightfield]:
+    """apply one metre brush stamp; flatten promotes delta layers to absolute+coverage"""
     if layer_index < 0 or layer_index >= len(heightfield.edit_layers):
-        return False
+        return (False, heightfield)
     layer: HeightEditLayer = heightfield.edit_layers[layer_index]
     match layer.height:
         case SculptHeightSource() as source:
             pass
         case _:
-            return False
+            return (False, heightfield)
+    is_flatten_kind: bool = brush_kind in (
+        "flatten",
+        "flatten_up",
+        "flatten_down",
+    )
+    # flatten replaces the live stack below; absolute+coverage avoids baking
+    # an inverse of soft features underneath (eg. vector sculpt falloff)
+    if is_flatten_kind and source.mode is SculptHeightMode.delta:
+        resolve_cache: Path = (
+            Path.cwd() / "heightmaps" if cache_dir is None else cache_dir
+        )
+        heightfield = set_sculpt_layer_mode(
+            catalog,
+            heightfield,
+            layer_index,
+            SculptHeightMode.absolute,
+            cache_dir=resolve_cache,
+        )
+        layer = heightfield.edit_layers[layer_index]
+        match layer.height:
+            case SculptHeightSource() as source:
+                pass
+            case _:
+                return (False, heightfield)
     height_buf: HeightmapBuffer | None = catalog.buffers.get(source.heightmap_id)
     if height_buf is None:
-        return False
+        return (False, heightfield)
     width: int = height_buf.width
     height: int = height_buf.height
     samples: list[float] = height_buf.samples
@@ -276,7 +306,7 @@ def stamp_sculpt_layer(
     ):
         cov_buf: HeightmapBuffer | None = catalog.buffers.get(source.coverage_id)
         if cov_buf is None or cov_buf.width != width or cov_buf.height != height:
-            return False
+            return (False, heightfield)
         coverage = cov_buf.samples
 
     from builder.heightfield.brushes.brush_types import BrushStrokeContext
@@ -298,14 +328,9 @@ def stamp_sculpt_layer(
     y0: int = max(0, int(cy - radius_px_v) - 1)
     y1: int = min(height - 1, int(cy + radius_px_v) + 1)
     strength: float = max(0.0, min(1.0, abs(float(intensity_metres))))
-    is_flatten_kind: bool = brush_kind in (
-        "flatten",
-        "flatten_up",
-        "flatten_down",
-    )
     if is_flatten_kind:
         if flatten_target is None:
-            return False
+            return (False, heightfield)
         strength = max(0.0, min(1.0, float(intensity_metres)))
     if brush_kind == "smooth":
         strength = max(0.0, min(1.0, float(intensity_metres)))
@@ -358,7 +383,11 @@ def stamp_sculpt_layer(
         for x in range(x0, x1 + 1):
             u: float = (float(x) + 0.5) / float(width)
             v: float = (float(y) + 0.5) / float(height)
-            w: float = brush_falloff(u, v, context)
+            w: float = (
+                brush_falloff_flatten(u, v, context)
+                if is_flatten_kind
+                else brush_falloff(u, v, context)
+            )
             if w <= 0.0:
                 continue
             index: int = y * width + x
@@ -431,4 +460,4 @@ def stamp_sculpt_layer(
     touch_heightmap_buffer(catalog, source.heightmap_id)
     if coverage is not None and source.coverage_id is not None:
         touch_heightmap_buffer(catalog, source.coverage_id)
-    return True
+    return (True, heightfield)

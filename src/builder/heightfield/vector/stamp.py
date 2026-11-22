@@ -7,6 +7,7 @@ from math import hypot
 from builder.heightfield.brushes.brush_types import (
     BrushStrokeContext,
     brush_falloff,
+    brush_falloff_flatten,
     clamp_paint_sample,
 )
 from builder.heightfield.brushes.registry import get_brush_spec
@@ -87,19 +88,30 @@ def apply_road_weight(
     v: float,
     weight: float,
 ) -> None:
-    """flatten sculpt delta toward the road ribbon height at this texel"""
+    """write absolute ribbon height and coverage for a road texel"""
     if weight <= 0.0:
         return
-    if context.ribbon_height_at_xz is None or context.below_at_uv is None:
+    if (
+        context.ribbon_height_at_xz is None
+        or context.below_at_uv is None
+        or context.coverage_samples is None
+    ):
         return
     wx: float = (u - 0.5) * context.size_x
     wz: float = (v - 0.5) * context.size_z
     below: float = context.below_at_uv(u, v)
     target: float = float(context.ribbon_height_at_xz(wx, wz, below))
-    desired: float = target - below
-    current: float = context.samples[index]
     mix: float = weight * max(0.0, min(1.0, float(context.intensity)))
-    context.samples[index] = current + (desired - current) * mix
+    if mix <= 0.0:
+        return
+    cov: float = max(0.0, min(1.0, context.coverage_samples[index]))
+    stored: float = context.samples[index]
+    # store absolute target; soft edge is coverage at composite time
+    if cov <= 1e-8:
+        context.samples[index] = target
+    else:
+        context.samples[index] = stored + (target - stored) * mix
+    context.coverage_samples[index] = cov + (1.0 - cov) * mix
 
 
 def apply_weighted_sample(
@@ -158,7 +170,11 @@ def stamp_sculpt_brush_at_uv(
         for x in range(x0, x1 + 1):
             su: float = (float(x) + 0.5) / float(width)
             sv: float = (float(y) + 0.5) / float(height)
-            w: float = brush_falloff(su, sv, stroke)
+            w: float = (
+                brush_falloff_flatten(su, sv, stroke)
+                if is_flatten_brush(context.brush_kind)
+                else brush_falloff(su, sv, stroke)
+            )
             if w <= 0.0:
                 continue
             apply_sculpt_weight(
