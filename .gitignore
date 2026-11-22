@@ -5,3 +5,6 @@ ufbx_bridge/build/
 *.scene
 logs/
 heightmaps/
+height_out.asc
+height_out.png
+height_out_meta.json
