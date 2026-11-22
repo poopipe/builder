@@ -11,6 +11,7 @@ from builder.heightfield.vector.stamp import (
     path_stroke_weight,
     point_in_polygon,
     soft_band_weight,
+    world_aabb_to_texel_range,
 )
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
@@ -37,16 +38,33 @@ def polyline_stroke_sdf(
     max_x: float = max(p[0] for p in points) + pad
     min_z: float = min(p[1] for p in points) - pad
     max_z: float = max(p[1] for p in points) + pad
+    ranges: tuple[int, int, int, int] | None = world_aabb_to_texel_range(
+        min_x,
+        max_x,
+        min_z,
+        max_z,
+        context.size_x,
+        context.size_z,
+        context.width,
+        context.height,
+    )
+    if ranges is None:
+        return
+    x0: int
+    x1: int
+    y0: int
+    y1: int
+    x0, x1, y0, y1 = ranges
+    inv_w: float = 1.0 / float(context.width)
+    inv_h: float = 1.0 / float(context.height)
     y: int
-    for y in range(context.height):
+    for y in range(y0, y1):
+        v: float = (float(y) + 0.5) * inv_h
+        wz: float = (v - 0.5) * context.size_z
         x: int
-        for x in range(context.width):
-            u: float = (float(x) + 0.5) / float(context.width)
-            v: float = (float(y) + 0.5) / float(context.height)
+        for x in range(x0, x1):
+            u: float = (float(x) + 0.5) * inv_w
             wx: float = (u - 0.5) * context.size_x
-            wz: float = (v - 0.5) * context.size_z
-            if wx < min_x or wx > max_x or wz < min_z or wz > max_z:
-                continue
             dist: float = distance_to_segments(wx, wz, points, closed)
             weight: float = path_stroke_weight(context, dist, x=wx, z=wz)
             if weight <= 0.0:
@@ -82,16 +100,33 @@ def polyline_rasterize(
             max_x: float = max(p[0] for p in points) + pad
             min_z: float = min(p[1] for p in points) - pad
             max_z: float = max(p[1] for p in points) + pad
+            ranges: tuple[int, int, int, int] | None = world_aabb_to_texel_range(
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+                context.size_x,
+                context.size_z,
+                context.width,
+                context.height,
+            )
+            if ranges is None:
+                return
+            x0: int
+            x1: int
+            y0: int
+            y1: int
+            x0, x1, y0, y1 = ranges
+            inv_w: float = 1.0 / float(context.width)
+            inv_h: float = 1.0 / float(context.height)
             y: int
-            for y in range(context.height):
+            for y in range(y0, y1):
+                v: float = (float(y) + 0.5) * inv_h
+                wz: float = (v - 0.5) * context.size_z
                 x: int
-                for x in range(context.width):
-                    u: float = (float(x) + 0.5) / float(context.width)
-                    v: float = (float(y) + 0.5) / float(context.height)
+                for x in range(x0, x1):
+                    u: float = (float(x) + 0.5) * inv_w
                     wx: float = (u - 0.5) * context.size_x
-                    wz: float = (v - 0.5) * context.size_z
-                    if wx < min_x or wx > max_x or wz < min_z or wz > max_z:
-                        continue
                     dist: float = distance_to_segments(
                         wx, wz, points, closed=True
                     )

@@ -10,6 +10,7 @@ from builder.heightfield.vector.stamp import (
     apply_weighted_sample,
     path_stroke_weight,
     soft_band_weight,
+    world_aabb_to_texel_range,
 )
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
@@ -53,23 +54,40 @@ def circle_rasterize(
     cz: float
     cx, cz = points[0]
     radius: float = max(0.1, float(params.radius.value))
+    pad: float = context.radius_metres
+    min_x: float = cx - radius - pad
+    max_x: float = cx + radius + pad
+    min_z: float = cz - radius - pad
+    max_z: float = cz + radius + pad
+    ranges: tuple[int, int, int, int] | None = world_aabb_to_texel_range(
+        min_x,
+        max_x,
+        min_z,
+        max_z,
+        context.size_x,
+        context.size_z,
+        context.width,
+        context.height,
+    )
+    if ranges is None:
+        return
+    x0: int
+    x1: int
+    y0: int
+    y1: int
+    x0, x1, y0, y1 = ranges
+    inv_w: float = 1.0 / float(context.width)
+    inv_h: float = 1.0 / float(context.height)
     match context.apply_mode:
         case VectorApplyMode.stroke:
-            pad: float = context.radius_metres
-            min_x: float = cx - radius - pad
-            max_x: float = cx + radius + pad
-            min_z: float = cz - radius - pad
-            max_z: float = cz + radius + pad
             y: int
-            for y in range(context.height):
+            for y in range(y0, y1):
+                v: float = (float(y) + 0.5) * inv_h
+                wz: float = (v - 0.5) * context.size_z
                 x: int
-                for x in range(context.width):
-                    u: float = (float(x) + 0.5) / float(context.width)
-                    v: float = (float(y) + 0.5) / float(context.height)
+                for x in range(x0, x1):
+                    u: float = (float(x) + 0.5) * inv_w
                     wx: float = (u - 0.5) * context.size_x
-                    wz: float = (v - 0.5) * context.size_z
-                    if wx < min_x or wx > max_x or wz < min_z or wz > max_z:
-                        continue
                     dist_rim: float = abs(hypot(wx - cx, wz - cz) - radius)
                     weight: float = path_stroke_weight(
                         context, dist_rim, x=wx, z=wz
@@ -84,19 +102,12 @@ def circle_rasterize(
                         weight,
                     )
         case VectorApplyMode.fill:
-            pad = context.radius_metres
-            min_x = cx - radius - pad
-            max_x = cx + radius + pad
-            min_z = cz - radius - pad
-            max_z = cz + radius + pad
-            for y in range(context.height):
-                for x in range(context.width):
-                    u = (float(x) + 0.5) / float(context.width)
-                    v = (float(y) + 0.5) / float(context.height)
+            for y in range(y0, y1):
+                v = (float(y) + 0.5) * inv_h
+                wz = (v - 0.5) * context.size_z
+                for x in range(x0, x1):
+                    u = (float(x) + 0.5) * inv_w
                     wx = (u - 0.5) * context.size_x
-                    wz = (v - 0.5) * context.size_z
-                    if wx < min_x or wx > max_x or wz < min_z or wz > max_z:
-                        continue
                     dist_center: float = hypot(wx - cx, wz - cz)
                     signed: float = dist_center - radius
                     weight = soft_band_weight(

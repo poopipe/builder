@@ -54,6 +54,32 @@ def apply_sculpt_weight(
     # smooth and unknown kinds: no-op on sculpt vector
 
 
+def world_aabb_to_texel_range(
+    min_x: float,
+    max_x: float,
+    min_z: float,
+    max_z: float,
+    size_x: float,
+    size_z: float,
+    width: int,
+    height: int,
+) -> tuple[int, int, int, int] | None:
+    """inclusive-exclusive texel ranges covering a world xz aabb; None if empty"""
+    if width < 1 or height < 1 or size_x <= 1e-8 or size_z <= 1e-8:
+        return None
+    u0: float = (min_x + 0.5 * size_x) / size_x
+    u1: float = (max_x + 0.5 * size_x) / size_x
+    v0: float = (min_z + 0.5 * size_z) / size_z
+    v1: float = (max_z + 0.5 * size_z) / size_z
+    x0: int = max(0, int(u0 * float(width) - 0.5))
+    x1: int = min(width, int(u1 * float(width) + 0.5) + 1)
+    y0: int = max(0, int(v0 * float(height) - 0.5))
+    y1: int = min(height, int(v1 * float(height) + 0.5) + 1)
+    if x0 >= x1 or y0 >= y1:
+        return None
+    return (x0, x1, y0, y1)
+
+
 def apply_road_weight(
     context: VectorRasterContext,
     index: int,
@@ -68,8 +94,8 @@ def apply_road_weight(
         return
     wx: float = (u - 0.5) * context.size_x
     wz: float = (v - 0.5) * context.size_z
-    target: float = float(context.ribbon_height_at_xz(wx, wz))
     below: float = context.below_at_uv(u, v)
+    target: float = float(context.ribbon_height_at_xz(wx, wz, below))
     desired: float = target - below
     current: float = context.samples[index]
     mix: float = weight * max(0.0, min(1.0, float(context.intensity)))

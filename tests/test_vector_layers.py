@@ -812,7 +812,7 @@ class TestVectorRoad(unittest.TestCase):
         def below_at_uv(_u: float, _v: float) -> float:
             return 0.0
 
-        def ribbon_height(x: float, _z: float) -> float:
+        def ribbon_height(x: float, _z: float, _below: float) -> float:
             # absolute heights already (surface 0 + offsets 2 and 8)
             return nearest_segment_lerp_y(
                 x,
@@ -934,7 +934,7 @@ class TestVectorRoad(unittest.TestCase):
         def below_at_uv(_u: float, _v: float) -> float:
             return 0.0
 
-        def ribbon_height(_x: float, _z: float) -> float:
+        def ribbon_height(_x: float, _z: float, _below: float) -> float:
             return target
 
         context: VectorRasterContext = VectorRasterContext(
@@ -1016,7 +1016,7 @@ class TestVectorRoad(unittest.TestCase):
         def below_at_uv(_u: float, _v: float) -> float:
             return 0.0
 
-        def ribbon_height(_x: float, _z: float) -> float:
+        def ribbon_height(_x: float, _z: float, _below: float) -> float:
             return target
 
         def half_width_at(x: float, z: float) -> float:

@@ -27,7 +27,6 @@ from builder.heightfield.vector.registry import get_vector_shape_spec
 from builder.heightfield.vector.road import (
     absolute_road_points,
     blend_ribbon_height,
-    drape_ribbon_height,
     ribbon_half_width_circle,
     ribbon_half_width_polyline,
     ribbon_half_width_rectangle,
@@ -39,7 +38,8 @@ from builder.heightfield.vector.road import (
 )
 from builder.heightfield.vector.stamp import is_flatten_brush
 from builder.heightfield.vector.vector_types import (
-    RibbonHeightAtXz,
+    RibbonScalarAtXz,
+    RibbonTargetAtXz,
     VectorRasterContext,
     VectorShapeRecipe,
     world_xz_to_uv,
@@ -61,7 +61,7 @@ def road_ribbon_height_fn(
     kind: str,
     points_abs_xzy: list[tuple[float, float, float]],
     closed: bool,
-) -> RibbonHeightAtXz:
+) -> RibbonScalarAtXz:
     """build a ribbon height callback for one road shape (absolute point heights)"""
 
     def height_at(x: float, z: float) -> float:
@@ -78,11 +78,32 @@ def road_ribbon_height_fn(
     return height_at
 
 
+def road_ribbon_offset_fn(
+    kind: str,
+    points_offset_xzy: list[tuple[float, float, float]],
+    closed: bool,
+) -> RibbonScalarAtXz:
+    """build a path-offset callback (no surface sample)"""
+
+    def offset_at(x: float, z: float) -> float:
+        match kind:
+            case "circle":
+                return ribbon_height_circle(x, z, points_offset_xzy)
+            case "rectangle":
+                return ribbon_height_rectangle(x, z, points_offset_xzy)
+            case _:
+                return ribbon_height_polyline(
+                    x, z, points_offset_xzy, closed
+                )
+
+    return offset_at
+
+
 def road_ribbon_half_width_fn(
     kind: str,
     points_xzw: list[tuple[float, float, float]],
     closed: bool,
-) -> RibbonHeightAtXz:
+) -> RibbonScalarAtXz:
     """build a half-width callback for one road shape"""
 
     def half_width_at(x: float, z: float) -> float:
@@ -168,8 +189,8 @@ def rasterize_vector_layer(
                 nodes, child.id, heightfield_group_id
             )
         flatten_target: float | None = None
-        ribbon_height: RibbonHeightAtXz | None = None
-        ribbon_half_width: RibbonHeightAtXz | None = None
+        ribbon_height: RibbonTargetAtXz | None = None
+        ribbon_half_width: RibbonScalarAtXz | None = None
         if road_metres:
             knot_xzyw: list[tuple[float, float, float, float]] = (
                 vector_point_xzyw(nodes, child.id, heightfield_group_id)
@@ -184,28 +205,27 @@ def rasterize_vector_layer(
             grade_abs: list[tuple[float, float, float]] = absolute_road_points(
                 knot_xzy, surface_at_xz
             )
-            grade_fn: RibbonHeightAtXz = road_ribbon_height_fn(
+            grade_fn: RibbonScalarAtXz = road_ribbon_height_fn(
                 ribbon_kind, grade_abs, closed
             )
-            # drape: surface at query + lerped knot offsets
+            # drape: surface (passed in) + lerped knot offsets
             offset_xzy: list[tuple[float, float, float]] = road_offset_points(
                 knot_xzyw
+            )
+            offset_fn: RibbonScalarAtXz = road_ribbon_offset_fn(
+                ribbon_kind, offset_xzy, closed
             )
             grade_blend: float = max(
                 0.0, min(1.0, float(recipe.grade.value))
             )
 
-            def ribbon_height_at(x: float, z: float) -> float:
-                drape: float = drape_ribbon_height(
-                    x,
-                    z,
-                    ribbon_kind,
-                    offset_xzy,
-                    closed,
-                    surface_at_xz,
-                )
-                grade: float = grade_fn(x, z)
-                return blend_ribbon_height(drape, grade, grade_blend)
+            def ribbon_height_at(x: float, z: float, below: float) -> float:
+                if grade_blend >= 1.0 - 1e-6:
+                    return grade_fn(x, z)
+                drape: float = below + offset_fn(x, z)
+                if grade_blend <= 1e-6:
+                    return drape
+                return blend_ribbon_height(drape, grade_fn(x, z), grade_blend)
 
             ribbon_height = ribbon_height_at
             # half-width: densify polyline for smoother scale lerp

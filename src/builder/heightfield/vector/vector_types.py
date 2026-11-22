@@ -11,8 +11,10 @@ from builder.generators.param_types import FloatParam
 
 # u,v -> world height below the vector sculpt layer
 BelowAtUv = Callable[[float, float], float]
-# x,z heightfield-local -> absolute ribbon height (metres)
-RibbonHeightAtXz = Callable[[float, float], float]
+# x,z heightfield-local -> scalar (half-width metres)
+RibbonScalarAtXz = Callable[[float, float], float]
+# x,z,below -> absolute ribbon target height (metres); below avoids a second sample
+RibbonTargetAtXz = Callable[[float, float, float], float]
 
 
 class VectorApplyMode(IntEnum):
@@ -64,9 +66,9 @@ class VectorRasterContext:
     flatten_target: float | None = None
     below_at_uv: BelowAtUv | None = None
     # when set, weighted samples flatten toward this absolute height
-    ribbon_height_at_xz: RibbonHeightAtXz | None = None
+    ribbon_height_at_xz: RibbonTargetAtXz | None = None
     # when set, road stroke uses per-sample half-width (metres)
-    ribbon_half_width_at_xz: RibbonHeightAtXz | None = None
+    ribbon_half_width_at_xz: RibbonScalarAtXz | None = None
 
 
 type RasterizeShape = Callable[

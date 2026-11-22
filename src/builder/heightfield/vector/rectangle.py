@@ -9,6 +9,7 @@ from builder.heightfield.vector.stamp import (
     distance_to_segments,
     path_stroke_weight,
     soft_band_weight,
+    world_aabb_to_texel_range,
 )
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
@@ -61,24 +62,36 @@ def rectangle_rasterize(
     max_z: float
     min_x, min_z = corners[0]
     max_x, max_z = corners[2]
+    pad: float = context.radius_metres
+    ranges: tuple[int, int, int, int] | None = world_aabb_to_texel_range(
+        min_x - pad,
+        max_x + pad,
+        min_z - pad,
+        max_z + pad,
+        context.size_x,
+        context.size_z,
+        context.width,
+        context.height,
+    )
+    if ranges is None:
+        return
+    x0: int
+    x1: int
+    y0: int
+    y1: int
+    x0, x1, y0, y1 = ranges
+    inv_w: float = 1.0 / float(context.width)
+    inv_h: float = 1.0 / float(context.height)
     match context.apply_mode:
         case VectorApplyMode.stroke:
-            pad: float = context.radius_metres
             y: int
-            for y in range(context.height):
+            for y in range(y0, y1):
+                v: float = (float(y) + 0.5) * inv_h
+                wz: float = (v - 0.5) * context.size_z
                 x: int
-                for x in range(context.width):
-                    u: float = (float(x) + 0.5) / float(context.width)
-                    v: float = (float(y) + 0.5) / float(context.height)
+                for x in range(x0, x1):
+                    u: float = (float(x) + 0.5) * inv_w
                     wx: float = (u - 0.5) * context.size_x
-                    wz: float = (v - 0.5) * context.size_z
-                    if (
-                        wx < min_x - pad
-                        or wx > max_x + pad
-                        or wz < min_z - pad
-                        or wz > max_z + pad
-                    ):
-                        continue
                     dist: float = distance_to_segments(
                         wx, wz, corners, closed=True
                     )
@@ -95,20 +108,12 @@ def rectangle_rasterize(
                         weight,
                     )
         case VectorApplyMode.fill:
-            pad = context.radius_metres
-            for y in range(context.height):
-                for x in range(context.width):
-                    u = (float(x) + 0.5) / float(context.width)
-                    v = (float(y) + 0.5) / float(context.height)
+            for y in range(y0, y1):
+                v = (float(y) + 0.5) * inv_h
+                wz = (v - 0.5) * context.size_z
+                for x in range(x0, x1):
+                    u = (float(x) + 0.5) * inv_w
                     wx = (u - 0.5) * context.size_x
-                    wz = (v - 0.5) * context.size_z
-                    if (
-                        wx < min_x - pad
-                        or wx > max_x + pad
-                        or wz < min_z - pad
-                        or wz > max_z + pad
-                    ):
-                        continue
                     dx: float
                     if wx < min_x:
                         dx = min_x - wx
