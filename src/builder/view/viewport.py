@@ -444,7 +444,11 @@ class Viewport:
                 self.road_height_drag = None
                 if dragged:
                     self.record_gizmo_commit(dragged)
-                    regenerate_splines_touching(self.nodes, dragged)
+                    regenerate_splines_touching(
+                        self.nodes,
+                        dragged,
+                        heightmap_catalog=heightmap_catalog,
+                    )
                     regenerate_vectors_touching(
                         heightmap_catalog, self.nodes.nodes, dragged
                     )
@@ -548,7 +552,11 @@ class Viewport:
                 snap_vector_points_to_plane(self.nodes, dragged)
                 end_gizmo_drag(self.gizmo)
                 self.record_gizmo_commit(dragged)
-                regenerate_splines_touching(self.nodes, dragged)
+                regenerate_splines_touching(
+                    self.nodes,
+                    dragged,
+                    heightmap_catalog=heightmap_catalog,
+                )
                 regenerate_vectors_touching(
                     heightmap_catalog, self.nodes.nodes, dragged
                 )

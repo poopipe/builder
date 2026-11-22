@@ -15,6 +15,7 @@ from pyray import (
 
 from builder.generators.regenerate import regenerate_group
 from builder.generators.spline import SplineParams
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.path.points import (
     child_with_role,
     default_handle_length,
@@ -39,7 +40,12 @@ def rename_spline_points(scene: Scene, group_id: str) -> None:
             scene.set_node(replace(point, name=name))
 
 
-def add_spline_point(scene: Scene, group_id: str) -> str:
+def add_spline_point(
+    scene: Scene,
+    group_id: str,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
+) -> str:
     """append a path point to the spline and regenerate; return the new point id"""
     group: Node = scene.nodes[group_id]
     if group.generator is None or group.generator.kind != "spline":
@@ -108,5 +114,5 @@ def add_spline_point(scene: Scene, group_id: str) -> str:
 
     scene.add_nodes(to_add)
     rename_spline_points(scene, group_id)
-    regenerate_group(scene, group_id)
+    regenerate_group(scene, group_id, heightmap_catalog=heightmap_catalog)
     return point_id

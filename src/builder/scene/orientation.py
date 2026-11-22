@@ -12,8 +12,15 @@ from pyray import (
     Matrix,
     Vector3,
     quaternion_from_axis_angle,
+    quaternion_from_matrix,
     quaternion_multiply,
     quaternion_to_matrix,
+    vector3_cross_product,
+    vector3_dot_product,
+    vector3_length,
+    vector3_normalize,
+    vector3_scale,
+    vector3_subtract,
 )
 
 from builder.scene.scene_types import Quaternion
@@ -35,6 +42,45 @@ def quaternion_from_yaw_pitch_roll(
         ),
         quaternion_from_axis_angle(Vector3(0.0, 0.0, 1.0), roll),
     )
+
+
+def quaternion_align_y(up: Vector3, forward_hint: Vector3) -> Quaternion:
+    """rotation with local +Y along up; +Z toward forward_hint on the tangent plane"""
+    upward: Vector3 = vector3_normalize(up)
+    projected: Vector3 = vector3_subtract(
+        forward_hint,
+        vector3_scale(upward, vector3_dot_product(forward_hint, upward)),
+    )
+    forward: Vector3
+    if vector3_length(projected) < 1e-6:
+        fallback: Vector3 = Vector3(0.0, 0.0, 1.0)
+        if abs(vector3_dot_product(upward, fallback)) > 0.999:
+            fallback = Vector3(1.0, 0.0, 0.0)
+        projected = vector3_subtract(
+            fallback,
+            vector3_scale(upward, vector3_dot_product(fallback, upward)),
+        )
+    forward = vector3_normalize(projected)
+    right: Vector3 = vector3_normalize(vector3_cross_product(upward, forward))
+    forward = vector3_normalize(vector3_cross_product(right, upward))
+    matrix: Matrix = Matrix()
+    matrix.m0 = float(right.x)
+    matrix.m1 = float(right.y)
+    matrix.m2 = float(right.z)
+    matrix.m3 = 0.0
+    matrix.m4 = float(upward.x)
+    matrix.m5 = float(upward.y)
+    matrix.m6 = float(upward.z)
+    matrix.m7 = 0.0
+    matrix.m8 = float(forward.x)
+    matrix.m9 = float(forward.y)
+    matrix.m10 = float(forward.z)
+    matrix.m11 = 0.0
+    matrix.m12 = 0.0
+    matrix.m13 = 0.0
+    matrix.m14 = 0.0
+    matrix.m15 = 1.0
+    return quaternion_from_matrix(matrix)
 
 
 def yaw_pitch_roll_from_quaternion(

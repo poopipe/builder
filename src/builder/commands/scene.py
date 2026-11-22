@@ -166,7 +166,11 @@ def place_generator_group(context: CommandContext, kind: str) -> None:
     if kind == "spline":
         nodes.extend(default_spline_controls(group_id))
     context.scene.add_nodes(nodes)
-    regenerate_group(context.scene.nodes, group_id)
+    regenerate_group(
+        context.scene.nodes,
+        group_id,
+        heightmap_catalog=context.application.heightmap_catalog,
+    )
     meshed: int = len(
         [
             node

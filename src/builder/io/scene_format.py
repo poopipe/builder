@@ -20,6 +20,7 @@ from builder.generators.param_types import (
     FloatParam,
     Int3Param,
     IntParam,
+    NameParam,
 )
 from builder.generators.registry import get_spec
 from builder.heightfield.height_image_types import HeightSampleType
@@ -280,6 +281,8 @@ def params_to_json(params: Any) -> dict[str, Any]:
             out[field.name] = int(value.value)
         elif isinstance(value, FloatParam):
             out[field.name] = float(value.value)
+        elif isinstance(value, NameParam):
+            out[field.name] = str(value.value)
         else:
             # skip non-wrapper fields (eg. heightfield.base / edit_layers)
             continue
@@ -316,6 +319,9 @@ def typed_params_from_json(params_type: type, data: dict[str, Any]) -> Any:
             continue
         if annotation is FloatParam:
             values[field.name] = replace(default, value=float(raw))
+            continue
+        if annotation is NameParam:
+            values[field.name] = replace(default, value=str(raw))
             continue
         raise TypeError(
             f"unsupported param annotation for {field.name}: {annotation!r}"

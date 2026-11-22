@@ -37,6 +37,14 @@ class BoolParam:
 
 
 @dataclass(frozen=True)
+class NameParam:
+    """scene object name (node id) param"""
+
+    value: str = ""
+    label: str = ""
+
+
+@dataclass(frozen=True)
 class EnumParam:
     """int-enum generator param"""
 

@@ -395,6 +395,7 @@ class Application:
                     self.scene.gizmo.mode,
                     self.scene.gizmo.space,
                     transform_bar,
+                    heightmap_catalog=self.application.heightmap_catalog,
                 )
 
         # buttons run commands
@@ -566,6 +567,7 @@ class Application:
                     layout.modifiers,
                     group,
                     journal=self.application.journal,
+                    heightmap_catalog=self.application.heightmap_catalog,
                 )
                 refreshed = self.scene.nodes.nodes.get(group_id)
                 if refreshed is None or (
@@ -821,6 +823,7 @@ class Application:
                     group,
                     modifiers_buttons,
                     modifiers_rows,
+                    self.scene.nodes,
                 )
         draw_status_bar(
             self.font,

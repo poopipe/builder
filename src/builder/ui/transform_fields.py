@@ -14,6 +14,7 @@ from math import degrees, radians
 from pyray import Transform, Vector3, quaternion_from_axis_angle, vector3_scale
 
 from builder.generators.regenerate import regenerate_splines_touching
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.scene.orientation import (
     quaternion_from_yaw_pitch_roll,
     yaw_pitch_roll_from_quaternion,
@@ -169,6 +170,8 @@ def apply_transform_field(
     space: GizmoSpace,
     index: int,
     value: float,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """write one typed field to every selected group"""
     touched: list[str] = []
@@ -183,7 +186,9 @@ def apply_transform_field(
             )
         )
         touched.append(node.id)
-    regenerate_splines_touching(scene, touched)
+    regenerate_splines_touching(
+        scene, touched, heightmap_catalog=heightmap_catalog
+    )
 
 
 def format_transform_value(value: float) -> str:

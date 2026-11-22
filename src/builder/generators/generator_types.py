@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from pyray import Transform
 
 if TYPE_CHECKING:
+    from builder.heightfield.heightmap_catalog import HeightmapCatalog
     from builder.scene.scene_types import MeshId, Node
 
 
@@ -33,6 +34,7 @@ class BuildContext:
 
     nodes: Mapping[str, Node]
     group_id: str
+    heightmap_catalog: HeightmapCatalog | None = None
 
 
 class Axis(IntEnum):

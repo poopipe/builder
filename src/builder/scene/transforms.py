@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pyray import (
     Matrix,
     Transform,
@@ -37,7 +39,7 @@ def transform_matrix(transform: Transform) -> Matrix:
     return matrix_multiply(matrix_multiply(scale, rotation), translation)
 
 
-def world_matrix(nodes: dict[str, Node], node_id: str) -> Matrix:
+def world_matrix(nodes: Mapping[str, Node], node_id: str) -> Matrix:
     """return world matrix for node by walking parent local transforms"""
     node: Node = nodes[node_id]
     local: Matrix = transform_matrix(node.transform)
@@ -88,7 +90,7 @@ def matrix_scale_lengths(matrix: Matrix) -> Vector3:
     )
 
 
-def world_rotation(nodes: dict[str, Node], node_id: str) -> Quaternion:
+def world_rotation(nodes: Mapping[str, Node], node_id: str) -> Quaternion:
     """return world-space rotation by composing local rotations up the chain"""
     node: Node = nodes[node_id]
     if node.parent_id is None:

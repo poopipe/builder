@@ -20,11 +20,19 @@ from pyray import (
 )
 
 from builder.generators.generator_types import Generator, Modifier
+from builder.generators.param_types import NameParam
 from builder.generators.regenerate import (
     set_generator_modifiers,
     set_modifier_params,
 )
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.modifiers.modifier_types import ModifierSpec
+from builder.modifiers.project_heightfield import (
+    ProjectHeightfieldParams,
+    cycle_heightfield_id,
+    heightfield_display_label,
+    heightfield_node_ids,
+)
 from builder.modifiers.registry import (
     get_modifier_spec,
     known_modifier_kind,
@@ -40,6 +48,7 @@ from builder.ui.param_ui import (
     FloatControl,
     Int3ComponentControl,
     IntControl,
+    NameControl,
     ParamControl,
     ParamRowRects,
     control_by_key,
@@ -140,7 +149,7 @@ def focus_modifier_control(
 ) -> None:
     """begin typed editing for one modifier control"""
     match control:
-        case BoolControl() | EnumControl():
+        case BoolControl() | EnumControl() | NameControl():
             return
         case _:
             pass
@@ -156,6 +165,8 @@ def apply_modifier_control_edit(
     control: ParamControl,
     value: Any,
     journal: SessionJournal | None = None,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """write one modifier control and optionally journal the edit"""
     if journal is not None:
@@ -167,7 +178,11 @@ def apply_modifier_control_edit(
             value=value,
         )
     set_modifier_params(
-        scene, group_id, index, write_control(params, control, value)
+        scene,
+        group_id,
+        index,
+        write_control(params, control, value),
+        heightmap_catalog=heightmap_catalog,
     )
 
 
@@ -177,6 +192,8 @@ def apply_modifier_stack(
     modifiers: tuple[Modifier, ...],
     journal: SessionJournal | None = None,
     op: str = "set",
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """replace the modifier stack and optionally journal the change"""
     if journal is not None:
@@ -187,7 +204,9 @@ def apply_modifier_stack(
             kinds=[modifier.kind for modifier in modifiers],
             enabled=[modifier.enabled for modifier in modifiers],
         )
-    set_generator_modifiers(scene, group_id, modifiers)
+    set_generator_modifiers(
+        scene, group_id, modifiers, heightmap_catalog=heightmap_catalog
+    )
 
 
 def commit_modifiers_draft(
@@ -195,6 +214,8 @@ def commit_modifiers_draft(
     ui: UiState,
     group: Node,
     journal: SessionJournal | None = None,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """apply the typed draft to its modifier control"""
     if ui.focus is None or ui.edit is None:
@@ -228,6 +249,7 @@ def commit_modifiers_draft(
         control,
         parsed,
         journal=journal,
+        heightmap_catalog=heightmap_catalog,
     )
 
 
@@ -265,6 +287,8 @@ def handle_modifiers_typing(
     group: Node,
     keys: Sequence[str],
     journal: SessionJournal | None = None,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """commit on Enter, cancel on Escape, commit and step focus on Tab"""
     edit: TextEdit | None = ui.edit
@@ -283,7 +307,9 @@ def handle_modifiers_typing(
         next_key = field_after(keys, ui.focus.key, 1)
     elif action is TextAction.focus_prev:
         next_key = field_after(keys, ui.focus.key, -1)
-    commit_modifiers_draft(scene, ui, group, journal=journal)
+    commit_modifiers_draft(
+        scene, ui, group, journal=journal, heightmap_catalog=heightmap_catalog
+    )
     if next_key is None:
         ui.clear_focus()
         return
@@ -296,6 +322,8 @@ def update_modifiers_panel(
     area: Rectangle,
     group: Node,
     journal: SessionJournal | None = None,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> tuple[list[Button], list[ModifierPanelRow]]:
     """handle modifiers panel input; return buttons and row geometry"""
     generator: Generator | None = group.generator
@@ -313,11 +341,19 @@ def update_modifiers_panel(
             get_modifier_spec(mod_entry.kind).params_type
         ):
             match control:
-                case BoolControl() | EnumControl():
+                case BoolControl() | EnumControl() | NameControl():
                     continue
                 case _:
                     text_keys.append(f"mod:{mod_index}:{control_key(control)}")
-    handle_modifiers_typing(scene, ui, group, text_keys, journal=journal)
+    handle_modifiers_typing(
+        scene,
+        ui,
+        group,
+        text_keys,
+        journal=journal,
+        heightmap_catalog=heightmap_catalog,
+    )
+    hf_ids: tuple[str, ...] = heightfield_node_ids(scene.nodes)
 
     x: float = area.x + ui_pad
     inner_w: float = area.width - ui_pad * 2
@@ -337,6 +373,7 @@ def update_modifiers_panel(
             generator.modifiers + (make_modifier("noise_displace"),),
             journal=journal,
             op="add",
+            heightmap_catalog=heightmap_catalog,
         )
 
     def on_add_translate() -> None:
@@ -347,6 +384,30 @@ def update_modifiers_panel(
             generator.modifiers + (make_modifier("template_translate"),),
             journal=journal,
             op="add",
+            heightmap_catalog=heightmap_catalog,
+        )
+
+    def on_add_project() -> None:
+        ui.clear_focus()
+        project_mod: Modifier = make_modifier("project_heightfield")
+        if len(hf_ids) > 1:
+            project_params: ProjectHeightfieldParams = project_mod.params
+            project_mod = replace(
+                project_mod,
+                params=replace(
+                    project_params,
+                    heightfield_node_id=NameParam(
+                        hf_ids[0], label="Heightfield"
+                    ),
+                ),
+            )
+        apply_modifier_stack(
+            scene,
+            group.id,
+            generator.modifiers + (project_mod,),
+            journal=journal,
+            op="add",
+            heightmap_catalog=heightmap_catalog,
         )
 
     buttons.append(
@@ -365,6 +426,14 @@ def update_modifiers_panel(
         )
     )
     y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="+ Project heightfield",
+            on_click=on_add_project,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
 
     index: int
     modifier: Modifier
@@ -378,7 +447,12 @@ def update_modifiers_panel(
             updated: list[Modifier] = list(generator.modifiers)
             updated[i] = replace(current, enabled=not current.enabled)
             apply_modifier_stack(
-                scene, group.id, tuple(updated), journal=journal, op="enable"
+                scene,
+                group.id,
+                tuple(updated),
+                journal=journal,
+                op="enable",
+                heightmap_catalog=heightmap_catalog,
             )
 
         def move_up(i: int = index) -> None:
@@ -388,7 +462,12 @@ def update_modifiers_panel(
             updated = list(generator.modifiers)
             updated[i - 1], updated[i] = updated[i], updated[i - 1]
             apply_modifier_stack(
-                scene, group.id, tuple(updated), journal=journal, op="move_up"
+                scene,
+                group.id,
+                tuple(updated),
+                journal=journal,
+                op="move_up",
+                heightmap_catalog=heightmap_catalog,
             )
 
         def move_down(i: int = index) -> None:
@@ -398,7 +477,12 @@ def update_modifiers_panel(
             updated = list(generator.modifiers)
             updated[i + 1], updated[i] = updated[i], updated[i + 1]
             apply_modifier_stack(
-                scene, group.id, tuple(updated), journal=journal, op="move_down"
+                scene,
+                group.id,
+                tuple(updated),
+                journal=journal,
+                op="move_down",
+                heightmap_catalog=heightmap_catalog,
             )
 
         def remove_mod(i: int = index) -> None:
@@ -406,7 +490,12 @@ def update_modifiers_panel(
             updated = list(generator.modifiers)
             del updated[i]
             apply_modifier_stack(
-                scene, group.id, tuple(updated), journal=journal, op="remove"
+                scene,
+                group.id,
+                tuple(updated),
+                journal=journal,
+                op="remove",
+                heightmap_catalog=heightmap_catalog,
             )
 
         enable_rect: Rectangle = Rectangle(x, y, inner_w, row_h)
@@ -468,6 +557,7 @@ def update_modifiers_panel(
                             bool_control,
                             not current_bool,
                             journal=journal,
+                            heightmap_catalog=heightmap_catalog,
                         )
                 case EnumControl() as enum_control:
                     if clicked:
@@ -489,8 +579,66 @@ def update_modifiers_panel(
                                     enum_control,
                                     options[option_index],
                                     journal=journal,
+                                    heightmap_catalog=heightmap_catalog,
                                 )
                                 break
+                case NameControl() as name_control:
+                    def name_minus(
+                        i: int = index,
+                        c: NameControl = name_control,
+                        p: Any = modifier.params,
+                    ) -> None:
+                        ui.clear_focus()
+                        current_name: str = str(read_control(p, c))
+                        next_id: str | None = cycle_heightfield_id(
+                            scene.nodes, current_name, -1
+                        )
+                        if next_id is None:
+                            return
+                        apply_modifier_control_edit(
+                            scene,
+                            group.id,
+                            i,
+                            p,
+                            c,
+                            next_id,
+                            journal=journal,
+                            heightmap_catalog=heightmap_catalog,
+                        )
+
+                    def name_plus(
+                        i: int = index,
+                        c: NameControl = name_control,
+                        p: Any = modifier.params,
+                    ) -> None:
+                        ui.clear_focus()
+                        current_name = str(read_control(p, c))
+                        next_id = cycle_heightfield_id(
+                            scene.nodes, current_name, 1
+                        )
+                        if next_id is None:
+                            return
+                        apply_modifier_control_edit(
+                            scene,
+                            group.id,
+                            i,
+                            p,
+                            c,
+                            next_id,
+                            journal=journal,
+                            heightmap_catalog=heightmap_catalog,
+                        )
+
+                    buttons.append(
+                        Button(
+                            label="-", on_click=name_minus, rect=layout_row.minus
+                        )
+                    )
+                    buttons.append(
+                        Button(
+                            label="+", on_click=name_plus, rect=layout_row.plus
+                        )
+                    )
                 case (
                     IntControl()
                     | FloatControl()
@@ -512,6 +660,7 @@ def update_modifiers_panel(
                             c,
                             float(current) - control_step(p, c),
                             journal=journal,
+                            heightmap_catalog=heightmap_catalog,
                         )
 
                     def step_plus(
@@ -529,6 +678,7 @@ def update_modifiers_panel(
                             c,
                             float(current) + control_step(p, c),
                             journal=journal,
+                            heightmap_catalog=heightmap_catalog,
                         )
 
                     buttons.append(
@@ -580,6 +730,7 @@ def draw_modifiers_panel(
     group: Node,
     buttons: list[Button],
     rows: list[ModifierPanelRow],
+    scene: Scene,
 ) -> None:
     """draw the modifiers column for a parametric group"""
     generator: Generator | None = group.generator
@@ -653,6 +804,38 @@ def draw_modifiers_panel(
                                 member.name.capitalize(),
                                 selected=int(value) == int(member),
                             )
+                    case NameControl():
+                        draw_text_ex(
+                            font,
+                            control_label(modifier.params, control),
+                            Vector2(row.label.x, row.label.y),
+                            float(ui_font_size),
+                            0,
+                            ui_color_text,
+                        )
+                        stored_id: str = str(value)
+                        display: str
+                        if stored_id != "" and stored_id in scene.nodes:
+                            display = heightfield_display_label(
+                                scene.nodes, stored_id
+                            )
+                        else:
+                            sole_ids: tuple[str, ...] = heightfield_node_ids(
+                                scene.nodes
+                            )
+                            if len(sole_ids) == 1:
+                                display = heightfield_display_label(
+                                    scene.nodes, sole_ids[0]
+                                )
+                            else:
+                                display = "—"
+                        draw_text_field(
+                            font,
+                            row.value,
+                            display,
+                            focused=False,
+                            center_unfocused=True,
+                        )
                     case _:
                         draw_text_ex(
                             font,

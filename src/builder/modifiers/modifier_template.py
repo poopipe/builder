@@ -1,7 +1,7 @@
 """template for a new modifier - copy this file, rename it, then register the spec
 
 1. copy this file to modifiers/<your_kind>.py
-2. declare a frozen params dataclass using IntParam/FloatParam/BoolParam/EnumParam/Float3Param/Int3Param
+2. declare a frozen params dataclass using IntParam/FloatParam/BoolParam/EnumParam/NameParam/Float3Param/Int3Param
 3. write apply(slots, params, context) reading .value (and Float3Param x/y/z);
    may rewrite transforms or drop slots; must not invent new slots
 4. set ModifierSpec(kind, label, params_type, apply)

@@ -15,6 +15,7 @@ from builder.generators.generator_types import (
 )
 from builder.generators.mesh_pattern import mesh_for_index
 from builder.generators.registry import get_spec
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.modifiers.apply import apply_modifier_stack
 from builder.modifiers.registry import known_modifier_kind
 from builder.scene.ids import new_node_id
@@ -49,7 +50,12 @@ def pattern_for_slot(generator: Generator, slot: GeneratedSlot) -> MeshPattern:
     return generator.meshes
 
 
-def regenerate_group(scene: Scene, group_id: str) -> None:
+def regenerate_group(
+    scene: Scene,
+    group_id: str,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
+) -> None:
     """replace meshed children from the group's generator recipe
 
     nested group children are preserved so hierarchy survives regenerate/load
@@ -59,7 +65,11 @@ def regenerate_group(scene: Scene, group_id: str) -> None:
     if generator is None:
         raise ValueError(f"group {group_id} has no generator")
     spec = get_spec(generator.kind)
-    context: BuildContext = BuildContext(nodes=scene.nodes, group_id=group_id)
+    context: BuildContext = BuildContext(
+        nodes=scene.nodes,
+        group_id=group_id,
+        heightmap_catalog=heightmap_catalog,
+    )
     slots: list[GeneratedSlot] = spec.build_transforms(generator.params, context)
     slots = apply_modifier_stack(slots, generator.modifiers, context)
     scene.remove_nodes(mesh_child_ids(scene.nodes, group_id))
@@ -92,7 +102,13 @@ def bake_group(scene: Scene, group_id: str) -> None:
     scene.add_nodes([replace(group, generator=None)])
 
 
-def set_generator_params(scene: Scene, group_id: str, params: Any) -> None:
+def set_generator_params(
+    scene: Scene,
+    group_id: str,
+    params: Any,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
+) -> None:
     """replace the generator params dataclass and regenerate children"""
     group: Node = scene.nodes[group_id]
     generator: Generator | None = group.generator
@@ -101,7 +117,7 @@ def set_generator_params(scene: Scene, group_id: str, params: Any) -> None:
     scene.add_nodes(
         [replace(group, generator=replace(generator, params=params))]
     )
-    regenerate_group(scene, group_id)
+    regenerate_group(scene, group_id, heightmap_catalog=heightmap_catalog)
 
 
 def require_generator(scene: Scene, group_id: str) -> Generator:
@@ -118,6 +134,7 @@ def set_generator_pattern(
     pattern: MeshPattern,
     *,
     points: bool = False,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """replace the edge or point mesh pattern and regenerate children"""
     group: Node = scene.nodes[group_id]
@@ -130,13 +147,15 @@ def set_generator_pattern(
         scene.add_nodes(
             [replace(group, generator=replace(generator, meshes=pattern))]
         )
-    regenerate_group(scene, group_id)
+    regenerate_group(scene, group_id, heightmap_catalog=heightmap_catalog)
 
 
 def set_generator_modifiers(
     scene: Scene,
     group_id: str,
     modifiers: tuple[Modifier, ...],
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """replace the modifier stack and regenerate children"""
     group: Node = scene.nodes[group_id]
@@ -144,7 +163,7 @@ def set_generator_modifiers(
     scene.add_nodes(
         [replace(group, generator=replace(generator, modifiers=modifiers))]
     )
-    regenerate_group(scene, group_id)
+    regenerate_group(scene, group_id, heightmap_catalog=heightmap_catalog)
 
 
 def set_modifier_params(
@@ -152,6 +171,8 @@ def set_modifier_params(
     group_id: str,
     index: int,
     params: Any,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """replace one modifier's params dataclass and regenerate"""
     generator: Generator = require_generator(scene, group_id)
@@ -162,7 +183,9 @@ def set_modifier_params(
         raise KeyError(f"unknown modifier kind: {modifier.kind}")
     updated: list[Modifier] = list(generator.modifiers)
     updated[index] = replace(modifier, params=params)
-    set_generator_modifiers(scene, group_id, tuple(updated))
+    set_generator_modifiers(
+        scene, group_id, tuple(updated), heightmap_catalog=heightmap_catalog
+    )
 
 
 def spline_generator_id(nodes: dict[str, Node], node_id: str) -> str | None:
@@ -179,7 +202,10 @@ def spline_generator_id(nodes: dict[str, Node], node_id: str) -> str | None:
 
 
 def regenerate_splines_touching(
-    scene: Scene, node_ids: list[str] | set[str]
+    scene: Scene,
+    node_ids: list[str] | set[str],
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """regenerate any spline generator affected by edits to node_ids"""
     seen: set[str] = set()
@@ -189,4 +215,4 @@ def regenerate_splines_touching(
         if spline_id is None or spline_id in seen:
             continue
         seen.add(spline_id)
-        regenerate_group(scene, spline_id)
+        regenerate_group(scene, spline_id, heightmap_catalog=heightmap_catalog)

@@ -15,6 +15,7 @@ from builder.generators.param_types import (
     FloatParam,
     Int3Param,
     IntParam,
+    NameParam,
     clamp_range,
 )
 from builder.ui.theme import (
@@ -47,6 +48,11 @@ class EnumControl:
 
 
 @dataclass(frozen=True)
+class NameControl:
+    name: str
+
+
+@dataclass(frozen=True)
 class Float3ComponentControl:
     name: str
     component: str
@@ -63,6 +69,7 @@ type ParamControl = (
     | IntControl
     | FloatControl
     | EnumControl
+    | NameControl
     | Float3ComponentControl
     | Int3ComponentControl
 )
@@ -82,7 +89,7 @@ def control_key(control: ParamControl) -> str:
             return f"{name}.{component}"
         case BoolControl(name=name) | IntControl(name=name) | FloatControl(
             name=name
-        ) | EnumControl(name=name):
+        ) | EnumControl(name=name) | NameControl(name=name):
             return name
 
 
@@ -104,6 +111,8 @@ def controls_from_params_type(params_type: type) -> tuple[ParamControl, ...]:
                 out.append(BoolControl(field.name))
             case _ if annotation is EnumParam:
                 out.append(EnumControl(field.name))
+            case _ if annotation is NameParam:
+                out.append(NameControl(field.name))
             case _ if annotation is IntParam:
                 out.append(IntControl(field.name))
             case _ if annotation is FloatParam:
@@ -150,6 +159,9 @@ def control_label(params: Any, control: ParamControl) -> str:
         case EnumControl(name=name):
             enum_param: EnumParam = getattr(params, name)
             return enum_param.label or field_label(name)
+        case NameControl(name=name):
+            name_param: NameParam = getattr(params, name)
+            return name_param.label or field_label(name)
         case Float3ComponentControl(name=name, component=component):
             float3: Float3Param = getattr(params, name)
             base: str = float3.label or field_label(name)
@@ -184,6 +196,8 @@ def read_control(params: Any, control: ParamControl) -> Any:
             return float(getattr(params, name).value)
         case EnumControl(name=name):
             return getattr(params, name).value
+        case NameControl(name=name):
+            return str(getattr(params, name).value)
         case Float3ComponentControl(name=name, component=component):
             return float(getattr(getattr(params, name), component))
         case Int3ComponentControl(name=name, component=component):
@@ -235,6 +249,11 @@ def write_control(params: Any, control: ParamControl, value: Any) -> Any:
                 params,
                 **{name: replace(current_enum, value=enum_type(int(value)))},
             )
+        case NameControl(name=name):
+            current_name: NameParam = getattr(params, name)
+            return replace(
+                params, **{name: replace(current_name, value=str(value))}
+            )
         case Float3ComponentControl(name=name, component=component):
             current_float3: Float3Param = getattr(params, name)
             clamped_f: float = clamp_range(
@@ -269,6 +288,11 @@ def format_control(control: ParamControl, value: Any) -> str:
         case EnumControl():
             member: IntEnum = value
             return member.name.capitalize()
+        case NameControl():
+            name_value: str = str(value)
+            if name_value == "":
+                return "—"
+            return name_value
 
 
 def parse_control(control: ParamControl, text: str) -> Any | None:
@@ -277,7 +301,7 @@ def parse_control(control: ParamControl, text: str) -> Any | None:
     if stripped == "":
         return None
     match control:
-        case BoolControl() | EnumControl():
+        case BoolControl() | EnumControl() | NameControl():
             return None
         case IntControl() | Int3ComponentControl():
             try:
@@ -359,6 +383,7 @@ def layout_control_row(
         case (
             IntControl()
             | FloatControl()
+            | NameControl()
             | Float3ComponentControl()
             | Int3ComponentControl()
         ):

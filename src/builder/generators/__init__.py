@@ -1,22 +1,5 @@
-"""parametric group generators"""
+"""parametric group generators
 
-from builder.generators.generator_types import Generator, GeneratorSpec
-from builder.generators.registry import generator_specs, default_params, get_spec
-from builder.generators.regenerate import (
-    bake_group,
-    regenerate_group,
-    selected_parametric_group,
-    set_generator_params,
-)
-
-__all__ = [
-    "generator_specs",
-    "Generator",
-    "GeneratorSpec",
-    "bake_group",
-    "default_params",
-    "get_spec",
-    "regenerate_group",
-    "selected_parametric_group",
-    "set_generator_params",
-]
+import from submodules (param_types, regenerate, registry, …); keep this package
+init empty so leaf imports cannot drag regenerate/modifiers into a cycle
+"""

@@ -327,7 +327,11 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     for group in list(context.scene.nodes.nodes.values()):
         if group.generator is not None:
             try:
-                regenerate_group(context.scene.nodes, group.id)
+                regenerate_group(
+                    context.scene.nodes,
+                    group.id,
+                    heightmap_catalog=context.application.heightmap_catalog,
+                )
             except (KeyError, ValueError) as exc:
                 log_exception(f"regenerate failed: {group.id}", exc)
                 warnings.append(f"failed to regenerate '{group.id}': {exc}")

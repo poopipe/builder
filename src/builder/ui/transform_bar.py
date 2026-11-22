@@ -16,6 +16,7 @@ from pyray import (
     measure_text_ex,
 )
 
+from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
 from builder.ui.text_field import (
@@ -158,6 +159,8 @@ def commit_transform_field(
     mode: GizmoMode,
     space: GizmoSpace,
     keys: Sequence[str],
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """apply the typed value to the selection; text that is not a number is dropped"""
     if ui.focus is None or ui.edit is None:
@@ -168,7 +171,14 @@ def commit_transform_field(
     value: float | None = parse_transform_value(ui.edit.text)
     if value is None:
         return
-    apply_transform_field(scene, mode, space, index, value)
+    apply_transform_field(
+        scene,
+        mode,
+        space,
+        index,
+        value,
+        heightmap_catalog=heightmap_catalog,
+    )
 
 
 def handle_transform_typing(
@@ -178,6 +188,8 @@ def handle_transform_typing(
     space: GizmoSpace,
     owner: str,
     keys: Sequence[str],
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """commit on Enter, cancel on Escape, commit and step focus on Tab"""
     edit: TextEdit | None = ui.edit
@@ -194,7 +206,9 @@ def handle_transform_typing(
         next_key = field_after(keys, ui.focus.key, 1)
     elif action is TextAction.focus_prev:
         next_key = field_after(keys, ui.focus.key, -1)
-    commit_transform_field(scene, ui, mode, space, keys)
+    commit_transform_field(
+        scene, ui, mode, space, keys, heightmap_catalog=heightmap_catalog
+    )
     if next_key is None:
         ui.clear_focus()
         return
@@ -207,11 +221,21 @@ def update_transform_bar(
     mode: GizmoMode,
     space: GizmoSpace,
     bar: TransformBarRects,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """handle focus clicks and typing for the transform fields"""
     keys: tuple[str, str, str] = transform_field_keys(mode)
     sync_transform_focus(ui, bar.owner, keys)
-    handle_transform_typing(scene, ui, mode, space, bar.owner, keys)
+    handle_transform_typing(
+        scene,
+        ui,
+        mode,
+        space,
+        bar.owner,
+        keys,
+        heightmap_catalog=heightmap_catalog,
+    )
 
     if not is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT):
         return

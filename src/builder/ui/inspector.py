@@ -104,6 +104,8 @@ def apply_control_edit(
     control: ParamControl,
     value: Any,
     journal: SessionJournal | None = None,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """write one inspector control into params and regenerate"""
     if journal is not None:
@@ -115,7 +117,10 @@ def apply_control_edit(
             recipe="generator",
         )
     set_generator_params(
-        scene, group_id, write_control(generator.params, control, value)
+        scene,
+        group_id,
+        write_control(generator.params, control, value),
+        heightmap_catalog=heightmap_catalog,
     )
 
 
@@ -380,6 +385,8 @@ def commit_inspector_draft(
     group: Node,
     controls: tuple[ParamControl, ...],
     journal: SessionJournal | None = None,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """apply the typed draft to its control; invalid text is discarded"""
     if ui.focus is None or ui.edit is None:
@@ -392,7 +399,13 @@ def commit_inspector_draft(
     if parsed is None:
         return
     apply_control_edit(
-        scene, group.id, generator, control, parsed, journal=journal
+        scene,
+        group.id,
+        generator,
+        control,
+        parsed,
+        journal=journal,
+        heightmap_catalog=heightmap_catalog,
     )
 
 
@@ -419,6 +432,8 @@ def handle_inspector_typing(
     keys: Sequence[str],
     controls: tuple[ParamControl, ...],
     journal: SessionJournal | None = None,
+    *,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> None:
     """commit on Enter, cancel on Escape, commit and step focus on Tab"""
     edit: TextEdit | None = ui.edit
@@ -437,7 +452,14 @@ def handle_inspector_typing(
         next_key = field_after(keys, ui.focus.key, 1)
     elif action is TextAction.focus_prev:
         next_key = field_after(keys, ui.focus.key, -1)
-    commit_inspector_draft(scene, ui, group, controls, journal=journal)
+    commit_inspector_draft(
+        scene,
+        ui,
+        group,
+        controls,
+        journal=journal,
+        heightmap_catalog=heightmap_catalog,
+    )
     if next_key is None:
         ui.clear_focus()
         return
@@ -461,6 +483,7 @@ def build_pattern_buttons(
     start_y: float,
     *,
     points: bool = False,
+    heightmap_catalog: HeightmapCatalog | None = None,
 ) -> tuple[list[Button], float]:
     """build mesh-pattern controls below the param rows; return (buttons, next_y)"""
     x: float = area.x + ui_pad
@@ -480,6 +503,7 @@ def build_pattern_buttons(
             group.id,
             replace(pattern, mode=next_mode(pattern.mode)),
             points=points,
+            heightmap_catalog=heightmap_catalog,
         )
 
     buttons.append(
@@ -501,6 +525,7 @@ def build_pattern_buttons(
                     group.id,
                     replace(pattern, seed=max(0, pattern.seed - 1)),
                     points=points,
+                    heightmap_catalog=heightmap_catalog,
                 )
 
             def seed_plus() -> None:
@@ -510,6 +535,7 @@ def build_pattern_buttons(
                     group.id,
                     replace(pattern, seed=pattern.seed + 1),
                     points=points,
+                    heightmap_catalog=heightmap_catalog,
                 )
 
             def seed_reroll() -> None:
@@ -519,6 +545,7 @@ def build_pattern_buttons(
                     group.id,
                     replace(pattern, seed=randrange(0, 1_000_000)),
                     points=points,
+                    heightmap_catalog=heightmap_catalog,
                 )
 
             value_x: float = x + step_w + ui_button_gap
@@ -555,13 +582,21 @@ def build_pattern_buttons(
         def assign(s: int = slot) -> None:
             clear()
             set_generator_pattern(
-                scene, group.id, set_slot(pattern, s, active_mesh_id), points=points
+                scene,
+                group.id,
+                set_slot(pattern, s, active_mesh_id),
+                points=points,
+                heightmap_catalog=heightmap_catalog,
             )
 
         def remove(s: int = slot) -> None:
             clear()
             set_generator_pattern(
-                scene, group.id, remove_slot(pattern, s), points=points
+                scene,
+                group.id,
+                remove_slot(pattern, s),
+                points=points,
+                heightmap_catalog=heightmap_catalog,
             )
 
         buttons.append(
@@ -587,6 +622,7 @@ def build_pattern_buttons(
             group.id,
             replace(pattern, mesh_ids=pattern.mesh_ids + (active_mesh_id,)),
             points=points,
+            heightmap_catalog=heightmap_catalog,
         )
 
     buttons.append(
@@ -965,7 +1001,13 @@ def update_inspector(
         )
     ]
     handle_inspector_typing(
-        scene, ui, group, text_keys, controls, journal=journal
+        scene,
+        ui,
+        group,
+        text_keys,
+        controls,
+        journal=journal,
+        heightmap_catalog=heightmap_catalog,
     )
 
     mouse: Vector2 = get_mouse_position()
@@ -1007,6 +1049,7 @@ def update_inspector(
                         c,
                         not current,
                         journal=journal,
+                        heightmap_catalog=heightmap_catalog,
                     )
 
                 if clicked and is_point_in_rect(mouse.x, mouse.y, row.value):
@@ -1028,6 +1071,7 @@ def update_inspector(
                                 enum_control,
                                 options[option_index],
                                 journal=journal,
+                                heightmap_catalog=heightmap_catalog,
                             )
                             break
             case (
@@ -1050,6 +1094,7 @@ def update_inspector(
                         c,
                         float(current) - s,
                         journal=journal,
+                        heightmap_catalog=heightmap_catalog,
                     )
 
                 def step_plus(
@@ -1064,6 +1109,7 @@ def update_inspector(
                         c,
                         float(current) + s,
                         journal=journal,
+                        heightmap_catalog=heightmap_catalog,
                     )
 
                 buttons.append(
@@ -1097,6 +1143,7 @@ def update_inspector(
             area,
             bake_y,
             points=False,
+            heightmap_catalog=heightmap_catalog,
         )
         buttons.extend(pattern_buttons)
     if spec.supports_point_meshes:
@@ -1121,6 +1168,7 @@ def update_inspector(
                 area,
                 bake_y,
                 points=True,
+                heightmap_catalog=heightmap_catalog,
             )
             buttons.extend(point_buttons)
 
@@ -1128,7 +1176,9 @@ def update_inspector(
 
         def on_add_point() -> None:
             ui.clear_focus()
-            add_spline_point(scene, group.id)
+            add_spline_point(
+                scene, group.id, heightmap_catalog=heightmap_catalog
+            )
             ui.status = "Added spline point"
 
         buttons.append(
