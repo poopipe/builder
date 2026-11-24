@@ -60,6 +60,8 @@ class UiState:
     heightfield_layer_target: str | None = None
     # when set with heightfield_layer_target, import replaces that edit layer texture
     heightfield_layer_replace_index: int | None = None
+    # road sections layer id waiting for a shapefile pick
+    road_sections_import_target: str | None = None
     # staged heightfield size until Apply size is pressed
     heightfield_size_draft: HeightfieldSizeDraft | None = None
 

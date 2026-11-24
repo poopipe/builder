@@ -21,6 +21,9 @@ class AscGridHeader:
     nrows: int
     cellsize: float
     nodata: float | None
+    # map-space lower-left (west, south); metres
+    xllcorner: float = 0.0
+    yllcorner: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -33,10 +36,12 @@ class AscHeightMeta:
 
 @dataclass(frozen=True)
 class AscImportHints:
-    """world size and optional height bounds for base import"""
+    """world size, map origin, and optional height bounds for base import"""
 
     size_x: float
     size_z: float
+    origin_x: float
+    origin_z: float
     height_min: float | None
     height_max: float | None
 
@@ -108,8 +113,29 @@ def parse_asc_header(lines: list[str]) -> tuple[AscGridHeader, int]:
     nodata: float | None = None
     if "nodata_value" in fields:
         nodata = float(fields["nodata_value"])
+    xllcorner: float
+    yllcorner: float
+    if "xllcorner" in fields:
+        xllcorner = float(fields["xllcorner"])
+    elif "xllcenter" in fields:
+        xllcorner = float(fields["xllcenter"]) - 0.5 * cellsize
+    else:
+        xllcorner = 0.0
+    if "yllcorner" in fields:
+        yllcorner = float(fields["yllcorner"])
+    elif "yllcenter" in fields:
+        yllcorner = float(fields["yllcenter"]) - 0.5 * cellsize
+    else:
+        yllcorner = 0.0
     return (
-        AscGridHeader(ncols=ncols, nrows=nrows, cellsize=cellsize, nodata=nodata),
+        AscGridHeader(
+            ncols=ncols,
+            nrows=nrows,
+            cellsize=cellsize,
+            nodata=nodata,
+            xllcorner=xllcorner,
+            yllcorner=yllcorner,
+        ),
         index,
     )
 
@@ -128,7 +154,7 @@ def pack_f32_le(values: list[float]) -> bytes:
 
 
 def asc_decode_height_image(path: Path) -> DecodedHeightImage:
-    """decode ESRI .asc to f32 metres; flip rows so row 0 is south"""
+    """decode ESRI .asc to f32 metres; south-first rows, east-west mirrored columns"""
     text: str = path.read_text(encoding="utf-8")
     lines: list[str] = text.splitlines()
     header, data_index = parse_asc_header(lines)
@@ -157,12 +183,13 @@ def asc_decode_height_image(path: Path) -> DecodedHeightImage:
             samples_north_first.append(0.0)
         else:
             samples_north_first.append(value)
-    # ASC row 0 = north; buffer row 0 = south (v=0)
+    # ASC: row 0 = north, col 0 = west; buffer: row 0 = south, col 0 = east
     samples: list[float] = []
     row: int
     for row in range(nrows - 1, -1, -1):
         start: int = row * ncols
-        samples.extend(samples_north_first[start : start + ncols])
+        row_vals: list[float] = samples_north_first[start : start + ncols]
+        samples.extend(reversed(row_vals))
     return DecodedHeightImage(
         width=ncols,
         height=nrows,
@@ -183,6 +210,8 @@ def asc_import_hints(asc_path: Path) -> AscImportHints:
     return AscImportHints(
         size_x=float(header.ncols) * header.cellsize,
         size_z=float(header.nrows) * header.cellsize,
+        origin_x=header.xllcorner,
+        origin_z=header.yllcorner,
         height_min=height_min,
         height_max=height_max,
     )

@@ -10,15 +10,19 @@ from pyray import (
     Material,
     MaterialMapIndex,
     Matrix,
+    Texture,
     Vector2,
     Vector3,
     Vector4,
     draw_mesh_instanced,
     ffi,
+    is_texture_valid,
     load_material_default,
+    load_texture,
     matrix_translate,
     rl_disable_wire_mode,
     rl_enable_wire_mode,
+    unload_texture,
     vector3_transform,
 )
 
@@ -53,6 +57,7 @@ from builder.heightfield.gpu.terrain_shader import (
     bind_terrain_lights,
     load_terrain_shader,
     set_float,
+    set_int,
     set_parent_transform,
     set_vec2,
     set_vec4,
@@ -92,6 +97,8 @@ class HeightfieldGpuEntry:
     spacing: float
     # owned composite result when edit layers are active; None for raw base
     result_target: R32RenderTarget | None = None
+    albedo_texture: Texture | None = None
+    albedo_path: str | None = None
     # flat tile-local instance matrices (layout-sized); None until built
     tile_matrices: Any | None = None
     tile_matrix_key: tuple[int, int, int, float, float, float] | None = None
@@ -138,6 +145,34 @@ def invalidate_tile_draw_cache(entry: HeightfieldGpuEntry) -> None:
     entry.instance_batches.clear()
 
 
+def release_albedo_texture(entry: HeightfieldGpuEntry) -> None:
+    """unload a group's albedo texture if owned"""
+    if entry.albedo_texture is not None:
+        unload_texture(entry.albedo_texture)
+    entry.albedo_texture = None
+    entry.albedo_path = None
+
+
+def ensure_albedo_texture(
+    entry: HeightfieldGpuEntry, heightfield: Heightfield
+) -> None:
+    """load or drop the albedo map when the recipe path changes"""
+    path: str | None = heightfield.albedo_path
+    if path == entry.albedo_path and (
+        path is None or entry.albedo_texture is not None
+    ):
+        return
+    release_albedo_texture(entry)
+    if path is None:
+        return
+    texture: Texture = load_texture(path)
+    if not is_texture_valid(texture):
+        # keep path unset so the next ensure retries after a fix
+        return
+    entry.albedo_texture = texture
+    entry.albedo_path = path
+
+
 def drop_heightfield_entry(state: HeightfieldGpuState, group_id: str) -> None:
     """release one group's height texture"""
     entry: HeightfieldGpuEntry | None = state.entries.pop(group_id, None)
@@ -145,6 +180,7 @@ def drop_heightfield_entry(state: HeightfieldGpuState, group_id: str) -> None:
         release_height_texture(entry.texture)
         release_r32_target(entry.result_target)
         entry.result_target = None
+        release_albedo_texture(entry)
         invalidate_tile_draw_cache(entry)
 
 
@@ -194,12 +230,14 @@ def ensure_heightfield_gpu(
         existing.spacing = spacing
         existing.texture.height_scale = scale
         existing.texture.height_bias = bias
+        ensure_albedo_texture(existing, heightfield)
         ensure_spacing_grids(state, spacing)
         return existing
     if existing is not None:
         release_height_texture(existing.texture)
         release_r32_target(existing.result_target)
         existing.result_target = None
+        release_albedo_texture(existing)
         invalidate_tile_draw_cache(existing)
     texture: HeightTexture
     result_target: R32RenderTarget | None
@@ -212,6 +250,7 @@ def ensure_heightfield_gpu(
         spacing=spacing,
         result_target=result_target,
     )
+    ensure_albedo_texture(entry, heightfield)
     state.entries[group_id] = entry
     ensure_spacing_grids(state, spacing)
     return entry
@@ -246,6 +285,13 @@ def bind_heightfield_material(
     material.maps[MaterialMapIndex.MATERIAL_MAP_ALBEDO].color = (
         heightfield_albedo
     )
+    if entry.albedo_texture is not None:
+        material.maps[MaterialMapIndex.MATERIAL_MAP_ALBEDO].texture = (
+            entry.albedo_texture
+        )
+        set_int(terrain.shader, terrain.loc_use_albedo_map, 1)
+    else:
+        set_int(terrain.shader, terrain.loc_use_albedo_map, 0)
     if terrain.loc_col_diffuse >= 0:
         set_vec4(
             terrain.shader,

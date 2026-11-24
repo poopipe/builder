@@ -16,6 +16,7 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightType,
     SculptHeightMode,
     SculptHeightSource,
+    RoadSectionsHeightSource,
     VectorHeightSource,
     VectorRoadHeightSource,
     VectorSculptHeightSource,
@@ -320,6 +321,8 @@ def apply_edit_layer_height(
                 )
             road_mix: float = clamp01(road_coverage) * opacity
             return accum * (1.0 - road_mix) + absolute * road_mix
+        case RoadSectionsHeightSource():
+            return accum
         case _:
             raw: float = sample_source(
                 catalog, layer.height, layer_u, layer_v, missing=0.0, wrap=True
@@ -471,6 +474,8 @@ def layer_height_bounds(
                 # coverage can pull toward absolute heights
                 height_min = height_min if height_min < s0 else s0
                 height_max = height_max if height_max > s1 else s1
+                continue
+            case RoadSectionsHeightSource():
                 continue
             case _:
                 pass

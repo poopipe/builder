@@ -89,6 +89,12 @@ def group_display_name(node: Node) -> str:
             return get_vector_shape_spec(node.vector_shape.kind).label
         except KeyError:
             return node.vector_shape.kind
+    if node.road_sections_layer is not None:
+        return "Road Sections"
+    if node.road_shp is not None:
+        return "Shapefile"
+    if node.road_usage_group is not None:
+        return node.road_usage_group.usage
     if node.role is NodeRole.path_point:
         return "Point"
     if node.role is NodeRole.path_handle_in:
@@ -121,6 +127,11 @@ def group_children_map(nodes: dict[str, Node]) -> dict[str | None, list[Node]]:
     for node in nodes.values():
         if node.mesh_id is not None:
             continue
+        # usage groups show under shp; hide anything nested deeper under a usage
+        if node.parent_id is not None:
+            parent: Node | None = nodes.get(node.parent_id)
+            if parent is not None and parent.road_usage_group is not None:
+                continue
         children.setdefault(node.parent_id, []).append(node)
     return children
 

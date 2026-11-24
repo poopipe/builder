@@ -55,14 +55,15 @@ def composite_height_buffer(
 
 
 def north_first_rows(buffer: HeightmapBuffer) -> list[float]:
-    """flip south-first buffer so row 0 is north"""
+    """flip south-first / east-first buffer to ASC north-first / west-first"""
     width: int = buffer.width
     height: int = buffer.height
     flipped: list[float] = []
     row: int
     for row in range(height - 1, -1, -1):
         start: int = row * width
-        flipped.extend(buffer.samples[start : start + width])
+        row_vals: list[float] = buffer.samples[start : start + width]
+        flipped.extend(reversed(row_vals))
     return flipped
 
 

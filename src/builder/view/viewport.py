@@ -56,6 +56,7 @@ from builder.heightfield.vector.circle_handle import (
     apply_circle_radius_drag,
     pick_circle_radius_handle,
 )
+from builder.heightfield.road_sections.overlay import draw_road_sections_overlays
 from builder.heightfield.vector.overlay import draw_vector_overlays
 from builder.heightfield.vector.pick import (
     VectorPointPickHit,
@@ -108,6 +109,14 @@ from builder.view.gizmo_types import GizmoAxis
 from builder.view.grid import draw_ground_grid
 from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
+from builder.view.line_shader import (
+    LineBatch,
+    LineMeshCache,
+    LineShader,
+    clear_line_mesh_cache,
+    load_line_shader,
+    unload_line_shader,
+)
 from builder.view.mesh_table import MeshTable
 from builder.view.orbit_move import (
     dolly_move_delta,
@@ -152,12 +161,16 @@ class Viewport:
         self.apply_orbit()
 
         self.lighting: Lighting = Lighting()
+        self.line_shader: LineShader | None = None
+        self.line_batch: LineBatch = LineBatch()
+        self.road_line_mesh_cache: LineMeshCache = LineMeshCache()
         self.mesh_table: MeshTable = MeshTable()
         self.nodes: Scene = Scene()
         self.draw_cache: DrawCache = DrawCache()
         self.gizmo: GizmoState = GizmoState()
         self.heightfield_gpu: HeightfieldGpuState | None = None
         try:
+            self.line_shader = load_line_shader()
             builtins: tuple[tuple[MeshId, PreparedMesh], ...] = (
                 (builtin_cube, prepare_mesh(make_cube(), self.lighting.shader)),
                 (
@@ -181,6 +194,9 @@ class Viewport:
                 unload_heightfield_gpu(self.heightfield_gpu)
                 self.heightfield_gpu = None
             self.mesh_table.unload()
+            if self.line_shader is not None:
+                unload_line_shader(self.line_shader)
+                self.line_shader = None
             self.lighting.unload()
             raise
 
@@ -685,13 +701,24 @@ class Viewport:
             )
         node: Node
         for node in self.nodes.nodes.values():
-            if node.heightfield is not None:
+            if node.heightfield is not None and self.line_shader is not None:
                 draw_vector_overlays(
                     heightmap_catalog,
                     self.nodes.nodes,
                     node,
                     self.camera,
                     float(view_rect.height),
+                    self.line_shader,
+                    self.line_batch,
+                    self.nodes.selected_ids,
+                )
+                draw_road_sections_overlays(
+                    heightmap_catalog,
+                    self.nodes.nodes,
+                    node,
+                    self.line_shader,
+                    self.line_batch,
+                    self.road_line_mesh_cache,
                     self.nodes.selected_ids,
                 )
 
@@ -737,4 +764,8 @@ class Viewport:
             unload_heightfield_gpu(self.heightfield_gpu)
             self.heightfield_gpu = None
         self.mesh_table.unload()
+        clear_line_mesh_cache(self.road_line_mesh_cache)
+        if self.line_shader is not None:
+            unload_line_shader(self.line_shader)
+            self.line_shader = None
         self.lighting.unload()

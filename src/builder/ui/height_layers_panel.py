@@ -35,6 +35,7 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightSource,
     SculptHeightMode,
     SculptHeightSource,
+    RoadSectionsHeightSource,
     VectorHeightSource,
     VectorRoadHeightSource,
     VectorSculptHeightSource,
@@ -310,6 +311,8 @@ def source_label(catalog: HeightmapCatalog, source: HeightLayerSource) -> str:
             return f"Vector sculpt: {layer_node_id}"
         case VectorRoadHeightSource(layer_node_id=layer_node_id):
             return f"Road: {layer_node_id}"
+        case RoadSectionsHeightSource(layer_node_id=layer_node_id):
+            return f"Road Sections: {layer_node_id}"
 
 
 def next_blend_mode(current: HeightBlendMode) -> HeightBlendMode:
@@ -460,6 +463,8 @@ def update_height_layers_panel(
                 detail = "vector sculpt"
             case VectorRoadHeightSource():
                 detail = "road"
+            case RoadSectionsHeightSource():
+                detail = "road sections"
             case _:
                 detail = layer.blend.name
         entries.append(
@@ -603,6 +608,22 @@ def update_height_layers_panel(
         ui.height_layers_selected_index = len(updated.edit_layers) - 1
         ui.status = "Added road layer"
 
+    def add_road_sections_layer() -> None:
+        from builder.heightfield.regenerate import set_heightfield
+        from builder.heightfield.road_sections.edit import (
+            append_road_sections_edit_layer,
+        )
+
+        ui.clear_focus()
+        updated, new_nodes = append_road_sections_edit_layer(
+            heightfield,
+            group_id,
+        )
+        host.add_nodes(new_nodes)
+        set_heightfield(host, catalog, group_id, updated)
+        ui.height_layers_selected_index = len(updated.edit_layers) - 1
+        ui.status = "Added road sections layer"
+
     buttons.append(
         Button(
             label="+ Paint layer",
@@ -639,6 +660,14 @@ def update_height_layers_panel(
         Button(
             label="+ Road",
             on_click=add_road_layer,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="+ Road Sections",
+            on_click=add_road_sections_layer,
             rect=Rectangle(x, y, inner_w, row_h),
         )
     )
@@ -903,12 +932,26 @@ def update_height_layers_panel(
         selected.height, VectorSculptHeightSource
     )
     is_road: bool = isinstance(selected.height, VectorRoadHeightSource)
+    is_road_sections: bool = isinstance(
+        selected.height, RoadSectionsHeightSource
+    )
     is_paint: bool = isinstance(
         selected.height, (PaintHeightSource, VectorHeightSource)
     )
     float_fields: tuple[LayerEditFloat, ...]
 
-    if is_vector_sculpt or is_road:
+    if is_road_sections:
+        tex_label = f"Paths: {source_label(catalog, selected.height)}"
+        buttons.append(
+            Button(
+                label=tex_label,
+                on_click=lambda: None,
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+        float_fields = ()
+    elif is_vector_sculpt or is_road:
         tex_label = f"Height: {source_label(catalog, selected.height)}"
         buttons.append(
             Button(
@@ -1237,6 +1280,10 @@ def update_height_layers_panel(
                     subtree_ids(host.nodes.nodes, [layer_node_id])
                 )
             case VectorRoadHeightSource(layer_node_id=layer_node_id):
+                host.nodes.remove_nodes(
+                    subtree_ids(host.nodes.nodes, [layer_node_id])
+                )
+            case RoadSectionsHeightSource(layer_node_id=layer_node_id):
                 host.nodes.remove_nodes(
                     subtree_ids(host.nodes.nodes, [layer_node_id])
                 )

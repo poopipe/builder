@@ -9,6 +9,7 @@ from builder.commands.command_context import CommandContext
 from builder.generators.generator_types import MeshPattern
 from builder.generators.regenerate import regenerate_group
 from builder.heightfield.height_raw_cache import write_height_raw_cache
+from builder.heightfield.heightfield_types import Heightfield
 from builder.heightfield.heightmap_catalog import (
     HeightmapAsset,
     HeightmapBuffer,
@@ -63,6 +64,48 @@ def relativize_path(path: Path, root: Path) -> str:
 def resolve_project_path(root: Path, relative: str) -> Path:
     """resolve a relative project path against root"""
     return (root / Path(relative)).resolve()
+
+
+def heightfield_with_relative_albedo(
+    heightfield: Heightfield, root: Path
+) -> Heightfield:
+    """rewrite albedo_path to project-relative for scene json"""
+    if heightfield.albedo_path is None:
+        return heightfield
+    return replace(
+        heightfield,
+        albedo_path=relativize_path(Path(heightfield.albedo_path), root),
+    )
+
+
+def heightfield_with_absolute_albedo(
+    heightfield: Heightfield, root: Path
+) -> Heightfield:
+    """resolve albedo_path against the scene project root"""
+    if heightfield.albedo_path is None:
+        return heightfield
+    absolute: Path = resolve_project_path(root, heightfield.albedo_path)
+    return replace(heightfield, albedo_path=str(absolute))
+
+
+def node_with_relative_albedo(node: Node, root: Path) -> Node:
+    """relativize heightfield albedo path on one node for save"""
+    if node.heightfield is None:
+        return node
+    return replace(
+        node,
+        heightfield=heightfield_with_relative_albedo(node.heightfield, root),
+    )
+
+
+def node_with_absolute_albedo(node: Node, root: Path) -> Node:
+    """resolve heightfield albedo path on one node after load"""
+    if node.heightfield is None:
+        return node
+    return replace(
+        node,
+        heightfield=heightfield_with_absolute_albedo(node.heightfield, root),
+    )
 
 
 def build_document(context: CommandContext) -> SceneDocument:
@@ -165,6 +208,12 @@ def save_scene_to_path(context: CommandContext, scene_path: Path) -> None:
     root: Path = project_root_for_scene(path)
     flush_paint_heightmaps(context)
     document: SceneDocument = build_document(context)
+    document = replace(
+        document,
+        nodes=tuple(
+            node_with_relative_albedo(node, root) for node in document.nodes
+        ),
+    )
     relative_sources: dict[str, str] = relative_sources_for_save(document, root)
     heightmap_sources: dict[str, str] = heightmap_sources_for_save(document, root)
     heightmap_caches: dict[str, str] = heightmap_caches_for_save(document, root)
@@ -319,7 +368,8 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
             )
 
     nodes: list[Node] = [
-        apply_mesh_fallbacks(node, fallbacks) for node in document.nodes
+        node_with_absolute_albedo(apply_mesh_fallbacks(node, fallbacks), root)
+        for node in document.nodes
     ]
     context.scene.add_nodes(nodes)
 

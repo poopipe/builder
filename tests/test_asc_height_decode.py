@@ -55,8 +55,8 @@ class TestAscDecode(unittest.TestCase):
             self.assertEqual(decoded.height, 2)
             self.assertEqual(decoded.sample_type, HeightSampleType.f32)
             samples: list[float] = samples_from_f32(decoded.data)
-            # south row first after flip: [3, 0], then north [1, 2]
-            self.assertEqual(samples, [3.0, 0.0, 1.0, 2.0])
+            # south-first, columns mirrored: [0, 3], then north [2, 1]
+            self.assertEqual(samples, [0.0, 3.0, 2.0, 1.0])
 
     def test_default_decode_dispatches_asc(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -75,7 +75,7 @@ class TestAscDecode(unittest.TestCase):
             )
             self.assertEqual(asset.sample_type, HeightSampleType.f32)
             buffer = catalog.buffers[HeightmapId("height")]
-            self.assertEqual(buffer.samples, [3.0, 0.0, 1.0, 2.0])
+            self.assertEqual(buffer.samples, [0.0, 3.0, 2.0, 1.0])
 
 
 class TestAscMetaAndHints(unittest.TestCase):
@@ -87,6 +87,8 @@ class TestAscMetaAndHints(unittest.TestCase):
             hints = asc_import_hints(asc_path)
             self.assertEqual(hints.size_x, 20.0)
             self.assertEqual(hints.size_z, 20.0)
+            self.assertEqual(hints.origin_x, 0.0)
+            self.assertEqual(hints.origin_z, 0.0)
             self.assertIsNone(hints.height_min)
             self.assertIsNone(hints.height_max)
 
@@ -116,8 +118,8 @@ class TestAscMetaAndHints(unittest.TestCase):
                     [
                         "ncols         256",
                         "nrows         256",
-                        "xllcorner     0.0",
-                        "yllcorner     0.0",
+                        "xllcorner     200000.0",
+                        "yllcorner     1000.0",
                         "cellsize      1.0",
                         "",
                     ]
@@ -134,6 +136,8 @@ class TestAscMetaAndHints(unittest.TestCase):
             updated = apply_asc_base_import_hints(heightfield, hints)
             self.assertEqual(updated.size_x.value, 256.0)
             self.assertEqual(updated.size_z.value, 256.0)
+            self.assertEqual(updated.origin_x.value, 200000.0)
+            self.assertEqual(updated.origin_z.value, 1000.0)
             self.assertEqual(updated.base_height_min.value, -5.0)
             self.assertEqual(updated.base_height_max.value, 100.0)
 

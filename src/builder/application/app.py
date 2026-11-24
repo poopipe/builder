@@ -44,8 +44,10 @@ from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandEntry, CommandItem
 from builder.commands.file import (
     apply_export_heightmap_path,
+    apply_import_heightfield_albedo_path,
     apply_import_heightmap_path,
     apply_import_mesh_path,
+    apply_import_road_shp_path,
     apply_open_scene_path,
     apply_save_scene_path,
     cmd_import_mesh,
@@ -78,6 +80,11 @@ from builder.ui.inspector import (
     draw_inspector,
     sync_inspector_focus,
     update_inspector,
+)
+from builder.ui.road_sections_inspector import (
+    draw_road_sections_inspector,
+    selected_road_sections_layer,
+    update_road_sections_inspector,
 )
 from builder.ui.vector_layer_inspector import (
     draw_vector_layer_inspector,
@@ -278,8 +285,11 @@ class Application:
             group = selected_or_ancestor_heightfield_group(self.scene.nodes)
         vector_shape: Node | None = selected_vector_shape_group(self.scene.nodes)
         vector_layer: Node | None = None
+        road_sections_layer: Node | None = None
         if vector_shape is None:
             vector_layer = selected_vector_layer_group(self.scene.nodes)
+        if vector_shape is None and vector_layer is None:
+            road_sections_layer = selected_road_sections_layer(self.scene.nodes)
         sync_inspector_focus(self.ui, group)
         sync_modifiers_focus(self.ui, group)
         apply_text_exit_key(self.ui)
@@ -298,6 +308,7 @@ class Application:
             if group is not None
             or vector_shape is not None
             or vector_layer is not None
+            or road_sections_layer is not None
             else 0
         )
         modifiers_width: int = (
@@ -489,6 +500,7 @@ class Application:
         vector_inspector_buttons: list[Button] = []
         vector_float_rows: list[VectorShapeFloatRow] = []
         vector_layer_buttons: list[Button] = []
+        road_sections_buttons: list[Button] = []
         modifiers_buttons: list[Button] = []
         modifiers_rows: list[ModifierPanelRow] = []
         if vector_shape is not None and not browser_open:
@@ -541,6 +553,13 @@ class Application:
                     and refreshed_layer.vector_layer is not None
                     else None
                 )
+        elif road_sections_layer is not None and not browser_open:
+            road_sections_buttons = update_road_sections_inspector(
+                self.scene.nodes,
+                self.ui,
+                layout.inspector,
+                road_sections_layer,
+            )
         elif group is not None and not browser_open:
             group_id: str = group.id
             inspector_buttons, inspector_rows = update_inspector(
@@ -598,6 +617,7 @@ class Application:
                     self.ui.file_browser = None
                     self.ui.heightfield_layer_target = None
                     self.ui.heightfield_layer_replace_index = None
+                    self.ui.road_sections_import_target = None
                     self.ui.status = "Cancelled"
                 case Path() as chosen:
                     purpose: FileBrowserPurpose = self.ui.file_browser.purpose
@@ -614,6 +634,10 @@ class Application:
                             apply_import_heightmap_path(self, chosen)
                         case FileBrowserPurpose.export_heightmap:
                             apply_export_heightmap_path(self, chosen)
+                        case FileBrowserPurpose.import_road_shp:
+                            apply_import_road_shp_path(self, chosen)
+                        case FileBrowserPurpose.import_heightfield_albedo:
+                            apply_import_heightfield_albedo_path(self, chosen)
                 case None:
                     pass
 
@@ -751,7 +775,9 @@ class Application:
             layout.viewport,
             ui_over,
             self.application.heightmap_catalog,
-            text_focused=self.ui.focus is not None,
+            text_focused=(
+                self.ui.focus is not None or self.ui.file_browser is not None
+            ),
             block_left_click=sculpting and not ui_over,
         )
 
@@ -837,6 +863,13 @@ class Application:
                 layout.inspector,
                 vector_layer,
                 vector_layer_buttons,
+            )
+        elif road_sections_layer is not None:
+            draw_road_sections_inspector(
+                self.font,
+                layout.inspector,
+                road_sections_layer,
+                road_sections_buttons,
             )
         elif group is not None:
             draw_inspector(

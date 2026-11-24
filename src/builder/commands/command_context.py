@@ -98,6 +98,7 @@ class UiContext(Protocol):
     file_browser: FileBrowserState | None
     heightfield_layer_target: str | None
     heightfield_layer_replace_index: int | None
+    road_sections_import_target: str | None
 
     def toggle_side_panel(self) -> None:
         """show or hide the context side panel"""

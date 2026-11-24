@@ -12,6 +12,19 @@ _min_camera_distance: float = 1e-3
 _min_viewport_height_px: float = 1.0
 
 
+def metres_per_pixel_for_camera(
+    camera: Camera3D,
+    distance: float,
+    viewport_height_px: float,
+) -> float:
+    """world metres covered by one screen pixel at the given distance"""
+    safe_distance: float = max(float(distance), _min_camera_distance)
+    safe_height: float = max(float(viewport_height_px), _min_viewport_height_px)
+    return (
+        2.0 * safe_distance * tan(radians(float(camera.fovy) * 0.5))
+    ) / safe_height
+
+
 def overlay_radius_for_camera(
     camera: Camera3D,
     distance: float,
@@ -19,12 +32,9 @@ def overlay_radius_for_camera(
     pixel_width: float,
 ) -> float:
     """world-space cylinder radius for a given screen-pixel width"""
-    safe_distance: float = max(float(distance), _min_camera_distance)
-    safe_height: float = max(float(viewport_height_px), _min_viewport_height_px)
-    metres_per_pixel: float = (
-        2.0 * safe_distance * tan(radians(float(camera.fovy) * 0.5))
-    ) / safe_height
-    return 0.5 * float(pixel_width) * metres_per_pixel
+    return 0.5 * float(pixel_width) * metres_per_pixel_for_camera(
+        camera, distance, viewport_height_px
+    )
 
 
 def point_cube_size_for_line_radius(line_radius: float) -> float:

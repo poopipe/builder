@@ -67,6 +67,7 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightType,
     SculptHeightMode,
     SculptHeightSource,
+    RoadSectionsHeightSource,
     VectorHeightSource,
     VectorRoadHeightSource,
     VectorSculptHeightSource,
@@ -228,6 +229,8 @@ def source_cache_key(
                 f"vector_road:{heightmap_id.name}:{layer_node_id}:"
                 f"{coverage_id.name}:{vr_rev}:{cov_rev}"
             )
+        case RoadSectionsHeightSource(layer_node_id=layer_node_id):
+            return f"road_sections:{layer_node_id}"
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -413,6 +416,8 @@ def source_key_parts(
                 road_cov_rev,
                 0.0,
             )
+        case RoadSectionsHeightSource(layer_node_id=layer_node_id):
+            return (f"rs:{layer_node_id}", 0.0, 0.0)
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -617,6 +622,8 @@ def composite_height_texture(
     layer: HeightEditLayer
     for layer in enabled_layers:
         match layer.height:
+            case RoadSectionsHeightSource():
+                continue
             case VectorSculptHeightSource():
                 layer_tex = upload_source_texture(cache, catalog, layer.height)
                 draw_blend_pass(

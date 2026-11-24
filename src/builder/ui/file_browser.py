@@ -66,6 +66,8 @@ class FileBrowserPurpose(IntEnum):
     import_mesh = 2
     import_heightmap = 3
     export_heightmap = 4
+    import_road_shp = 5
+    import_heightfield_albedo = 6
 
 
 class FileBrowserCancel(IntEnum):
@@ -143,6 +145,10 @@ def browser_title(purpose: FileBrowserPurpose) -> str:
             return "Add heightmap"
         case FileBrowserPurpose.export_heightmap:
             return "Export heightmap"
+        case FileBrowserPurpose.import_road_shp:
+            return "Import road shapefile"
+        case FileBrowserPurpose.import_heightfield_albedo:
+            return "Set heightfield albedo"
 
 
 def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
@@ -158,6 +164,10 @@ def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
             return "Add"
         case FileBrowserPurpose.export_heightmap:
             return "Export"
+        case FileBrowserPurpose.import_road_shp:
+            return "Import"
+        case FileBrowserPurpose.import_heightfield_albedo:
+            return "Set"
 
 
 def make_open_browser(
@@ -219,6 +229,22 @@ def make_heightmap_export_browser(
         filter_suffix,
         initial_name,
         purpose=FileBrowserPurpose.export_heightmap,
+    )
+
+
+def make_road_shp_browser(directory: Path) -> FileBrowserState:
+    """open-mode browser for importing a road shapefile"""
+    return make_open_browser(
+        directory, ".shp", purpose=FileBrowserPurpose.import_road_shp
+    )
+
+
+def make_heightfield_albedo_browser(directory: Path) -> FileBrowserState:
+    """open-mode browser for a heightfield albedo image"""
+    return make_open_browser(
+        directory,
+        (".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp"),
+        purpose=FileBrowserPurpose.import_heightfield_albedo,
     )
 
 

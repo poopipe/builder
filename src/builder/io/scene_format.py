@@ -36,6 +36,7 @@ from builder.heightfield.heightfield_types import (
     ProceduralHeightType,
     SculptHeightMode,
     SculptHeightSource,
+    RoadSectionsHeightSource,
     VectorHeightSource,
     VectorRoadHeightSource,
     VectorSculptHeightSource,
@@ -43,6 +44,12 @@ from builder.heightfield.heightfield_types import (
 )
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapId
 from builder.heightfield.regenerate import is_heightfield_tile_child
+from builder.heightfield.road_sections.road_sections_types import (
+    RoadPolyline,
+    RoadSectionsLayerRecipe,
+    RoadShpRecipe,
+    RoadUsageGroupRecipe,
+)
 from builder.heightfield.vector.registry import (
     get_vector_shape_spec,
     known_vector_shape_kind,
@@ -57,7 +64,7 @@ from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.path.path_types import PathPointRecipe
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 27
+scene_format_version: int = 32
 scene_file_suffix: str = ".scene"
 
 
@@ -450,6 +457,84 @@ def vector_layer_from_json(data: Any) -> VectorLayerRecipe:
     return VectorLayerRecipe()
 
 
+def road_sections_layer_to_json(
+    _layer: RoadSectionsLayerRecipe,
+) -> dict[str, Any]:
+    """encode a road sections layer recipe"""
+    return {}
+
+
+def road_sections_layer_from_json(data: Any) -> RoadSectionsLayerRecipe:
+    """decode a road sections layer recipe"""
+    if not isinstance(data, dict):
+        raise ValueError("road_sections_layer must be an object")
+    return RoadSectionsLayerRecipe()
+
+
+def road_polyline_to_json(polyline: RoadPolyline) -> list[list[float]]:
+    """encode one polyline as [[x, z], ...]"""
+    return [[float(x), float(z)] for x, z in polyline.points]
+
+
+def road_polyline_from_json(data: Any) -> RoadPolyline:
+    """decode one polyline from [[x, z], ...]"""
+    if not isinstance(data, list) or len(data) < 2:
+        raise ValueError("road polyline must be a list of at least two points")
+    points: list[tuple[float, float]] = []
+    entry: Any
+    for entry in data:
+        if (
+            not isinstance(entry, list)
+            or len(entry) != 2
+            or not isinstance(entry[0], (int, float))
+            or not isinstance(entry[1], (int, float))
+        ):
+            raise ValueError("road polyline point must be [x, z]")
+        points.append((float(entry[0]), float(entry[1])))
+    return RoadPolyline(points=tuple(points))
+
+
+def road_usage_group_to_json(group: RoadUsageGroupRecipe) -> dict[str, Any]:
+    """encode one road usage group recipe"""
+    return {
+        "usage": group.usage,
+        "polylines": [road_polyline_to_json(p) for p in group.polylines],
+    }
+
+
+def road_usage_group_from_json(data: Any) -> RoadUsageGroupRecipe:
+    """decode one road usage group recipe"""
+    if not isinstance(data, dict):
+        raise ValueError("road_usage_group must be an object")
+    usage_raw: Any = data.get("usage")
+    if not isinstance(usage_raw, str) or usage_raw == "":
+        raise ValueError("road_usage_group.usage must be a non-empty string")
+    polylines_raw: Any = data.get("polylines", [])
+    if not isinstance(polylines_raw, list):
+        raise ValueError("road_usage_group.polylines must be a list")
+    return RoadUsageGroupRecipe(
+        usage=usage_raw,
+        polylines=tuple(
+            road_polyline_from_json(entry) for entry in polylines_raw
+        ),
+    )
+
+
+def road_shp_to_json(shp: RoadShpRecipe) -> dict[str, Any]:
+    """encode a road shp recipe"""
+    return {"source_path": shp.source_path}
+
+
+def road_shp_from_json(data: Any) -> RoadShpRecipe:
+    """decode a road shp recipe"""
+    if not isinstance(data, dict):
+        raise ValueError("road_shp must be an object")
+    path_raw: Any = data.get("source_path")
+    if not isinstance(path_raw, str) or path_raw == "":
+        raise ValueError("road_shp.source_path must be a non-empty string")
+    return RoadShpRecipe(source_path=path_raw)
+
+
 def vector_shape_to_json(shape: VectorShapeRecipe) -> dict[str, Any]:
     """encode a vector shape recipe"""
     return {
@@ -576,6 +661,16 @@ def node_to_json(node: Node) -> dict[str, Any]:
         payload["vector_layer"] = vector_layer_to_json(node.vector_layer)
     if node.vector_shape is not None:
         payload["vector_shape"] = vector_shape_to_json(node.vector_shape)
+    if node.road_sections_layer is not None:
+        payload["road_sections_layer"] = road_sections_layer_to_json(
+            node.road_sections_layer
+        )
+    if node.road_shp is not None:
+        payload["road_shp"] = road_shp_to_json(node.road_shp)
+    if node.road_usage_group is not None:
+        payload["road_usage_group"] = road_usage_group_to_json(
+            node.road_usage_group
+        )
     if node.path_point is not None:
         payload["path_point"] = path_point_to_json(node.path_point)
     return payload
@@ -622,6 +717,17 @@ def node_from_json(data: Any) -> Node:
     vector_shape: VectorShapeRecipe | None = None
     if "vector_shape" in data and data["vector_shape"] is not None:
         vector_shape = vector_shape_from_json(data["vector_shape"])
+    road_sections_layer: RoadSectionsLayerRecipe | None = None
+    if "road_sections_layer" in data and data["road_sections_layer"] is not None:
+        road_sections_layer = road_sections_layer_from_json(
+            data["road_sections_layer"]
+        )
+    road_shp: RoadShpRecipe | None = None
+    if "road_shp" in data and data["road_shp"] is not None:
+        road_shp = road_shp_from_json(data["road_shp"])
+    road_usage_group: RoadUsageGroupRecipe | None = None
+    if "road_usage_group" in data and data["road_usage_group"] is not None:
+        road_usage_group = road_usage_group_from_json(data["road_usage_group"])
     path_point: PathPointRecipe | None = None
     if "path_point" in data and data["path_point"] is not None:
         path_point = path_point_from_json(data["path_point"])
@@ -632,12 +738,15 @@ def node_from_json(data: Any) -> Node:
             heightfield is not None,
             vector_layer is not None,
             vector_shape is not None,
+            road_sections_layer is not None,
+            road_shp is not None,
+            road_usage_group is not None,
         )
         if flag
     )
     if recipe_count > 1:
         raise ValueError(
-            "node cannot combine generator/heightfield/vector_layer/vector_shape"
+            "node cannot combine generator/heightfield/vector_*/road_sections_*"
         )
     if path_point is not None and role is not NodeRole.path_point:
         raise ValueError("path_point recipe requires role path_point")
@@ -650,7 +759,7 @@ def node_from_json(data: Any) -> Node:
         raise ValueError("path handles cannot carry a path_point recipe")
     if path_point is not None and recipe_count > 0:
         raise ValueError(
-            "path_point cannot combine with generator/heightfield/vector_layer/vector_shape"
+            "path_point cannot combine with generator/heightfield/vector_*/road_sections_*"
         )
     return Node(
         id=node_id,
@@ -661,6 +770,9 @@ def node_from_json(data: Any) -> Node:
         heightfield=heightfield,
         vector_layer=vector_layer,
         vector_shape=vector_shape,
+        road_sections_layer=road_sections_layer,
+        road_shp=road_shp,
+        road_usage_group=road_usage_group,
         path_point=path_point,
         name=name_raw,
         role=role,
@@ -726,6 +838,11 @@ def height_layer_source_to_json(source: HeightLayerSource) -> dict[str, Any]:
                 "layer_node_id": layer_node_id,
                 "heightmap_id": heightmap_id.name,
                 "coverage_id": coverage_id.name,
+            }
+        case RoadSectionsHeightSource(layer_node_id=layer_node_id):
+            return {
+                "source_type": source_type.name,
+                "layer_node_id": layer_node_id,
             }
 
 
@@ -827,6 +944,11 @@ def height_layer_source_from_json(data: Any, label: str) -> HeightLayerSource:
                 heightmap_id=HeightmapId(road_map_id),
                 coverage_id=HeightmapId(road_cov_raw),
             )
+        case HeightLayerSourceType.road_sections:
+            sections_layer_raw: Any = data.get("layer_node_id")
+            if not isinstance(sections_layer_raw, str) or sections_layer_raw == "":
+                raise ValueError(f"{label}.layer_node_id must be a non-empty string")
+            return RoadSectionsHeightSource(layer_node_id=sections_layer_raw)
 
 
 def require_layer_float(data: dict[str, Any], key: str, default: float) -> float:
@@ -909,6 +1031,7 @@ def heightfield_to_json(heightfield: Heightfield) -> dict[str, Any]:
     return {
         "params": params_to_json(heightfield),
         "base": None if heightfield.base is None else heightfield.base.name,
+        "albedo_path": heightfield.albedo_path,
         "edit_layers": [
             height_edit_layer_to_json(layer) for layer in heightfield.edit_layers
         ],
@@ -931,13 +1054,26 @@ def heightfield_from_json(data: Any) -> Heightfield:
         base = HeightmapId(base_raw)
     else:
         raise ValueError("heightfield.base must be a non-empty string or null")
+    albedo_raw: Any = data.get("albedo_path")
+    albedo_path: str | None
+    if albedo_raw is None:
+        albedo_path = None
+    elif isinstance(albedo_raw, str) and albedo_raw != "":
+        albedo_path = albedo_raw
+    else:
+        raise ValueError("heightfield.albedo_path must be a non-empty string or null")
     layers_raw: Any = data.get("edit_layers", [])
     if not isinstance(layers_raw, list):
         raise ValueError("heightfield.edit_layers must be an array")
     edit_layers: list[HeightEditLayer] = [
         height_edit_layer_from_json(entry) for entry in layers_raw
     ]
-    return replace(recipe, base=base, edit_layers=tuple(edit_layers))
+    return replace(
+        recipe,
+        base=base,
+        albedo_path=albedo_path,
+        edit_layers=tuple(edit_layers),
+    )
 
 
 def heightmap_asset_to_json(

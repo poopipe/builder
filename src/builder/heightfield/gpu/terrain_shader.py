@@ -94,8 +94,10 @@ in vec2 fragTexCoord;
 in vec4 fragColor;
 in vec3 fragNormal;
 out vec4 finalColor;
+uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 uniform vec3 viewPos;
+uniform int useAlbedoMap;
 
 struct Light {
     vec3 direction;
@@ -119,7 +121,10 @@ void main()
         vec3 specular = lights[i].color * spec * lights[i].intensity * 0.25;
         lighting += diffuse + specular;
     }
-    vec3 albedo = vec3(0.55);
+    vec2 albedoUv = vec2(1.0 - fragTexCoord.x, 1.0 - fragTexCoord.y);
+    vec3 albedo = useAlbedoMap != 0
+        ? texture(texture0, albedoUv).rgb
+        : vec3(0.55);
     finalColor = vec4(albedo * colDiffuse.rgb * lighting, colDiffuse.a);
 }
 """
@@ -138,6 +143,7 @@ class TerrainShader:
     loc_height_scale: int
     loc_height_bias: int
     loc_col_diffuse: int
+    loc_use_albedo_map: int
 
 
 def load_terrain_shader() -> TerrainShader:
@@ -154,6 +160,9 @@ def load_terrain_shader() -> TerrainShader:
     shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_HEIGHT] = get_shader_location(
         shader, "heightMap"
     )
+    shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_ALBEDO] = get_shader_location(
+        shader, "texture0"
+    )
     loc_view: int = get_shader_location(shader, "viewPos")
     loc_ambient: int = get_shader_location(shader, "ambient")
     loc_parent: int = get_shader_location(shader, "parentTransform")
@@ -162,11 +171,13 @@ def load_terrain_shader() -> TerrainShader:
     loc_height_scale: int = get_shader_location(shader, "heightScale")
     loc_height_bias: int = get_shader_location(shader, "heightBias")
     loc_col_diffuse: int = get_shader_location(shader, "colDiffuse")
+    loc_use_albedo_map: int = get_shader_location(shader, "useAlbedoMap")
     if (
         shader.locs[ShaderLocationIndex.SHADER_LOC_MATRIX_MVP] < 0
         or shader.locs[ShaderLocationIndex.SHADER_LOC_VERTEX_INSTANCETRANSFORM]
         < 0
         or shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_HEIGHT] < 0
+        or shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_ALBEDO] < 0
         or loc_view < 0
         or loc_ambient < 0
         or loc_parent < 0
@@ -174,6 +185,7 @@ def load_terrain_shader() -> TerrainShader:
         or loc_world_texel_size < 0
         or loc_height_scale < 0
         or loc_height_bias < 0
+        or loc_use_albedo_map < 0
     ):
         unload_shader(shader)
         raise RuntimeError("terrain shader is missing required uniforms")
@@ -183,6 +195,18 @@ def load_terrain_shader() -> TerrainShader:
         shader,
         shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_HEIGHT],
         ffi.new("int *", int(MaterialMapIndex.MATERIAL_MAP_HEIGHT)),
+        ShaderUniformDataType.SHADER_UNIFORM_INT,
+    )
+    set_shader_value(
+        shader,
+        shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_ALBEDO],
+        ffi.new("int *", int(MaterialMapIndex.MATERIAL_MAP_ALBEDO)),
+        ShaderUniformDataType.SHADER_UNIFORM_INT,
+    )
+    set_shader_value(
+        shader,
+        loc_use_albedo_map,
+        ffi.new("int *", 0),
         ShaderUniformDataType.SHADER_UNIFORM_INT,
     )
     terrain: TerrainShader = TerrainShader(
@@ -195,6 +219,7 @@ def load_terrain_shader() -> TerrainShader:
         loc_height_scale=loc_height_scale,
         loc_height_bias=loc_height_bias,
         loc_col_diffuse=loc_col_diffuse if loc_col_diffuse >= 0 else -1,
+        loc_use_albedo_map=loc_use_albedo_map,
     )
     bind_terrain_lights(
         terrain,
@@ -236,6 +261,15 @@ def set_vec2(shader: Shader, loc: int, value: Vector2) -> None:
 
 def set_vec4(shader: Shader, loc: int, value: Vector4) -> None:
     set_shader_value(shader, loc, value, ShaderUniformDataType.SHADER_UNIFORM_VEC4)
+
+
+def set_int(shader: Shader, loc: int, value: int) -> None:
+    set_shader_value(
+        shader,
+        loc,
+        ffi.new("int *", int(value)),
+        ShaderUniformDataType.SHADER_UNIFORM_INT,
+    )
 
 
 def set_parent_transform(terrain: TerrainShader, matrix: Matrix) -> None:

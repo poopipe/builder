@@ -11,6 +11,11 @@ from pyray import Transform, Vector3, Vector4, quaternion_identity
 if TYPE_CHECKING:
     from builder.generators.generator_types import Generator
     from builder.heightfield.heightfield_types import Heightfield
+    from builder.heightfield.road_sections.road_sections_types import (
+        RoadSectionsLayerRecipe,
+        RoadShpRecipe,
+        RoadUsageGroupRecipe,
+    )
     from builder.heightfield.vector.vector_types import (
         VectorLayerRecipe,
         VectorShapeRecipe,
@@ -41,7 +46,7 @@ class Node:
 
     name is a display label shown in the outliner; empty means derive one.
     role tags path control points / handles for splines and vector shapes.
-    generator, heightfield, vector_layer, and vector_shape are mutually exclusive
+    generator, heightfield, vector_*, and road_sections_* recipes are mutually exclusive
     path_point recipe is only valid with role=path_point
     """
 
@@ -53,6 +58,9 @@ class Node:
     heightfield: Heightfield | None = None
     vector_layer: VectorLayerRecipe | None = None
     vector_shape: VectorShapeRecipe | None = None
+    road_sections_layer: RoadSectionsLayerRecipe | None = None
+    road_shp: RoadShpRecipe | None = None
+    road_usage_group: RoadUsageGroupRecipe | None = None
     path_point: PathPointRecipe | None = None
     name: str = ""
     role: NodeRole = NodeRole.none

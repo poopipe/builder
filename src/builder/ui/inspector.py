@@ -71,7 +71,10 @@ from builder.ui.text_field import (
     field_after,
     handle_text_keys,
 )
-from builder.ui.file_browser import make_heightmap_browser
+from builder.ui.file_browser import (
+    make_heightfield_albedo_browser,
+    make_heightmap_browser,
+)
 from pathlib import Path
 from builder.ui.theme import (
     ui_button_gap,
@@ -692,6 +695,39 @@ def set_heightfield_base(
         ui.status = str(exc)
 
 
+def set_heightfield_albedo(
+    host: HeightfieldSceneHost,
+    catalog: HeightmapCatalog,
+    ui: UiState,
+    group_id: str,
+    heightfield: Heightfield,
+    albedo_path: str | None,
+    journal: SessionJournal | None = None,
+) -> None:
+    """set or clear the heightfield albedo image path"""
+    if journal is not None:
+        journal.record(
+            "heightfield_albedo",
+            group_id=group_id,
+            albedo_path="" if albedo_path is None else albedo_path,
+        )
+    try:
+        set_heightfield(
+            host,
+            catalog,
+            group_id,
+            replace(heightfield, albedo_path=albedo_path),
+        )
+        ui.status = (
+            "Cleared heightfield albedo"
+            if albedo_path is None
+            else f"Albedo: {Path(albedo_path).name}"
+        )
+    except ValueError as exc:
+        log_exception("heightfield albedo edit failed", exc)
+        ui.status = str(exc)
+
+
 def update_heightfield_inspector(
     host: HeightfieldSceneHost,
     catalog: HeightmapCatalog,
@@ -950,6 +986,46 @@ def update_heightfield_inspector(
             rect=Rectangle(x, y, inner_w, row_h),
         )
     )
+    y += row_h + ui_button_gap
+
+    albedo_label: str
+    if heightfield.albedo_path is None:
+        albedo_label = "Albedo: (none)"
+    else:
+        albedo_label = f"Albedo: {Path(heightfield.albedo_path).name}"
+
+    def clear_albedo(hf: Heightfield = heightfield) -> None:
+        ui.clear_focus()
+        set_heightfield_albedo(
+            host, catalog, ui, group.id, hf, None, journal=journal
+        )
+
+    def open_albedo_browser() -> None:
+        ui.clear_focus()
+        ui.heightfield_layer_target = group.id
+        ui.file_browser = make_heightfield_albedo_browser(Path.cwd())
+        ui.status = "Set heightfield albedo…"
+
+    buttons.append(
+        Button(
+            label=albedo_label,
+            on_click=open_albedo_browser,
+            rect=Rectangle(
+                x,
+                y,
+                inner_w - (step_w + ui_button_gap if heightfield.albedo_path else 0.0),
+                row_h,
+            ),
+        )
+    )
+    if heightfield.albedo_path is not None:
+        buttons.append(
+            Button(
+                label="x",
+                on_click=clear_albedo,
+                rect=Rectangle(x + inner_w - step_w, y, step_w, row_h),
+            )
+        )
     update_buttons(buttons, area)
     if clicked and is_point_in_rect(mouse.x, mouse.y, area):
         on_control: bool = any(

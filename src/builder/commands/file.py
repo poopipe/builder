@@ -43,13 +43,15 @@ heightmap_file_suffixes: tuple[str, ...] = (".png", ".asc")
 def apply_asc_base_import_hints(
     heightfield: Heightfield, hints: AscImportHints
 ) -> Heightfield:
-    """apply ASC cellsize world size and optional meta elevation bounds"""
+    """apply ASC cellsize world size, map origin, and optional meta elevation"""
     from dataclasses import replace
 
     updated: Heightfield = replace(
         heightfield,
         size_x=replace(heightfield.size_x, value=hints.size_x),
         size_z=replace(heightfield.size_z, value=hints.size_z),
+        origin_x=replace(heightfield.origin_x, value=hints.origin_x),
+        origin_z=replace(heightfield.origin_z, value=hints.origin_z),
     )
     if hints.height_min is not None and hints.height_max is not None:
         updated = replace(
@@ -295,6 +297,42 @@ def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
     )
 
 
+def apply_import_heightfield_albedo_path(
+    context: CommandContext, path: Path
+) -> None:
+    """set the albedo image on the pending heightfield group"""
+    from dataclasses import replace
+
+    group_id: str | None = context.ui.heightfield_layer_target
+    context.ui.heightfield_layer_target = None
+    context.application.journal.record(
+        "import_heightfield_albedo", path=path, group_id=group_id
+    )
+    if group_id is None:
+        context.ui.status = "No heightfield selected for albedo"
+        return
+    group: Node | None = context.scene.nodes.nodes.get(group_id)
+    if group is None or group.heightfield is None:
+        context.ui.status = "Heightfield no longer available"
+        return
+    image_path: Path = path.resolve()
+    try:
+        set_heightfield(
+            context.scene,
+            context.application.heightmap_catalog,
+            group_id,
+            replace(group.heightfield, albedo_path=str(image_path)),
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        log_exception("heightfield albedo failed", exc)
+        context.ui.status = f"Albedo failed: {exc}"
+        return
+    context.application.browser_directories[
+        FileBrowserPurpose.import_heightfield_albedo
+    ] = image_path.parent
+    context.ui.status = f"Albedo: {image_path.name}"
+
+
 def apply_export_heightmap_path(context: CommandContext, path: Path) -> None:
     """write composited enabled-layer heights to .asc or .png"""
     group_id: str | None = context.ui.heightfield_layer_target
@@ -327,6 +365,55 @@ def apply_export_heightmap_path(context: CommandContext, path: Path) -> None:
     context.ui.status = (
         f"Exported heightmap {export_path.name} "
         f"({buffer.width}x{buffer.height})"
+    )
+
+
+def apply_import_road_shp_path(context: CommandContext, path: Path) -> None:
+    """import a shapefile under the pending road sections layer"""
+    from builder.heightfield.road_sections.edit import import_road_shp
+    from builder.heightfield.road_sections.road_sections_types import (
+        road_usage_polyline_count,
+    )
+
+    layer_id: str | None = context.ui.road_sections_import_target
+    context.ui.road_sections_import_target = None
+    context.application.journal.record(
+        "import_road_shp", path=path, layer_id=layer_id
+    )
+    if layer_id is None:
+        context.ui.status = "No road sections layer selected for import"
+        return
+    layer: Node | None = context.scene.nodes.nodes.get(layer_id)
+    if layer is None or layer.road_sections_layer is None:
+        context.ui.status = "Road sections layer no longer available"
+        return
+    if layer.parent_id is None:
+        context.ui.status = "Road sections layer has no heightfield parent"
+        return
+    parent: Node | None = context.scene.nodes.nodes.get(layer.parent_id)
+    if parent is None or parent.heightfield is None:
+        context.ui.status = "Heightfield parent no longer available"
+        return
+    shp_path: Path = path.resolve()
+    try:
+        new_nodes: list[Node] = import_road_shp(
+            layer_id, shp_path, parent.heightfield
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        log_exception("import road shp failed", exc)
+        context.ui.status = f"Import failed: {exc}"
+        return
+    context.scene.add_nodes(new_nodes)
+    context.application.browser_directories[
+        FileBrowserPurpose.import_road_shp
+    ] = shp_path.parent
+    polyline_count: int = 0
+    node: Node
+    for node in new_nodes:
+        if node.road_usage_group is not None:
+            polyline_count += road_usage_polyline_count(node.road_usage_group)
+    context.ui.status = (
+        f"Imported {shp_path.name} ({polyline_count} polylines)"
     )
 
 

@@ -46,6 +46,7 @@ class HeightLayerSourceType(IntEnum):
     vector = 5
     vector_sculpt = 6
     vector_road = 7
+    road_sections = 8
 
 
 class SculptHeightMode(IntEnum):
@@ -118,6 +119,13 @@ class VectorRoadHeightSource:
     coverage_id: HeightmapId
 
 
+@dataclass(frozen=True)
+class RoadSectionsHeightSource:
+    """authorship layer for shp-imported road section splines (no heightmap)"""
+
+    layer_node_id: str
+
+
 HeightLayerSource = (
     CatalogHeightSource
     | PaintHeightSource
@@ -126,6 +134,7 @@ HeightLayerSource = (
     | VectorHeightSource
     | VectorSculptHeightSource
     | VectorRoadHeightSource
+    | RoadSectionsHeightSource
 )
 
 
@@ -170,10 +179,33 @@ class Heightfield:
         minimum=float(heightfield_size_multiple),
     )
     spacing: EnumParam = EnumParam(VertexSpacing.m1, label="Spacing")
+    # map-space lower-left (asc xllcorner / yllcorner); hf mesh stays centered
+    origin_x: FloatParam = FloatParam(0.0, label="Origin X")
+    origin_z: FloatParam = FloatParam(0.0, label="Origin Z")
     base_height_min: FloatParam = FloatParam(0.0, label="Height Min")
     base_height_max: FloatParam = FloatParam(1.0, label="Height Max")
     base: HeightmapId | None = None
+    # absolute path at runtime; scene json stores project-relative
+    albedo_path: str | None = None
     edit_layers: tuple[HeightEditLayer, ...] = ()
+
+
+def map_world_xz_to_hf_local(
+    world_x: float,
+    world_z: float,
+    *,
+    origin_x: float,
+    origin_z: float,
+    size_x: float,
+    size_z: float,
+) -> tuple[float, float]:
+    """map map-space xz (asc / shp) into centered heightfield-local xz
+
+    east-west mirrored to match asc decode (buffer column 0 = east)
+    """
+    local_x: float = world_x - origin_x - 0.5 * size_x
+    local_z: float = world_z - origin_z - 0.5 * size_z
+    return (-local_x, local_z)
 
 
 @dataclass(frozen=True)
@@ -282,6 +314,8 @@ def height_layer_source_type(source: HeightLayerSource) -> HeightLayerSourceType
             return HeightLayerSourceType.vector_sculpt
         case VectorRoadHeightSource():
             return HeightLayerSourceType.vector_road
+        case RoadSectionsHeightSource():
+            return HeightLayerSourceType.road_sections
 
 
 def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapId, ...]:
@@ -303,7 +337,7 @@ def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapI
             heightmap_id=heightmap_id, coverage_id=coverage_id
         ):
             return (heightmap_id, coverage_id)
-        case ProceduralHeightSource() | None:
+        case ProceduralHeightSource() | RoadSectionsHeightSource() | None:
             return ()
 
 

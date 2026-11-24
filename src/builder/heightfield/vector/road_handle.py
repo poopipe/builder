@@ -42,10 +42,6 @@ from builder.scene.scene import Scene
 from builder.scene.scene_types import Node, NodeRole
 from builder.scene.transforms import matrix_translation, world_matrix
 
-# match overlay.surface_y lift so the pick cube sits on the draped shadow
-_shadow_lift: float = 0.15
-
-
 @dataclass
 class RoadHeightDrag:
     """in-progress vertical drag of a road point height handle"""
@@ -134,13 +130,12 @@ def pick_road_height_handle(
     road_index: int | None = vector_road_layer_index(heightfield, layer_id)
     if road_index is None:
         return None
-    shadow_y: float = (
-        sample_height_below(catalog, heightfield, road_index, su, sv)
-        + _shadow_lift
-    )
     hf_world: Matrix = world_matrix(nodes, hf_id)
     distance: float = vector3_distance(
         camera.position, matrix_translation(hf_world)
+    )
+    shadow_y: float = sample_height_below(
+        catalog, heightfield, road_index, su, sv
     )
     cube_size: float = point_cube_size_for_line_radius(
         overlay_radius_for_camera(

@@ -14,7 +14,6 @@ from pyray import (
     Vector3,
     begin_blend_mode,
     draw_cube,
-    draw_cylinder_ex,
     draw_plane,
     end_blend_mode,
     ffi,
@@ -47,6 +46,14 @@ from builder.heightfield.vector.overlay_scale import (
     point_cube_size_for_line_radius,
     shadow_line_pixels,
 )
+from builder.view.line_shader import (
+    LineBatch,
+    LineShader,
+    add_line_segment,
+    clear_line_batch,
+    flush_line_batch,
+    line_shadow_depth_bias,
+)
 from builder.heightfield.vector.polyline import PolylineShapeParams
 from builder.heightfield.vector.rasterize import (
     find_vector_layer_ancestor,
@@ -69,11 +76,8 @@ stem_color: Color = Color(120, 180, 220, 200)
 point_color: Color = Color(255, 220, 80, 255)
 point_selected_color: Color = Color(255, 140, 40, 255)
 plane_color: Color = Color(80, 180, 255, 36)
-# lift shadow above the surface so lines are not buried by depth fighting
-overlay_lift: float = 0.15
 # subdivide long segments so the shadow drapes over hills
 overlay_step_metres: float = 2.0
-overlay_cylinder_sides: int = 8
 _min_segment_length: float = 1e-6
 
 
@@ -84,6 +88,7 @@ def surface_y(
     z: float,
     size_x: float,
     size_z: float,
+    lift: float,
     *,
     below_layer_index: int | None = None,
 ) -> float:
@@ -95,45 +100,41 @@ def surface_y(
     v: float
     u, v = world_xz_to_uv(x, z, size_x, size_z)
     if below_layer_index is None:
-        return sample_height(catalog, heightfield, u, v) + overlay_lift
+        return sample_height(catalog, heightfield, u, v) + lift
     return (
         sample_height_below(
             catalog, heightfield, below_layer_index, u, v
         )
-        + overlay_lift
-    )
-
-
-def draw_tube(
-    start: Vector3, end: Vector3, radius: float, color: Color
-) -> None:
-    """draw a thick segment as a cylinder; skip degenerate lengths"""
-    if hypot(end.x - start.x, end.y - start.y, end.z - start.z) < _min_segment_length:
-        return
-    draw_cylinder_ex(
-        start, end, radius, radius, overlay_cylinder_sides, color
+        + lift
     )
 
 
 def draw_segment_flat(
+    batch: LineBatch,
     ax: float,
     az: float,
     bx: float,
     bz: float,
     plane_y: float,
-    radius: float,
+    thickness_px: float,
     color: Color,
 ) -> None:
-    """draw one xz segment on the work plane"""
-    draw_tube(
-        Vector3(ax, plane_y, az),
-        Vector3(bx, plane_y, bz),
-        radius,
+    """queue one xz segment on the work plane"""
+    add_line_segment(
+        batch,
+        ax,
+        plane_y,
+        az,
+        bx,
+        plane_y,
+        bz,
         color,
+        thickness_px,
     )
 
 
 def draw_segment_draped(
+    batch: LineBatch,
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
     ax: float,
@@ -142,12 +143,13 @@ def draw_segment_draped(
     bz: float,
     size_x: float,
     size_z: float,
-    radius: float,
+    thickness_px: float,
     color: Color,
+    lift: float,
     *,
     below_layer_index: int | None = None,
 ) -> None:
-    """draw one xz segment draped onto the terrain"""
+    """queue one xz segment draped onto the terrain"""
     dx: float = bx - ax
     dz: float = bz - az
     length: float = hypot(dx, dz)
@@ -169,6 +171,7 @@ def draw_segment_draped(
             z0,
             size_x,
             size_z,
+            lift,
             below_layer_index=below_layer_index,
         )
         y1: float = surface_y(
@@ -178,13 +181,11 @@ def draw_segment_draped(
             z1,
             size_x,
             size_z,
+            lift,
             below_layer_index=below_layer_index,
         )
-        draw_tube(
-            Vector3(x0, y0, z0),
-            Vector3(x1, y1, z1),
-            radius,
-            color,
+        add_line_segment(
+            batch, x0, y0, z0, x1, y1, z1, color, thickness_px
         )
 
 
@@ -252,13 +253,15 @@ def shape_polyline_points(
 
 
 def draw_polyline_shadow(
+    batch: LineBatch,
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
     points: list[tuple[float, float]],
     closed: bool,
     size_x: float,
     size_z: float,
-    radius: float,
+    thickness_px: float,
+    lift: float,
     *,
     below_layer_index: int | None = None,
 ) -> None:
@@ -270,6 +273,7 @@ def draw_polyline_shadow(
         a = points[i]
         b = points[(i + 1) % len(points)]
         draw_segment_draped(
+            batch,
             catalog,
             heightfield,
             a[0],
@@ -278,19 +282,22 @@ def draw_polyline_shadow(
             b[1],
             size_x,
             size_z,
-            radius,
+            thickness_px,
             shadow_color,
+            lift,
             below_layer_index=below_layer_index,
         )
 
 
 def draw_polyline_flat(
+    batch: LineBatch,
     points: list[tuple[float, float]],
     closed: bool,
     plane_y: float,
-    radius: float,
+    thickness_px: float,
+    color: Color,
 ) -> None:
-    """draw polyline segments on the work plane"""
+    """queue polyline segments on the work plane"""
     if len(points) < 2:
         return
     i: int
@@ -298,11 +305,19 @@ def draw_polyline_flat(
         a = points[i]
         b = points[(i + 1) % len(points)]
         draw_segment_flat(
-            a[0], a[1], b[0], b[1], plane_y, radius, overlay_color
+            batch,
+            a[0],
+            a[1],
+            b[0],
+            b[1],
+            plane_y,
+            thickness_px,
+            color,
         )
 
 
 def draw_shape_shadow(
+    batch: LineBatch,
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
     nodes: dict[str, Node],
@@ -310,7 +325,8 @@ def draw_shape_shadow(
     heightfield_group_id: str,
     size_x: float,
     size_z: float,
-    radius: float,
+    thickness_px: float,
+    lift: float,
     *,
     below_layer_index: int | None = None,
 ) -> None:
@@ -322,18 +338,21 @@ def draw_shape_shadow(
     closed: bool
     points, closed = polyline
     draw_polyline_shadow(
+        batch,
         catalog,
         heightfield,
         points,
         closed,
         size_x,
         size_z,
-        radius,
+        thickness_px,
+        lift,
         below_layer_index=below_layer_index,
     )
 
 
 def draw_road_point_stems(
+    batch: LineBatch,
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
     nodes: dict[str, Node],
@@ -343,8 +362,9 @@ def draw_road_point_stems(
     size_x: float,
     size_z: float,
     selected_ids: set[str],
-    line_radius: float,
+    stem_thickness_px: float,
     cube_size: float,
+    lift: float,
 ) -> None:
     """shadow cubes, stems, and ribbon-height markers for road points"""
     road_index: int | None = vector_road_layer_index(heightfield, layer_id)
@@ -366,6 +386,7 @@ def draw_road_point_stems(
             pz,
             size_x,
             size_z,
+            lift,
             below_layer_index=road_index,
         )
         u: float
@@ -388,11 +409,16 @@ def draw_road_point_stems(
             cube_size,
             handle_color,
         )
-        draw_tube(
-            Vector3(px, shadow, pz),
-            Vector3(px, ribbon, pz),
-            line_radius * 0.6,
+        add_line_segment(
+            batch,
+            px,
+            shadow,
+            pz,
+            px,
+            ribbon,
+            pz,
             stem_color,
+            stem_thickness_px,
         )
         draw_cube(
             Vector3(px, ribbon, pz),
@@ -404,12 +430,13 @@ def draw_road_point_stems(
 
 
 def draw_shape_flat(
+    batch: LineBatch,
     nodes: dict[str, Node],
     shape: Node,
     heightfield_group_id: str,
     plane_y: float,
     selected_ids: set[str],
-    radius: float,
+    thickness_px: float,
     cube_size: float,
 ) -> None:
     """work-plane lines and point cubes for one vector shape"""
@@ -419,7 +446,9 @@ def draw_shape_flat(
         points: list[tuple[float, float]]
         closed: bool
         points, closed = polyline
-        draw_polyline_flat(points, closed, plane_y, radius)
+        draw_polyline_flat(
+            batch, points, closed, plane_y, thickness_px, overlay_color
+        )
     entry: tuple[str, float, float]
     for entry in vector_point_entries(
         nodes, shape.id, heightfield_group_id
@@ -529,6 +558,8 @@ def draw_vector_overlays(
     heightfield_group: Node,
     camera: Camera3D,
     viewport_height_px: float,
+    line_shader: LineShader,
+    line_batch: LineBatch,
     selected_ids: Sequence[str] = (),
 ) -> None:
     """draw work-plane shapes, terrain shadows, and point cubes for one heightfield"""
@@ -561,10 +592,8 @@ def draw_vector_overlays(
     overlay_radius: float = overlay_radius_for_camera(
         camera, distance, viewport_height_px, overlay_line_pixels
     )
-    shadow_radius: float = overlay_radius_for_camera(
-        camera, distance, viewport_height_px, shadow_line_pixels
-    )
     cube_size: float = point_cube_size_for_line_radius(overlay_radius)
+    clear_line_batch(line_batch)
     # pyray's rl_mult_matrixf wants float*; matrix_to_float_v returns float16
     rl_push_matrix()
     rl_mult_matrixf(ffi.cast("float *", matrix_to_float_v(hf_world).v))
@@ -587,6 +616,7 @@ def draw_vector_overlays(
             if shape.id != selected_shape_id:
                 continue
             draw_shape_shadow(
+                line_batch,
                 catalog,
                 heightfield,
                 nodes,
@@ -594,11 +624,13 @@ def draw_vector_overlays(
                 heightfield_group.id,
                 size_x,
                 size_z,
-                shadow_radius,
+                shadow_line_pixels,
+                0.0,
                 below_layer_index=road_index,
             )
             if is_road:
                 draw_road_point_stems(
+                    line_batch,
                     catalog,
                     heightfield,
                     nodes,
@@ -608,20 +640,26 @@ def draw_vector_overlays(
                     size_x,
                     size_z,
                     selected_set,
-                    shadow_radius,
+                    shadow_line_pixels * 0.6,
                     cube_size,
+                    0.0,
                 )
             break
+        flush_line_batch(
+            line_batch, line_shader, depth_bias=line_shadow_depth_bias
+        )
     draw_work_plane(size_x, size_z, plane_y)
     shape_flat: Node
     for shape_flat in shapes:
         draw_shape_flat(
+            line_batch,
             nodes,
             shape_flat,
             heightfield_group.id,
             plane_y,
             selected_set,
-            overlay_radius,
+            overlay_line_pixels,
             cube_size,
         )
+    flush_line_batch(line_batch, line_shader)
     rl_pop_matrix()
