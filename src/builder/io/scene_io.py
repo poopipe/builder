@@ -30,6 +30,7 @@ from builder.io.scene_format import (
     loads_document,
     nodes_for_save,
 )
+from builder.ui.dock import DockPanel
 from pyray import Vector3
 from builder.meshes.mesh_catalog import (
     MeshAsset,
@@ -40,6 +41,7 @@ from builder.meshes.mesh_catalog import (
 )
 from builder.scene.scene_types import builtin_cube, MeshId, Node
 from builder.session_journal import log_exception
+from builder.ui.file_browser import FileBrowserPurpose
 from builder.ui.zoom_bar import clamp_zoom_speed
 from builder.view.orbit_move import clamp_move_speed, clamp_view_distance
 
@@ -122,6 +124,14 @@ def build_document(context: CommandContext) -> SceneDocument:
             height_layers_panel_open=context.ui.height_layers_panel_open,
             sculpt_panel_open=context.ui.sculpt_panel_open,
             outliner_open=context.ui.outliner_open,
+            browser_directories={
+                purpose.name: str(path.resolve())
+                for purpose, path in context.ui.browser_directories.items()
+            },
+            left_dock_width=float(context.ui.left_dock_width),
+            right_dock_width=float(context.ui.right_dock_width),
+            left_dock_tab=context.ui.left_dock_tab.name,
+            right_dock_tab=context.ui.right_dock_tab.name,
         ),
         camera=SceneCameraState(
             yaw=float(context.scene.orbit.yaw),
@@ -408,6 +418,17 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
     context.ui.height_layers_panel_open = document.ui.height_layers_panel_open
     context.ui.sculpt_panel_open = document.ui.sculpt_panel_open
     context.ui.outliner_open = document.ui.outliner_open
+    context.ui.left_dock_width = document.ui.left_dock_width
+    context.ui.right_dock_width = document.ui.right_dock_width
+    context.ui.left_dock_tab = DockPanel[document.ui.left_dock_tab]
+    context.ui.right_dock_tab = DockPanel[document.ui.right_dock_tab]
+    context.ui.browser_directories.clear()
+    purpose_name: str
+    path_text: str
+    for purpose_name, path_text in document.ui.browser_directories.items():
+        context.ui.browser_directories[FileBrowserPurpose[purpose_name]] = Path(
+            path_text
+        )
     context.scene.orbit.yaw = document.camera.yaw
     context.scene.orbit.pitch = document.camera.pitch
     context.scene.orbit.distance = document.camera.distance

@@ -70,7 +70,6 @@ from builder.scene.transforms import matrix_translation, world_matrix
 
 
 overlay_color: Color = Color(80, 200, 255, 220)
-shadow_color: Color = Color(30, 50, 70, 200)
 shadow_handle_color: Color = Color(180, 220, 255, 255)
 stem_color: Color = Color(120, 180, 220, 200)
 point_color: Color = Color(255, 220, 80, 255)
@@ -252,6 +251,11 @@ def shape_polyline_points(
             return points, False
 
 
+def half_brightness(color: Color) -> Color:
+    """rgb at half intensity; keep alpha"""
+    return Color(color.r // 2, color.g // 2, color.b // 2, color.a)
+
+
 def draw_polyline_shadow(
     batch: LineBatch,
     catalog: HeightmapCatalog,
@@ -262,12 +266,14 @@ def draw_polyline_shadow(
     size_z: float,
     thickness_px: float,
     lift: float,
+    color: Color,
     *,
     below_layer_index: int | None = None,
 ) -> None:
     """drape polyline segments onto the terrain"""
     if len(points) < 2:
         return
+    draped: Color = half_brightness(color)
     i: int
     for i in range(len(points) if closed else len(points) - 1):
         a = points[i]
@@ -283,7 +289,7 @@ def draw_polyline_shadow(
             size_x,
             size_z,
             thickness_px,
-            shadow_color,
+            draped,
             lift,
             below_layer_index=below_layer_index,
         )
@@ -347,6 +353,7 @@ def draw_shape_shadow(
         size_z,
         thickness_px,
         lift,
+        overlay_color,
         below_layer_index=below_layer_index,
     )
 

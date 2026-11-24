@@ -72,8 +72,10 @@ from builder.ui.text_field import (
     handle_text_keys,
 )
 from builder.ui.file_browser import (
+    FileBrowserPurpose,
     make_heightfield_albedo_browser,
     make_heightmap_browser,
+    remembered_browser_directory,
 )
 from pathlib import Path
 from builder.ui.theme import (
@@ -968,7 +970,13 @@ def update_heightfield_inspector(
         ui.clear_focus()
         ui.heightfield_layer_target = group.id
         ui.heightfield_layer_replace_index = None
-        ui.file_browser = make_heightmap_browser(Path.cwd())
+        ui.file_browser = make_heightmap_browser(
+            remembered_browser_directory(
+                ui.browser_directories,
+                FileBrowserPurpose.import_heightmap,
+                None,
+            )
+        )
         ui.status = (
             "Set base heightmap…"
             if heightfield.base is None
@@ -1003,7 +1011,13 @@ def update_heightfield_inspector(
     def open_albedo_browser() -> None:
         ui.clear_focus()
         ui.heightfield_layer_target = group.id
-        ui.file_browser = make_heightfield_albedo_browser(Path.cwd())
+        ui.file_browser = make_heightfield_albedo_browser(
+            remembered_browser_directory(
+                ui.browser_directories,
+                FileBrowserPurpose.import_heightfield_albedo,
+                None,
+            )
+        )
         ui.status = "Set heightfield albedo…"
 
     buttons.append(

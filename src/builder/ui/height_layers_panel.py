@@ -47,8 +47,10 @@ from builder.scene.scene_types import Node
 from builder.scene.selection import subtree_ids
 from builder.session_journal import SessionJournal, log_exception
 from builder.ui.file_browser import (
+    FileBrowserPurpose,
     make_heightmap_browser,
     make_heightmap_export_browser,
+    remembered_browser_directory,
 )
 from builder.ui.inspector import set_heightfield_edit_layers
 from builder.ui.text_field import (
@@ -678,7 +680,13 @@ def update_height_layers_panel(
         ui.heightfield_layer_target = group_id
         ui.heightfield_layer_replace_index = None
         ui.file_browser = make_heightmap_export_browser(
-            Path.cwd(), ".asc", "height.asc"
+            remembered_browser_directory(
+                ui.browser_directories,
+                FileBrowserPurpose.export_heightmap,
+                None,
+            ),
+            ".asc",
+            "height.asc",
         )
         ui.status = "Export composited height (.asc)…"
 
@@ -687,7 +695,13 @@ def update_height_layers_panel(
         ui.heightfield_layer_target = group_id
         ui.heightfield_layer_replace_index = None
         ui.file_browser = make_heightmap_export_browser(
-            Path.cwd(), ".png", "height.png"
+            remembered_browser_directory(
+                ui.browser_directories,
+                FileBrowserPurpose.export_heightmap,
+                None,
+            ),
+            ".png",
+            "height.png",
         )
         ui.status = "Export composited height (.png)…"
 
@@ -1070,7 +1084,13 @@ def update_height_layers_panel(
                 ui.clear_focus()
                 ui.heightfield_layer_target = group_id
                 ui.heightfield_layer_replace_index = selected_index
-                ui.file_browser = make_heightmap_browser(Path.cwd())
+                ui.file_browser = make_heightmap_browser(
+                    remembered_browser_directory(
+                        ui.browser_directories,
+                        FileBrowserPurpose.import_heightmap,
+                        None,
+                    )
+                )
                 ui.status = "Replace layer heightmap…"
 
             buttons.append(

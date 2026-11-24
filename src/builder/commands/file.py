@@ -33,7 +33,8 @@ from builder.ui.file_browser import (
     make_import_browser,
     make_open_browser,
     make_save_browser,
-    starting_directory,
+    remember_browser_directory as store_browser_directory,
+    remembered_browser_directory as resolve_browser_directory,
 )
 
 mesh_file_suffix: str = ".fbx"
@@ -71,10 +72,11 @@ def remembered_browser_directory(
     purpose: FileBrowserPurpose,
 ) -> Path:
     """last folder for this purpose, else the scene project root / cwd"""
-    last: Path | None = context.application.browser_directories.get(purpose)
-    if last is not None and last.is_dir():
-        return last.resolve()
-    return starting_directory(context.application.scene_path)
+    return resolve_browser_directory(
+        context.ui.browser_directories,
+        purpose,
+        context.application.scene_path,
+    )
 
 
 def remember_browser_directory(
@@ -82,9 +84,7 @@ def remember_browser_directory(
     browser: FileBrowserState,
 ) -> None:
     """store the browser's current folder for this purpose"""
-    context.application.browser_directories[browser.purpose] = (
-        browser.directory.resolve()
-    )
+    store_browser_directory(context.ui.browser_directories, browser)
 
 
 def quit_app(context: CommandContext, _: None) -> None:
@@ -186,7 +186,7 @@ def import_mesh_from_path(context: CommandContext, path: str | Path) -> None:
     )
     register_mesh_asset(context.application.mesh_catalog, asset)
     context.application.active_mesh_id = registered_id
-    context.application.browser_directories[FileBrowserPurpose.import_mesh] = (
+    context.ui.browser_directories[FileBrowserPurpose.import_mesh] = (
         mesh_path.parent
     )
     if replacing:
@@ -288,7 +288,7 @@ def apply_import_heightmap_path(context: CommandContext, path: Path) -> None:
         log_exception("import heightmap failed", exc)
         context.ui.status = f"Heightmap failed: {exc}"
         return
-    context.application.browser_directories[FileBrowserPurpose.import_heightmap] = (
+    context.ui.browser_directories[FileBrowserPurpose.import_heightmap] = (
         image_path.parent
     )
     context.ui.status = (
@@ -327,7 +327,7 @@ def apply_import_heightfield_albedo_path(
         log_exception("heightfield albedo failed", exc)
         context.ui.status = f"Albedo failed: {exc}"
         return
-    context.application.browser_directories[
+    context.ui.browser_directories[
         FileBrowserPurpose.import_heightfield_albedo
     ] = image_path.parent
     context.ui.status = f"Albedo: {image_path.name}"
@@ -359,7 +359,7 @@ def apply_export_heightmap_path(context: CommandContext, path: Path) -> None:
         log_exception("export heightmap failed", exc)
         context.ui.status = f"Export failed: {exc}"
         return
-    context.application.browser_directories[FileBrowserPurpose.export_heightmap] = (
+    context.ui.browser_directories[FileBrowserPurpose.export_heightmap] = (
         export_path.parent
     )
     context.ui.status = (
@@ -404,7 +404,7 @@ def apply_import_road_shp_path(context: CommandContext, path: Path) -> None:
         context.ui.status = f"Import failed: {exc}"
         return
     context.scene.add_nodes(new_nodes)
-    context.application.browser_directories[
+    context.ui.browser_directories[
         FileBrowserPurpose.import_road_shp
     ] = shp_path.parent
     polyline_count: int = 0

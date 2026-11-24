@@ -139,20 +139,24 @@ from builder.ui.snap_bar import (
     layout_snap_bar,
     update_snap_bar,
 )
+from builder.ui.dock import (
+    DockPanel,
+    RightDockContent,
+    available_left_tabs,
+    available_right_tabs,
+    clamp_dock_width,
+    draw_tab_bar,
+    resolve_active_tab,
+    update_dock_resize,
+    update_tab_bar,
+)
 from builder.ui.theme import (
     ui_button_gap,
     ui_button_height,
     ui_button_min_width,
     ui_color_bg,
     ui_font_size,
-    ui_height_layers_panel_width,
-    ui_inspector_panel_width,
-    ui_meshes_panel_width,
-    ui_modifiers_panel_width,
-    ui_outliner_panel_width,
     ui_pad,
-    ui_sculpt_panel_width,
-    ui_side_panel_width,
 )
 from builder.ui.transform_bar import (
     TransformBarRects,
@@ -294,41 +298,93 @@ class Application:
         sync_modifiers_focus(self.ui, group)
         apply_text_exit_key(self.ui)
 
-        panel_width: int = ui_side_panel_width if self.ui.side_panel_open else 0
-        outliner_width: int = ui_outliner_panel_width if self.ui.outliner_open else 0
-        meshes_width: int = ui_meshes_panel_width if self.ui.meshes_panel_open else 0
-        height_layers_width: int = (
-            ui_height_layers_panel_width if self.ui.height_layers_panel_open else 0
-        )
-        sculpt_width: int = (
-            ui_sculpt_panel_width if self.ui.sculpt_panel_open else 0
-        )
-        inspector_width: int = (
-            ui_inspector_panel_width
-            if group is not None
+        show_inspector: bool = (
+            group is not None
             or vector_shape is not None
             or vector_layer is not None
             or road_sections_layer is not None
-            else 0
         )
-        modifiers_width: int = (
-            ui_modifiers_panel_width
-            if group is not None and group.generator is not None
-            else 0
+        show_modifiers: bool = group is not None and group.generator is not None
+        right_content: RightDockContent = RightDockContent(
+            show_inspector=show_inspector,
+            show_modifiers=show_modifiers,
         )
+        left_tabs: list[DockPanel] = available_left_tabs(
+            side_panel_open=self.ui.side_panel_open,
+            outliner_open=self.ui.outliner_open,
+        )
+        right_tabs: list[DockPanel] = available_right_tabs(
+            meshes_panel_open=self.ui.meshes_panel_open,
+            height_layers_panel_open=self.ui.height_layers_panel_open,
+            sculpt_panel_open=self.ui.sculpt_panel_open,
+            content=right_content,
+        )
+        prefer_right: DockPanel | None = None
+        if show_inspector:
+            prefer_right = DockPanel.inspector
+        elif show_modifiers:
+            prefer_right = DockPanel.modifiers
+        resolved_left: DockPanel | None = resolve_active_tab(
+            self.ui.left_dock_tab, left_tabs
+        )
+        resolved_right: DockPanel | None = resolve_active_tab(
+            self.ui.right_dock_tab, right_tabs, prefer_right
+        )
+        if resolved_left is not None:
+            self.ui.left_dock_tab = resolved_left
+        if resolved_right is not None:
+            self.ui.right_dock_tab = resolved_right
+        self.ui.left_dock_width = clamp_dock_width(self.ui.left_dock_width)
+        self.ui.right_dock_width = clamp_dock_width(self.ui.right_dock_width)
+        left_width: float = self.ui.left_dock_width if left_tabs else 0.0
+        right_width: float = self.ui.right_dock_width if right_tabs else 0.0
         layout: LayoutRects = compute_layout(
             get_screen_width(),
             get_screen_height(),
-            panel_width=panel_width,
-            outliner_width=outliner_width,
-            meshes_width=meshes_width,
-            height_layers_width=height_layers_width,
-            sculpt_width=sculpt_width,
-            inspector_width=inspector_width,
-            modifiers_width=modifiers_width,
+            left_width=left_width,
+            right_width=right_width,
         )
 
         browser_open: bool = self.ui.file_browser is not None
+        if not browser_open:
+            resized_left: float
+            resized_right: float
+            resized_left, resized_right = update_dock_resize(
+                self.ui.dock_resize,
+                left_dock=layout.left_dock,
+                right_dock=layout.right_dock,
+                left_width=self.ui.left_dock_width,
+                right_width=self.ui.right_dock_width,
+            )
+            if left_tabs:
+                self.ui.left_dock_width = resized_left
+            if right_tabs:
+                self.ui.right_dock_width = resized_right
+            width_changed: bool = (
+                abs(resized_left - left_width) > 0.01
+                or abs(resized_right - right_width) > 0.01
+            )
+            if width_changed:
+                left_width = self.ui.left_dock_width if left_tabs else 0.0
+                right_width = self.ui.right_dock_width if right_tabs else 0.0
+                layout = compute_layout(
+                    get_screen_width(),
+                    get_screen_height(),
+                    left_width=left_width,
+                    right_width=right_width,
+                )
+            selected_left: DockPanel | None = update_tab_bar(
+                layout.left_dock, left_tabs, resolved_left
+            )
+            selected_right: DockPanel | None = update_tab_bar(
+                layout.right_dock, right_tabs, resolved_right
+            )
+            if selected_left is not None:
+                self.ui.left_dock_tab = selected_left
+                resolved_left = selected_left
+            if selected_right is not None:
+                self.ui.right_dock_tab = selected_right
+                resolved_right = selected_right
         menu_buttons: list[Button] = layout_buttons_horizontal(
             self.font,
             layout.menu,
@@ -418,26 +474,31 @@ class Application:
         # CommandContext gives the command access to the app state
         # (application, scene, ui)
 
+        left_content: Rectangle = layout.left_content
+        right_content_rect: Rectangle = layout.right_content
+        active_left: DockPanel | None = resolved_left
+        active_right: DockPanel | None = resolved_right
+
         panel_buttons: list[Button] = []
-        if self.ui.side_panel_open:
+        if active_left is DockPanel.tools:
             panel_buttons = layout_buttons_vertical(
-                layout.panel,
+                left_content,
                 self.command_button_items(panel_commands),
                 pad=float(ui_pad),
                 gap=float(ui_button_gap),
                 button_height=float(ui_button_height),
             )
             if not browser_open:
-                update_buttons(panel_buttons, layout.panel)
+                update_buttons(panel_buttons, left_content)
 
         outliner_rows: list[OutlinerRow] = []
         outliner_buttons: list[Button] = []
-        if self.ui.outliner_open and not browser_open:
+        if active_left is DockPanel.outliner and not browser_open:
             sync_outliner_focus(self.scene.nodes, self.ui)
             outliner_rows, outliner_buttons = update_outliner(
                 self.scene.nodes,
                 self.ui,
-                layout.outliner,
+                left_content,
                 self.application.mesh_catalog,
                 bind_entry(self, CommandEntry(cmd_group, None)),
                 bind_entry(self, CommandEntry(cmd_parent, None)),
@@ -446,7 +507,7 @@ class Application:
 
         mesh_rows: list[MeshRow] = []
         mesh_buttons: list[Button] = []
-        if self.ui.meshes_panel_open and not browser_open:
+        if active_right is DockPanel.meshes and not browser_open:
 
             def select_active_mesh(mesh_id: MeshId) -> None:
                 bind_entry(self, CommandEntry(cmd_select_mesh, mesh_id))()
@@ -455,7 +516,7 @@ class Application:
                 self.application.mesh_catalog,
                 self.application.active_mesh_id,
                 self.ui,
-                layout.meshes,
+                right_content_rect,
                 select_active_mesh,
                 bind_entry(self, CommandEntry(cmd_import_mesh, None)),
             )
@@ -468,7 +529,7 @@ class Application:
         heightfield_group: Node | None = selected_or_ancestor_heightfield_group(
             self.scene.nodes
         )
-        if self.ui.height_layers_panel_open and not browser_open:
+        if active_right is DockPanel.height_layers and not browser_open:
             (
                 height_layer_rows,
                 height_layer_float_rows,
@@ -479,7 +540,7 @@ class Application:
                 self.scene,
                 self.application.heightmap_catalog,
                 self.ui,
-                layout.height_layers,
+                right_content_rect,
                 heightfield_group,
                 journal=self.application.journal,
             )
@@ -490,9 +551,9 @@ class Application:
         sculpt_brush_rows: list[SculptBrushRow] = []
         sculpt_float_rows: list[SculptFloatRow] = []
         sculpt_buttons: list[Button] = []
-        if self.ui.sculpt_panel_open and not browser_open:
+        if active_right is DockPanel.sculpt and not browser_open:
             sculpt_brush_rows, sculpt_float_rows, sculpt_buttons = update_sculpt_panel(
-                self.ui, layout.sculpt
+                self.ui, right_content_rect
             )
 
         inspector_buttons: list[Button] = []
@@ -503,101 +564,111 @@ class Application:
         road_sections_buttons: list[Button] = []
         modifiers_buttons: list[Button] = []
         modifiers_rows: list[ModifierPanelRow] = []
-        if vector_shape is not None and not browser_open:
-            vector_inspector_buttons, vector_float_rows = (
-                update_vector_shape_inspector(
-                    self.scene.nodes,
-                    self.application.heightmap_catalog,
-                    self.ui,
-                    layout.inspector,
-                    vector_shape,
-                )
-            )
-            refreshed_shape: Node | None = self.scene.nodes.nodes.get(
-                vector_shape.id
-            )
-            vector_shape = (
-                refreshed_shape
-                if refreshed_shape is not None
-                and refreshed_shape.vector_shape is not None
-                else None
-            )
-        elif vector_layer is not None and not browser_open:
-            vector_layer_buttons = update_vector_layer_inspector(
-                self.scene.nodes,
-                self.application.heightmap_catalog,
-                self.ui,
-                layout.inspector,
-                vector_layer,
-            )
-            # add-shape may change selection to the new shape
-            vector_shape = selected_vector_shape_group(self.scene.nodes)
+        if active_right is DockPanel.inspector and not browser_open:
             if vector_shape is not None:
-                vector_layer = None
                 vector_inspector_buttons, vector_float_rows = (
                     update_vector_shape_inspector(
                         self.scene.nodes,
                         self.application.heightmap_catalog,
                         self.ui,
-                        layout.inspector,
+                        right_content_rect,
                         vector_shape,
                     )
                 )
-            else:
-                refreshed_layer: Node | None = self.scene.nodes.nodes.get(
-                    vector_layer.id
+                refreshed_shape: Node | None = self.scene.nodes.nodes.get(
+                    vector_shape.id
                 )
-                vector_layer = (
-                    refreshed_layer
-                    if refreshed_layer is not None
-                    and refreshed_layer.vector_layer is not None
+                vector_shape = (
+                    refreshed_shape
+                    if refreshed_shape is not None
+                    and refreshed_shape.vector_shape is not None
                     else None
                 )
-        elif road_sections_layer is not None and not browser_open:
-            road_sections_buttons = update_road_sections_inspector(
-                self.scene.nodes,
-                self.ui,
-                layout.inspector,
-                road_sections_layer,
-            )
-        elif group is not None and not browser_open:
-            group_id: str = group.id
-            inspector_buttons, inspector_rows = update_inspector(
-                self.scene.nodes,
-                self.ui,
-                layout.inspector,
-                group,
-                self.application.mesh_catalog,
-                self.application.active_mesh_id,
-                scene_context=self.scene,
-                heightmap_catalog=self.application.heightmap_catalog,
-                journal=self.application.journal,
-            )
-            # steppers/bake replace the group node; re-read the same id so the
-            # drawn group stays consistent with rows even if selection changed
-            refreshed: Node | None = self.scene.nodes.nodes.get(group_id)
-            if refreshed is None or (
-                refreshed.generator is None and refreshed.heightfield is None
-            ):
-                group = None
-            else:
-                group = refreshed
-            if group is not None and group.generator is not None:
-                modifiers_buttons, modifiers_rows = update_modifiers_panel(
+            elif vector_layer is not None:
+                vector_layer_buttons = update_vector_layer_inspector(
+                    self.scene.nodes,
+                    self.application.heightmap_catalog,
+                    self.ui,
+                    right_content_rect,
+                    vector_layer,
+                )
+                # add-shape may change selection to the new shape
+                vector_shape = selected_vector_shape_group(self.scene.nodes)
+                if vector_shape is not None:
+                    vector_layer = None
+                    vector_inspector_buttons, vector_float_rows = (
+                        update_vector_shape_inspector(
+                            self.scene.nodes,
+                            self.application.heightmap_catalog,
+                            self.ui,
+                            right_content_rect,
+                            vector_shape,
+                        )
+                    )
+                else:
+                    refreshed_layer: Node | None = self.scene.nodes.nodes.get(
+                        vector_layer.id
+                    )
+                    vector_layer = (
+                        refreshed_layer
+                        if refreshed_layer is not None
+                        and refreshed_layer.vector_layer is not None
+                        else None
+                    )
+            elif road_sections_layer is not None:
+                road_sections_buttons = update_road_sections_inspector(
                     self.scene.nodes,
                     self.ui,
-                    layout.modifiers,
-                    group,
-                    journal=self.application.journal,
-                    heightmap_catalog=self.application.heightmap_catalog,
+                    right_content_rect,
+                    road_sections_layer,
                 )
-                refreshed = self.scene.nodes.nodes.get(group_id)
+            elif group is not None:
+                group_id: str = group.id
+                inspector_buttons, inspector_rows = update_inspector(
+                    self.scene.nodes,
+                    self.ui,
+                    right_content_rect,
+                    group,
+                    self.application.mesh_catalog,
+                    self.application.active_mesh_id,
+                    scene_context=self.scene,
+                    heightmap_catalog=self.application.heightmap_catalog,
+                    journal=self.application.journal,
+                )
+                # steppers/bake replace the group node; re-read the same id so the
+                # drawn group stays consistent with rows even if selection changed
+                refreshed: Node | None = self.scene.nodes.nodes.get(group_id)
                 if refreshed is None or (
                     refreshed.generator is None and refreshed.heightfield is None
                 ):
                     group = None
                 else:
                     group = refreshed
+        elif (
+            active_right is DockPanel.modifiers
+            and group is not None
+            and group.generator is not None
+            and not browser_open
+        ):
+            modifiers_group_id: str = group.id
+            modifiers_buttons, modifiers_rows = update_modifiers_panel(
+                self.scene.nodes,
+                self.ui,
+                right_content_rect,
+                group,
+                journal=self.application.journal,
+                heightmap_catalog=self.application.heightmap_catalog,
+            )
+            modifiers_refreshed: Node | None = self.scene.nodes.nodes.get(
+                modifiers_group_id
+            )
+            if modifiers_refreshed is None or (
+                modifiers_refreshed.generator is None
+                and modifiers_refreshed.heightfield is None
+            ):
+                group = None
+            else:
+                group = modifiers_refreshed
 
         browser_rows: list[BrowserRow] = []
         browser_buttons: list[Button] = []
@@ -645,35 +716,15 @@ class Application:
         ui_over: bool = browser_open or (
             is_point_in_rect(mouse.x, mouse.y, layout.menu)
             or (
-                self.ui.side_panel_open
-                and is_point_in_rect(mouse.x, mouse.y, layout.panel)
+                len(left_tabs) > 0
+                and is_point_in_rect(mouse.x, mouse.y, layout.left_dock)
             )
             or (
-                self.ui.outliner_open
-                and is_point_in_rect(mouse.x, mouse.y, layout.outliner)
-            )
-            or (
-                self.ui.meshes_panel_open
-                and is_point_in_rect(mouse.x, mouse.y, layout.meshes)
-            )
-            or (
-                self.ui.height_layers_panel_open
-                and is_point_in_rect(mouse.x, mouse.y, layout.height_layers)
-            )
-            or (
-                self.ui.sculpt_panel_open
-                and is_point_in_rect(mouse.x, mouse.y, layout.sculpt)
-            )
-            or (
-                group is not None
-                and is_point_in_rect(mouse.x, mouse.y, layout.inspector)
-            )
-            or (
-                group is not None
-                and group.generator is not None
-                and is_point_in_rect(mouse.x, mouse.y, layout.modifiers)
+                len(right_tabs) > 0
+                and is_point_in_rect(mouse.x, mouse.y, layout.right_dock)
             )
             or is_point_in_rect(mouse.x, mouse.y, layout.status)
+            or self.ui.dock_resize.side is not None
         )
         sculpting: bool = False
         sculpt_target: SculptToolTarget | None = None
@@ -819,18 +870,22 @@ class Application:
             draw_view_distance_bar(
                 self.font, self.scene.orbit, self.ui, view_bar, view_buttons
             )
-        if self.ui.side_panel_open:
-            draw_button_stack(self.font, layout.panel, panel_buttons)
-        if self.ui.outliner_open:
+        if left_tabs:
+            draw_tab_bar(self.font, layout.left_dock, left_tabs, active_left)
+        if right_tabs:
+            draw_tab_bar(self.font, layout.right_dock, right_tabs, active_right)
+        if active_left is DockPanel.tools:
+            draw_button_stack(self.font, left_content, panel_buttons)
+        if active_left is DockPanel.outliner:
             draw_outliner(
-                self.font, layout.outliner, self.ui, outliner_rows, outliner_buttons
+                self.font, left_content, self.ui, outliner_rows, outliner_buttons
             )
-        if self.ui.meshes_panel_open:
-            draw_mesh_panel(self.font, layout.meshes, mesh_rows, mesh_buttons)
-        if self.ui.height_layers_panel_open:
+        if active_right is DockPanel.meshes:
+            draw_mesh_panel(self.font, right_content_rect, mesh_rows, mesh_buttons)
+        if active_right is DockPanel.height_layers:
             draw_height_layers_panel(
                 self.font,
-                layout.height_layers,
+                right_content_rect,
                 self.ui,
                 heightfield_group,
                 height_layer_rows,
@@ -839,57 +894,62 @@ class Application:
                 height_layers_blend_label,
                 height_layers_empty,
             )
-        if self.ui.sculpt_panel_open:
+        if active_right is DockPanel.sculpt:
             draw_sculpt_panel(
                 self.font,
-                layout.sculpt,
+                right_content_rect,
                 self.ui,
                 sculpt_brush_rows,
                 sculpt_float_rows,
                 sculpt_buttons,
             )
-        if vector_shape is not None:
-            draw_vector_shape_inspector(
-                self.font,
-                layout.inspector,
-                self.ui,
-                vector_shape,
-                vector_inspector_buttons,
-                vector_float_rows,
-            )
-        elif vector_layer is not None:
-            draw_vector_layer_inspector(
-                self.font,
-                layout.inspector,
-                vector_layer,
-                vector_layer_buttons,
-            )
-        elif road_sections_layer is not None:
-            draw_road_sections_inspector(
-                self.font,
-                layout.inspector,
-                road_sections_layer,
-                road_sections_buttons,
-            )
-        elif group is not None:
-            draw_inspector(
-                self.font,
-                layout.inspector,
-                self.ui,
-                group,
-                inspector_buttons,
-                inspector_rows,
-            )
-            if group.generator is not None:
-                draw_modifiers_panel(
+        if active_right is DockPanel.inspector:
+            if vector_shape is not None:
+                draw_vector_shape_inspector(
                     self.font,
-                    layout.modifiers,
+                    right_content_rect,
+                    self.ui,
+                    vector_shape,
+                    vector_inspector_buttons,
+                    vector_float_rows,
+                )
+            elif vector_layer is not None:
+                draw_vector_layer_inspector(
+                    self.font,
+                    right_content_rect,
+                    vector_layer,
+                    vector_layer_buttons,
+                )
+            elif road_sections_layer is not None:
+                draw_road_sections_inspector(
+                    self.font,
+                    right_content_rect,
+                    road_sections_layer,
+                    road_sections_buttons,
+                )
+            elif group is not None:
+                draw_inspector(
+                    self.font,
+                    right_content_rect,
                     self.ui,
                     group,
-                    modifiers_buttons,
-                    modifiers_rows,
-                    self.scene.nodes,
+                    inspector_buttons,
+                    inspector_rows,
                 )
+        elif (
+            active_right is DockPanel.modifiers
+            and group is not None
+            and group.generator is not None
+        ):
+            draw_modifiers_panel(
+                self.font,
+                right_content_rect,
+                self.ui,
+                group,
+                modifiers_buttons,
+                modifiers_rows,
+                self.scene.nodes,
+            )
         draw_status_bar(
             self.font,
             layout.status,

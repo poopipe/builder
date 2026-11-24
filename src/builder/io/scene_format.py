@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import MISSING, dataclass, fields, replace
+from dataclasses import MISSING, dataclass, field, fields, replace
 from enum import IntEnum
 from typing import Any, get_type_hints
 
 from pyray import Transform, Vector3, Vector4
+
+from builder.ui.dock import (
+    DockPanel,
+    clamp_dock_width,
+    default_left_dock_width,
+    default_right_dock_width,
+)
+from builder.ui.file_browser import FileBrowserPurpose
 
 from builder.generators.generator_types import (
     Generator,
@@ -64,19 +72,24 @@ from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.path.path_types import PathPointRecipe
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 32
+scene_format_version: int = 34
 scene_file_suffix: str = ".scene"
 
 
 @dataclass(frozen=True)
 class SceneUiState:
-    """panel visibility persisted with a scene"""
+    """panel visibility, docks, and browser folders persisted with a scene"""
 
     side_panel_open: bool
     meshes_panel_open: bool
     height_layers_panel_open: bool
     sculpt_panel_open: bool
     outliner_open: bool = True
+    browser_directories: dict[str, str] = field(default_factory=dict)
+    left_dock_width: float = field(default_factory=default_left_dock_width)
+    right_dock_width: float = field(default_factory=default_right_dock_width)
+    left_dock_tab: str = DockPanel.outliner.name
+    right_dock_tab: str = DockPanel.meshes.name
 
 
 @dataclass(frozen=True)
@@ -1199,6 +1212,11 @@ def document_to_json(
             "height_layers_panel_open": document.ui.height_layers_panel_open,
             "sculpt_panel_open": document.ui.sculpt_panel_open,
             "outliner_open": document.ui.outliner_open,
+            "browser_directories": dict(document.ui.browser_directories),
+            "left_dock_width": float(document.ui.left_dock_width),
+            "right_dock_width": float(document.ui.right_dock_width),
+            "left_dock_tab": document.ui.left_dock_tab,
+            "right_dock_tab": document.ui.right_dock_tab,
         },
         "camera": {
             "yaw": float(document.camera.yaw),
@@ -1246,6 +1264,45 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
         or not isinstance(outliner_open, bool)
     ):
         raise ValueError("ui panel flags must be booleans")
+    browser_dirs_raw: Any = ui_raw.get("browser_directories")
+    if not isinstance(browser_dirs_raw, dict):
+        raise ValueError("ui.browser_directories must be an object")
+    browser_directories: dict[str, str] = {}
+    purpose_name: str
+    path_raw: Any
+    for purpose_name, path_raw in browser_dirs_raw.items():
+        if not isinstance(purpose_name, str) or purpose_name == "":
+            raise ValueError("ui.browser_directories keys must be non-empty strings")
+        if purpose_name not in FileBrowserPurpose.__members__:
+            raise ValueError(
+                f"ui.browser_directories unknown purpose {purpose_name!r}"
+            )
+        if not isinstance(path_raw, str) or path_raw == "":
+            raise ValueError(
+                f"ui.browser_directories[{purpose_name!r}] must be a non-empty string"
+            )
+        browser_directories[purpose_name] = path_raw
+    left_dock_width_raw: Any = ui_raw.get("left_dock_width")
+    right_dock_width_raw: Any = ui_raw.get("right_dock_width")
+    if (
+        isinstance(left_dock_width_raw, bool)
+        or not isinstance(left_dock_width_raw, (int, float))
+        or isinstance(right_dock_width_raw, bool)
+        or not isinstance(right_dock_width_raw, (int, float))
+    ):
+        raise ValueError("ui left_dock_width and right_dock_width must be numbers")
+    left_dock_width: float = clamp_dock_width(float(left_dock_width_raw))
+    right_dock_width: float = clamp_dock_width(float(right_dock_width_raw))
+    left_dock_tab_raw: Any = ui_raw.get("left_dock_tab")
+    right_dock_tab_raw: Any = ui_raw.get("right_dock_tab")
+    if not isinstance(left_dock_tab_raw, str) or left_dock_tab_raw == "":
+        raise ValueError("ui.left_dock_tab must be a non-empty string")
+    if not isinstance(right_dock_tab_raw, str) or right_dock_tab_raw == "":
+        raise ValueError("ui.right_dock_tab must be a non-empty string")
+    if left_dock_tab_raw not in DockPanel.__members__:
+        raise ValueError(f"ui.left_dock_tab unknown panel {left_dock_tab_raw!r}")
+    if right_dock_tab_raw not in DockPanel.__members__:
+        raise ValueError(f"ui.right_dock_tab unknown panel {right_dock_tab_raw!r}")
     camera_raw: Any = data.get("camera")
     if not isinstance(camera_raw, dict):
         raise ValueError("camera must be an object")
@@ -1299,6 +1356,11 @@ def document_from_json(data: Any) -> tuple[SceneDocument, list[str]]:
             height_layers_panel_open=height_layers_open,
             sculpt_panel_open=sculpt_open,
             outliner_open=outliner_open,
+            browser_directories=browser_directories,
+            left_dock_width=left_dock_width,
+            right_dock_width=right_dock_width,
+            left_dock_tab=left_dock_tab_raw,
+            right_dock_tab=right_dock_tab_raw,
         ),
         camera=SceneCameraState(
             yaw=float(yaw_raw),

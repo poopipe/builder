@@ -12,7 +12,8 @@ from builder.meshes.mesh_catalog import MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
 from builder.session_journal import SessionJournal
-from builder.ui.file_browser import FileBrowserState
+from builder.ui.dock import DockPanel
+from builder.ui.file_browser import FileBrowserPurpose, FileBrowserState
 from builder.view.gizmo import GizmoState
 from builder.view.prepare_mesh import PreparedMesh
 from builder.view.viewport import OrbitState
@@ -94,8 +95,13 @@ class UiContext(Protocol):
     height_layers_panel_open: bool
     sculpt_panel_open: bool
     outliner_open: bool
+    left_dock_width: float
+    right_dock_width: float
+    left_dock_tab: DockPanel
+    right_dock_tab: DockPanel
     meshes_panel_scroll: float
     file_browser: FileBrowserState | None
+    browser_directories: dict[FileBrowserPurpose, Path]
     heightfield_layer_target: str | None
     heightfield_layer_replace_index: int | None
     road_sections_import_target: str | None

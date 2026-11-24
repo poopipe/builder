@@ -194,6 +194,7 @@ def draw_usage_group_shadows(
     thickness_px: float,
 ) -> None:
     """drape terrain shadows for one usage group's polylines"""
+    color: Color = usage_overlay_color(group.usage)
     polyline: RoadPolyline
     for polyline in group.polylines:
         draw_polyline_shadow(
@@ -206,6 +207,7 @@ def draw_usage_group_shadows(
             size_z,
             thickness_px,
             0.0,
+            color,
         )
 
 

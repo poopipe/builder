@@ -132,6 +132,26 @@ def starting_directory(scene_path: Path | None) -> Path:
     return Path.cwd().resolve()
 
 
+def remembered_browser_directory(
+    directories: dict[FileBrowserPurpose, Path],
+    purpose: FileBrowserPurpose,
+    scene_path: Path | None,
+) -> Path:
+    """last folder for this purpose when it still exists, else scene folder / cwd"""
+    last: Path | None = directories.get(purpose)
+    if last is not None and last.is_dir():
+        return last.resolve()
+    return starting_directory(scene_path)
+
+
+def remember_browser_directory(
+    directories: dict[FileBrowserPurpose, Path],
+    browser: FileBrowserState,
+) -> None:
+    """store the browser's current folder for this purpose"""
+    directories[browser.purpose] = browser.directory.resolve()
+
+
 def browser_title(purpose: FileBrowserPurpose) -> str:
     """dialog title for a browser purpose"""
     match purpose:

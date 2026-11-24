@@ -40,8 +40,8 @@ from builder.ui.theme import (
     ui_font_size,
     ui_menu_bar_height,
     ui_pad,
-    ui_side_panel_width,
     ui_status_bar_height,
+    ui_tab_bar_height,
 )
 
 
@@ -57,100 +57,50 @@ class Button:
 
 @dataclass
 class LayoutRects:
-    """window regions"""
+    """window regions: menu, left dock, viewport, right dock, status"""
 
     menu: Rectangle
-    panel: Rectangle
-    outliner: Rectangle
+    left_dock: Rectangle
+    left_content: Rectangle
     viewport: Rectangle
-    inspector: Rectangle
-    modifiers: Rectangle
-    meshes: Rectangle
-    height_layers: Rectangle
-    sculpt: Rectangle
+    right_dock: Rectangle
+    right_content: Rectangle
     status: Rectangle
 
 
 def compute_layout(
     width: int,
     height: int,
-    panel_width: int = ui_side_panel_width,
-    outliner_width: int = 0,
-    meshes_width: int = 0,
-    height_layers_width: int = 0,
-    sculpt_width: int = 0,
-    inspector_width: int = 0,
-    modifiers_width: int = 0,
+    left_width: float = 0.0,
+    right_width: float = 0.0,
 ) -> LayoutRects:
-    """split the window into menu, side panels, viewport, and status bar
-
-    columns left to right: tools, outliner, viewport, inspector, modifiers,
-    meshes, height layers, sculpt
-    """
+    """split the window into menu, left dock, viewport, right dock, status"""
     menu_h: int = ui_menu_bar_height
     status_h: int = ui_status_bar_height
-    panel_w: int = max(0, panel_width)
-    outliner_w: int = max(0, outliner_width)
-    meshes_w: int = max(0, meshes_width)
-    height_layers_w: int = max(0, height_layers_width)
-    sculpt_w: int = max(0, sculpt_width)
-    inspector_w: int = max(0, inspector_width)
-    modifiers_w: int = max(0, modifiers_width)
-    body_y: int = menu_h
-    body_h: int = max(0, height - menu_h - status_h)
-    viewport_w: int = max(
-        0,
-        width
-        - panel_w
-        - outliner_w
-        - meshes_w
-        - height_layers_w
-        - sculpt_w
-        - inspector_w
-        - modifiers_w,
-    )
-    outliner_x: float = float(panel_w)
-    viewport_x: float = float(panel_w + outliner_w)
-    inspector_x: float = viewport_x + float(viewport_w)
-    modifiers_x: float = inspector_x + float(inspector_w)
-    meshes_x: float = modifiers_x + float(modifiers_w)
-    height_layers_x: float = meshes_x + float(meshes_w)
-    sculpt_x: float = height_layers_x + float(height_layers_w)
+    tab_h: float = float(ui_tab_bar_height)
+    left_w: float = max(0.0, float(left_width))
+    right_w: float = max(0.0, float(right_width))
+    body_y: float = float(menu_h)
+    body_h: float = float(max(0, height - menu_h - status_h))
+    viewport_w: float = max(0.0, float(width) - left_w - right_w)
+    left_x: float = 0.0
+    viewport_x: float = left_w
+    right_x: float = left_w + viewport_w
+    left_tab_h: float = tab_h if left_w > 0.0 else 0.0
+    right_tab_h: float = tab_h if right_w > 0.0 else 0.0
+    left_content_h: float = max(0.0, body_h - left_tab_h) if left_w > 0.0 else 0.0
+    right_content_h: float = max(0.0, body_h - right_tab_h) if right_w > 0.0 else 0.0
     return LayoutRects(
         menu=Rectangle(0, 0, float(width), float(menu_h)),
-        panel=Rectangle(0, float(body_y), float(panel_w), float(body_h)),
-        outliner=Rectangle(
-            outliner_x,
-            float(body_y),
-            float(outliner_w),
-            float(body_h),
+        left_dock=Rectangle(left_x, body_y, left_w, body_h),
+        left_content=Rectangle(
+            left_x, body_y + left_tab_h, left_w, left_content_h
         ),
-        viewport=Rectangle(
-            viewport_x,
-            float(body_y),
-            float(viewport_w),
-            float(body_h),
+        viewport=Rectangle(viewport_x, body_y, viewport_w, body_h),
+        right_dock=Rectangle(right_x, body_y, right_w, body_h),
+        right_content=Rectangle(
+            right_x, body_y + right_tab_h, right_w, right_content_h
         ),
-        inspector=Rectangle(
-            inspector_x,
-            float(body_y),
-            float(inspector_w),
-            float(body_h),
-        ),
-        modifiers=Rectangle(
-            modifiers_x,
-            float(body_y),
-            float(modifiers_w),
-            float(body_h),
-        ),
-        meshes=Rectangle(meshes_x, float(body_y), float(meshes_w), float(body_h)),
-        height_layers=Rectangle(
-            height_layers_x,
-            float(body_y),
-            float(height_layers_w),
-            float(body_h),
-        ),
-        sculpt=Rectangle(sculpt_x, float(body_y), float(sculpt_w), float(body_h)),
         status=Rectangle(
             0,
             float(height - status_h),

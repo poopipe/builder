@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pyray import (
     Font,
     Rectangle,
@@ -15,7 +13,11 @@ from pyray import (
 
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
-from builder.ui.file_browser import make_road_shp_browser
+from builder.ui.file_browser import (
+    FileBrowserPurpose,
+    make_road_shp_browser,
+    remembered_browser_directory,
+)
 from builder.ui.theme import (
     ui_button_gap,
     ui_button_height,
@@ -65,7 +67,13 @@ def update_road_sections_inspector(
     def open_import() -> None:
         ui.clear_focus()
         ui.road_sections_import_target = layer_node.id
-        ui.file_browser = make_road_shp_browser(Path.cwd())
+        ui.file_browser = make_road_shp_browser(
+            remembered_browser_directory(
+                ui.browser_directories,
+                FileBrowserPurpose.import_road_shp,
+                None,
+            )
+        )
         ui.status = "Import road shapefile…"
 
     buttons.append(

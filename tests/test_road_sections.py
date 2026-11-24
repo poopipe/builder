@@ -305,7 +305,7 @@ class TestRoadSectionsImport(unittest.TestCase):
                 if node.road_usage_group is not None
             }
             self.assertEqual(usage_names, {"primary", "footway"})
-            self.assertEqual(scene_format_version, 32)
+            self.assertEqual(scene_format_version, 34)
             document: SceneDocument = SceneDocument(
                 version=scene_format_version,
                 active_mesh_id=builtin_cube,
@@ -331,7 +331,7 @@ class TestRoadSectionsImport(unittest.TestCase):
             )
             text: str = dumps_document(document, {}, {}, {})
             loaded, _warnings = loads_document(text)
-            self.assertEqual(loaded.version, 32)
+            self.assertEqual(loaded.version, 34)
 
 
 if __name__ == "__main__":
