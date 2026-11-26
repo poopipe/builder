@@ -121,9 +121,11 @@ class VectorRoadHeightSource:
 
 @dataclass(frozen=True)
 class RoadSectionsHeightSource:
-    """authorship layer for shp-imported road section splines (no heightmap)"""
+    """shp road splines plus optional absolute ribbon + coverage buffers"""
 
     layer_node_id: str
+    heightmap_id: HeightmapId
+    coverage_id: HeightmapId
 
 
 HeightLayerSource = (
@@ -337,7 +339,11 @@ def catalog_ids_for_source(source: HeightLayerSource | None) -> tuple[HeightmapI
             heightmap_id=heightmap_id, coverage_id=coverage_id
         ):
             return (heightmap_id, coverage_id)
-        case ProceduralHeightSource() | RoadSectionsHeightSource() | None:
+        case RoadSectionsHeightSource(
+            heightmap_id=heightmap_id, coverage_id=coverage_id
+        ):
+            return (heightmap_id, coverage_id)
+        case ProceduralHeightSource() | None:
             return ()
 
 

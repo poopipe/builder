@@ -74,6 +74,7 @@ def layer_source_sample_type(
             | VectorHeightSource(heightmap_id=heightmap_id)
             | VectorSculptHeightSource(heightmap_id=heightmap_id)
             | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
+            | RoadSectionsHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
             asset: HeightmapAsset | None = catalog.entries.get(heightmap_id)
             if asset is None:
@@ -196,6 +197,7 @@ def sample_source(
             | VectorHeightSource(heightmap_id=heightmap_id)
             | VectorSculptHeightSource(heightmap_id=heightmap_id)
             | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
+            | RoadSectionsHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -302,6 +304,8 @@ def apply_edit_layer_height(
             return accum + delta * opacity
         case VectorRoadHeightSource(
             heightmap_id=heightmap_id, coverage_id=coverage_id
+        ) | RoadSectionsHeightSource(
+            heightmap_id=heightmap_id, coverage_id=coverage_id
         ):
             road_buf: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -321,8 +325,6 @@ def apply_edit_layer_height(
                 )
             road_mix: float = clamp01(road_coverage) * opacity
             return accum * (1.0 - road_mix) + absolute * road_mix
-        case RoadSectionsHeightSource():
-            return accum
         case _:
             raw: float = sample_source(
                 catalog, layer.height, layer_u, layer_v, missing=0.0, wrap=True
@@ -366,6 +368,26 @@ def sample_height_below(
     return accum
 
 
+def sample_height_through(
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+    layer_index: int,
+    u: float,
+    v: float,
+) -> float:
+    """world height from base + enabled edit layers through layer_index inclusive"""
+    accum: float = sample_base_height(catalog, heightfield, u, v)
+    index: int
+    layer: HeightEditLayer
+    for index, layer in enumerate(heightfield.edit_layers):
+        if index > layer_index:
+            break
+        if not layer.enabled:
+            continue
+        accum = apply_edit_layer_height(catalog, accum, layer, u, v)
+    return accum
+
+
 def sample_height(
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
@@ -396,6 +418,7 @@ def source_sample_bounds(
             | VectorHeightSource(heightmap_id=heightmap_id)
             | VectorSculptHeightSource(heightmap_id=heightmap_id)
             | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
+            | RoadSectionsHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -467,15 +490,15 @@ def layer_height_bounds(
                 height_min += s0 * opacity
                 height_max += s1 * opacity
                 continue
-            case VectorRoadHeightSource() | SculptHeightSource(
-                mode=SculptHeightMode.absolute
+            case (
+                VectorRoadHeightSource()
+                | RoadSectionsHeightSource()
+                | SculptHeightSource(mode=SculptHeightMode.absolute)
             ):
                 s0, s1 = source_sample_bounds(catalog, layer.height)
                 # coverage can pull toward absolute heights
                 height_min = height_min if height_min < s0 else s0
                 height_max = height_max if height_max > s1 else s1
-                continue
-            case RoadSectionsHeightSource():
                 continue
             case _:
                 pass

@@ -17,6 +17,7 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapId,
     ensure_heightmap_buffer,
 )
+from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
 from builder.view.prepare_mesh import PreparedMesh
@@ -137,6 +138,8 @@ def regenerate_heightfield(
     host: HeightfieldSceneHost,
     catalog: HeightmapCatalog,
     group_id: str,
+    *,
+    road_parts: RoadPartsCatalog | None = None,
 ) -> None:
     """normalize the heightfield recipe, preload buffers, and drop leftover tiles
 
@@ -159,7 +162,9 @@ def regenerate_heightfield(
     heightfield_layout(heightfield)
     from builder.heightfield.vector.rasterize import regenerate_vector_sources
 
-    regenerate_vector_sources(catalog, heightfield, scene.nodes)
+    regenerate_vector_sources(
+        catalog, heightfield, scene.nodes, road_parts=road_parts
+    )
 
 
 def set_heightfield(
@@ -167,10 +172,12 @@ def set_heightfield(
     catalog: HeightmapCatalog,
     group_id: str,
     heightfield: Heightfield,
+    *,
+    road_parts: RoadPartsCatalog | None = None,
 ) -> None:
     """replace the heightfield recipe and refresh residency"""
     scene: Scene = host.nodes
     group: Node = scene.nodes[group_id]
     normalized: Heightfield = normalize_heightfield(heightfield)
     scene.add_nodes([replace(group, heightfield=normalized, generator=None)])
-    regenerate_heightfield(host, catalog, group_id)
+    regenerate_heightfield(host, catalog, group_id, road_parts=road_parts)

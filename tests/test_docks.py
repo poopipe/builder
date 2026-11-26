@@ -94,8 +94,8 @@ class TestDockTabs(unittest.TestCase):
 
 
 class TestDockSceneRoundTrip(unittest.TestCase):
-    def test_scene_format_is_34(self) -> None:
-        self.assertEqual(scene_format_version, 34)
+    def test_scene_format_is_37(self) -> None:
+        self.assertEqual(scene_format_version, 39)
 
     def test_dock_fields_round_trip(self) -> None:
         document: SceneDocument = SceneDocument(

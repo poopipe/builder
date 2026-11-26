@@ -53,6 +53,7 @@ from builder.heightfield.heightfield_types import (
 from builder.heightfield.heightmap_catalog import HeightmapAsset, HeightmapId
 from builder.heightfield.regenerate import is_heightfield_tile_child
 from builder.heightfield.road_sections.road_sections_types import (
+    RoadPiecePlacement,
     RoadPolyline,
     RoadSectionsLayerRecipe,
     RoadShpRecipe,
@@ -72,7 +73,7 @@ from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.path.path_types import PathPointRecipe
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 34
+scene_format_version: int = 39
 scene_file_suffix: str = ".scene"
 
 
@@ -484,18 +485,27 @@ def road_sections_layer_from_json(data: Any) -> RoadSectionsLayerRecipe:
     return RoadSectionsLayerRecipe()
 
 
-def road_polyline_to_json(polyline: RoadPolyline) -> list[list[float]]:
-    """encode one polyline as [[x, z], ...]"""
-    return [[float(x), float(z)] for x, z in polyline.points]
+def road_polyline_to_json(polyline: RoadPolyline) -> dict[str, Any]:
+    """encode one polyline as {id, points}"""
+    return {
+        "id": polyline.id,
+        "points": [[float(x), float(z)] for x, z in polyline.points],
+    }
 
 
 def road_polyline_from_json(data: Any) -> RoadPolyline:
-    """decode one polyline from [[x, z], ...]"""
-    if not isinstance(data, list) or len(data) < 2:
-        raise ValueError("road polyline must be a list of at least two points")
+    """decode one polyline from {id, points: [[x, z], ...]}"""
+    if not isinstance(data, dict):
+        raise ValueError("road polyline must be an object")
+    id_raw: Any = data.get("id")
+    if not isinstance(id_raw, str) or id_raw == "":
+        raise ValueError("road polyline id must be a non-empty string")
+    points_raw: Any = data.get("points")
+    if not isinstance(points_raw, list) or len(points_raw) < 2:
+        raise ValueError("road polyline points must be a list of at least two")
     points: list[tuple[float, float]] = []
     entry: Any
-    for entry in data:
+    for entry in points_raw:
         if (
             not isinstance(entry, list)
             or len(entry) != 2
@@ -504,14 +514,64 @@ def road_polyline_from_json(data: Any) -> RoadPolyline:
         ):
             raise ValueError("road polyline point must be [x, z]")
         points.append((float(entry[0]), float(entry[1])))
-    return RoadPolyline(points=tuple(points))
+    return RoadPolyline(id=id_raw, points=tuple(points))
+
+
+def road_piece_placement_to_json(placement: RoadPiecePlacement) -> dict[str, Any]:
+    """encode one road piece placement"""
+    return {
+        "polyline_id": placement.polyline_id,
+        "stem": placement.stem,
+        "x": float(placement.x),
+        "z": float(placement.z),
+        "yaw_deg": float(placement.yaw_deg),
+        "roll_deg": float(placement.roll_deg),
+    }
+
+
+def road_piece_placement_from_json(data: Any) -> RoadPiecePlacement:
+    """decode one road piece placement"""
+    if not isinstance(data, dict):
+        raise ValueError("road piece placement must be an object")
+    polyline_id_raw: Any = data.get("polyline_id")
+    stem_raw: Any = data.get("stem")
+    x_raw: Any = data.get("x")
+    z_raw: Any = data.get("z")
+    yaw_raw: Any = data.get("yaw_deg")
+    roll_raw: Any = data.get("roll_deg", 0.0)
+    if not isinstance(polyline_id_raw, str) or polyline_id_raw == "":
+        raise ValueError("road piece placement polyline_id must be a non-empty string")
+    if not isinstance(stem_raw, str) or stem_raw == "":
+        raise ValueError("road piece placement stem must be a non-empty string")
+    for label, value in (
+        ("x", x_raw),
+        ("z", z_raw),
+        ("yaw_deg", yaw_raw),
+        ("roll_deg", roll_raw),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"road piece placement {label} must be a number")
+    return RoadPiecePlacement(
+        polyline_id=polyline_id_raw,
+        stem=stem_raw,
+        x=float(x_raw),
+        z=float(z_raw),
+        yaw_deg=float(yaw_raw),
+        roll_deg=float(roll_raw),
+    )
 
 
 def road_usage_group_to_json(group: RoadUsageGroupRecipe) -> dict[str, Any]:
     """encode one road usage group recipe"""
     return {
         "usage": group.usage,
+        "kit": group.kit,
         "polylines": [road_polyline_to_json(p) for p in group.polylines],
+        "placements": [
+            road_piece_placement_to_json(p) for p in group.placements
+        ],
+        "project_onto_shadow": bool(group.project_onto_shadow),
+        "ribbon_flatten": bool(group.ribbon_flatten),
     }
 
 
@@ -522,14 +582,36 @@ def road_usage_group_from_json(data: Any) -> RoadUsageGroupRecipe:
     usage_raw: Any = data.get("usage")
     if not isinstance(usage_raw, str) or usage_raw == "":
         raise ValueError("road_usage_group.usage must be a non-empty string")
+    kit_raw: Any = data.get("kit")
+    if not isinstance(kit_raw, str) or kit_raw == "":
+        raise ValueError("road_usage_group.kit must be a non-empty string")
     polylines_raw: Any = data.get("polylines", [])
     if not isinstance(polylines_raw, list):
         raise ValueError("road_usage_group.polylines must be a list")
+    placements_raw: Any = data.get("placements", [])
+    if not isinstance(placements_raw, list):
+        raise ValueError("road_usage_group.placements must be a list")
+    project_raw: Any = data.get("project_onto_shadow", False)
+    if not isinstance(project_raw, bool):
+        raise ValueError(
+            "road_usage_group.project_onto_shadow must be a boolean"
+        )
+    flatten_raw: Any = data.get("ribbon_flatten", False)
+    if not isinstance(flatten_raw, bool):
+        raise ValueError(
+            "road_usage_group.ribbon_flatten must be a boolean"
+        )
     return RoadUsageGroupRecipe(
         usage=usage_raw,
+        kit=kit_raw,
         polylines=tuple(
             road_polyline_from_json(entry) for entry in polylines_raw
         ),
+        placements=tuple(
+            road_piece_placement_from_json(entry) for entry in placements_raw
+        ),
+        project_onto_shadow=project_raw,
+        ribbon_flatten=flatten_raw,
     )
 
 
@@ -852,10 +934,16 @@ def height_layer_source_to_json(source: HeightLayerSource) -> dict[str, Any]:
                 "heightmap_id": heightmap_id.name,
                 "coverage_id": coverage_id.name,
             }
-        case RoadSectionsHeightSource(layer_node_id=layer_node_id):
+        case RoadSectionsHeightSource(
+            layer_node_id=layer_node_id,
+            heightmap_id=heightmap_id,
+            coverage_id=coverage_id,
+        ):
             return {
                 "source_type": source_type.name,
                 "layer_node_id": layer_node_id,
+                "heightmap_id": heightmap_id.name,
+                "coverage_id": coverage_id.name,
             }
 
 
@@ -961,7 +1049,17 @@ def height_layer_source_from_json(data: Any, label: str) -> HeightLayerSource:
             sections_layer_raw: Any = data.get("layer_node_id")
             if not isinstance(sections_layer_raw, str) or sections_layer_raw == "":
                 raise ValueError(f"{label}.layer_node_id must be a non-empty string")
-            return RoadSectionsHeightSource(layer_node_id=sections_layer_raw)
+            sections_map_id: Any = data.get("heightmap_id")
+            if not isinstance(sections_map_id, str) or sections_map_id == "":
+                raise ValueError(f"{label}.heightmap_id must be a non-empty string")
+            sections_cov_raw: Any = data.get("coverage_id")
+            if not isinstance(sections_cov_raw, str) or sections_cov_raw == "":
+                raise ValueError(f"{label}.coverage_id must be a non-empty string")
+            return RoadSectionsHeightSource(
+                layer_node_id=sections_layer_raw,
+                heightmap_id=HeightmapId(sections_map_id),
+                coverage_id=HeightmapId(sections_cov_raw),
+            )
 
 
 def require_layer_float(data: dict[str, Any], key: str, default: float) -> float:
@@ -1169,6 +1267,8 @@ def nodes_for_save(nodes: dict[str, Node]) -> list[Node]:
         ):
             continue
         if parent.generator is not None and node.mesh_id is not None:
+            continue
+        if parent.road_usage_group is not None and node.mesh_id is not None:
             continue
         saved.append(node)
     return saved

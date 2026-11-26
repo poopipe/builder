@@ -57,11 +57,27 @@ from builder.heightfield.vector.circle_handle import (
     pick_circle_radius_handle,
 )
 from builder.heightfield.road_sections.overlay import draw_road_sections_overlays
+from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
+from builder.heightfield.road_sections.pick import (
+    RoadPolylinePickHit,
+    pick_nearest_road_polyline,
+)
+from builder.heightfield.road_sections.edit import set_usage_group_on_node
+from builder.heightfield.road_sections.place import (
+    drop_placements,
+    regenerate_road_piece_children,
+)
+from builder.heightfield.road_sections.vertex_drag import (
+    RoadVertexDrag,
+    apply_road_vertex_drag,
+    pick_road_vertex_drag,
+)
 from builder.heightfield.vector.overlay import draw_vector_overlays
 from builder.heightfield.vector.pick import (
     VectorPointPickHit,
     pick_nearest_vector_point,
 )
+from builder.ui.ui_state import UiState
 from builder.heightfield.vector.rasterize import regenerate_vectors_touching
 from builder.heightfield.vector.road_handle import (
     RoadHeightDrag,
@@ -206,6 +222,7 @@ class Viewport:
         self.dragging_pan: bool = False
         self.circle_radius_drag: CircleRadiusDrag | None = None
         self.road_height_drag: RoadHeightDrag | None = None
+        self.road_vertex_drag: RoadVertexDrag | None = None
         self.last_mouse: Vector2 = Vector2(0.0, 0.0)
 
     def apply_orbit(self) -> None:
@@ -251,14 +268,20 @@ class Viewport:
         self.nodes.set_selection(group_ids)
         end_gizmo_drag(self.gizmo)
 
-    def clear_selection(self) -> None:
+    def clear_selection(self, ui: UiState | None = None) -> None:
         """clear the active group selection"""
         self.nodes.clear_selection()
+        if ui is not None:
+            ui.clear_road_polyline_selection()
         end_gizmo_drag(self.gizmo)
 
     def register_mesh(self, mesh_id: MeshId, prepared: PreparedMesh) -> None:
         """insert or replace a prepared mesh in the mesh table"""
         self.mesh_table.add_or_replace(mesh_id, prepared)
+
+    def has_mesh(self, mesh_id: MeshId) -> bool:
+        """true when the mesh table already has this id"""
+        return self.mesh_table.has_mesh(mesh_id)
 
     def unload_mesh(self, mesh_id: MeshId) -> None:
         """unload one prepared mesh if present; builtins are ignored"""
@@ -314,10 +337,18 @@ class Viewport:
         ray: Ray,
         heightmap_catalog: HeightmapCatalog,
         viewport_height_px: float,
+        ui: UiState,
     ) -> None:
-        """select a vector point, group from mesh/heightfield hit, or clear"""
+        """select a vector point, road polyline, mesh/heightfield group, or clear"""
         additive: bool = is_key_down(KeyboardKey.KEY_LEFT_CONTROL) or is_key_down(
             KeyboardKey.KEY_RIGHT_CONTROL
+        )
+        road_hit: RoadPolylinePickHit | None = pick_nearest_road_polyline(
+            self.nodes.nodes,
+            ray,
+            self.camera,
+            viewport_height_px,
+            self.nodes.selected_ids,
         )
         point_hit: VectorPointPickHit | None = pick_nearest_vector_point(
             self.nodes.nodes,
@@ -331,6 +362,27 @@ class Viewport:
         field_hit: HeightfieldPickHit | None = pick_nearest_heightfield(
             self.nodes, heightmap_catalog, ray, self.draw_cache
         )
+        # road polyline beats heightfield volume; loses to closer mesh/point
+        if road_hit is not None:
+            beat_point: bool = (
+                point_hit is None or road_hit.distance <= point_hit.distance
+            )
+            beat_mesh: bool = (
+                mesh_hit is None or road_hit.distance <= mesh_hit.distance
+            )
+            if beat_point and beat_mesh:
+                if not additive:
+                    self.nodes.set_selection([road_hit.usage_group_id])
+                elif road_hit.usage_group_id not in self.nodes.selected_ids:
+                    self.nodes.set_selection([road_hit.usage_group_id])
+                ui.set_road_polyline_selection(
+                    road_hit.usage_group_id,
+                    road_hit.polyline_id,
+                    additive=additive,
+                    endpoint=road_hit.endpoint,
+                )
+                end_gizmo_drag(self.gizmo)
+                return
         # point cubes beat the heightfield volume aabb; only lose to a closer mesh
         hit_id: str | None = None
         select_as_group: bool = True
@@ -349,11 +401,12 @@ class Viewport:
                 hit_id = field_hit.group_id
                 select_as_group = True
         if hit_id is None:
-            self.clear_selection()
+            self.clear_selection(ui)
             return
         selected_id: str = (
             root_group_id(self.nodes.nodes, hit_id) if select_as_group else hit_id
         )
+        ui.clear_road_polyline_selection()
         if additive:
             self.nodes.toggle_selection(selected_id)
         else:
@@ -420,14 +473,62 @@ class Viewport:
         )
         return True
 
+    def commit_road_vertex_drag(
+        self,
+        drag: RoadVertexDrag,
+        heightmap_catalog: HeightmapCatalog,
+        road_parts: RoadPartsCatalog | None,
+    ) -> None:
+        """drop stale placements, journal, rebuild pieces (ribbon if flatten)"""
+        usage: Node | None = self.nodes.nodes.get(drag.usage_group_id)
+        if usage is None or usage.road_usage_group is None:
+            return
+        cleared = drop_placements(
+            usage.road_usage_group, [drag.endpoint.polyline_id]
+        )
+        self.nodes.add_nodes([set_usage_group_on_node(usage, cleared)])
+        usage = self.nodes.nodes.get(drag.usage_group_id)
+        if usage is None or usage.road_usage_group is None:
+            return
+        if road_parts is not None:
+            regenerate_road_piece_children(
+                self.nodes,
+                drag.usage_group_id,
+                road_parts,
+                has_mesh=self.has_mesh,
+                register_mesh=self.register_mesh,
+                shader=self.mesh_shader(),
+                heightmap_catalog=heightmap_catalog,
+            )
+        if usage.road_usage_group.ribbon_flatten:
+            from builder.heightfield.road_sections.rasterize import (
+                regenerate_road_sections_touching,
+            )
+
+            regenerate_road_sections_touching(
+                heightmap_catalog,
+                self.nodes.nodes,
+                [drag.usage_group_id],
+                road_parts=road_parts,
+            )
+        if self.nodes.journal is not None:
+            self.nodes.journal.record(
+                "move_road_vertex",
+                usage_group_id=drag.usage_group_id,
+                polyline_id=drag.endpoint.polyline_id,
+                vertex_index=drag.endpoint.vertex_index,
+            )
+
     def handle_input(
         self,
         view_rect: Rectangle,
         ui_blocks_mouse: bool,
         heightmap_catalog: HeightmapCatalog,
         text_focused: bool,
+        ui: UiState,
         *,
         block_left_click: bool = False,
+        road_parts: RoadPartsCatalog | None = None,
     ) -> None:
         """orbit / pan / zoom / select / gizmo; keyboard fly when not typing"""
         self.apply_keyboard_fly(text_focused)
@@ -453,11 +554,13 @@ class Viewport:
                     if self.road_height_drag is not None
                     else []
                 )
+                road_vertex: RoadVertexDrag | None = self.road_vertex_drag
                 if dragged:
                     snap_vector_points_to_plane(self.nodes, dragged)
                 end_gizmo_drag(self.gizmo)
                 self.circle_radius_drag = None
                 self.road_height_drag = None
+                self.road_vertex_drag = None
                 if dragged:
                     self.record_gizmo_commit(dragged)
                     regenerate_splines_touching(
@@ -475,6 +578,10 @@ class Viewport:
                 elif road_point_ids:
                     regenerate_vectors_touching(
                         heightmap_catalog, self.nodes.nodes, road_point_ids
+                    )
+                elif road_vertex is not None:
+                    self.commit_road_vertex_drag(
+                        road_vertex, heightmap_catalog, road_parts
                     )
             return
 
@@ -510,6 +617,19 @@ class Viewport:
                 self.road_height_drag = None
                 regenerate_vectors_touching(
                     heightmap_catalog, self.nodes.nodes, release_road_ids
+                )
+            return
+
+        if self.road_vertex_drag is not None:
+            if is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT):
+                apply_road_vertex_drag(
+                    self.nodes, self.road_vertex_drag, ray
+                )
+            if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
+                finished: RoadVertexDrag = self.road_vertex_drag
+                self.road_vertex_drag = None
+                self.commit_road_vertex_drag(
+                    finished, heightmap_catalog, road_parts
                 )
             return
 
@@ -551,6 +671,37 @@ class Viewport:
             if height_drag is not None:
                 self.road_height_drag = height_drag
                 return
+            # drag only an already-selected vertex; otherwise fall through to pick
+            if (
+                ui.road_polyline_usage_group_id is not None
+                and ui.road_polyline_ids
+                and ui.road_endpoints
+                and not (
+                    is_key_down(KeyboardKey.KEY_LEFT_CONTROL)
+                    or is_key_down(KeyboardKey.KEY_RIGHT_CONTROL)
+                )
+            ):
+                vertex_drag: RoadVertexDrag | None = pick_road_vertex_drag(
+                    self.nodes.nodes,
+                    ray,
+                    self.camera,
+                    float(view_rect.height),
+                    ui.road_polyline_usage_group_id,
+                    ui.road_polyline_ids,
+                )
+                if vertex_drag is not None:
+                    selected_vertex: bool = any(
+                        (
+                            endpoint.polyline_id
+                            == vertex_drag.endpoint.polyline_id
+                            and endpoint.vertex_index
+                            == vertex_drag.endpoint.vertex_index
+                        )
+                        for endpoint in ui.road_endpoints
+                    )
+                    if selected_vertex:
+                        self.road_vertex_drag = vertex_drag
+                        return
 
         if self.gizmo.drag is not None:
             if is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT):
@@ -604,7 +755,7 @@ class Viewport:
             and is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
         ):
             self.handle_selection_click(
-                ray, heightmap_catalog, float(view_rect.height)
+                ray, heightmap_catalog, float(view_rect.height), ui
             )
             return
 
@@ -667,9 +818,11 @@ class Viewport:
         self,
         view_rect: Rectangle,
         heightmap_catalog: HeightmapCatalog,
+        ui: UiState,
         *,
         sculpt_preview_center: Vector3 | None = None,
         sculpt_preview_radius: float = 0.0,
+        road_parts: RoadPartsCatalog | None = None,
     ) -> None:
         """render the 3D scene into the viewport rectangle using scissor"""
         begin_scissor_mode(
@@ -711,6 +864,12 @@ class Viewport:
                     self.line_shader,
                     self.line_batch,
                     self.nodes.selected_ids,
+                    heightfield_gpu=self.heightfield_gpu,
+                )
+                live_road_ids: list[str] = (
+                    [self.road_vertex_drag.endpoint.polyline_id]
+                    if self.road_vertex_drag is not None
+                    else []
                 )
                 draw_road_sections_overlays(
                     heightmap_catalog,
@@ -720,6 +879,11 @@ class Viewport:
                     self.line_batch,
                     self.road_line_mesh_cache,
                     self.nodes.selected_ids,
+                    ui.road_polyline_ids,
+                    ui.road_endpoints,
+                    road_parts=road_parts,
+                    live_polyline_ids=live_road_ids,
+                    heightfield_gpu=self.heightfield_gpu,
                 )
 
         # flush scene draws, then submit gizmos with depth off and flush again

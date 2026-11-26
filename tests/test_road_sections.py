@@ -78,8 +78,11 @@ class TestUsageOverlayFilter(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             shp: Path = write_fixture_shp(Path(tmp))
             heightfield = default_heightfield()
+            catalog = HeightmapCatalog()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
             _, layer_nodes = append_road_sections_edit_layer(
-                heightfield, "hf1"
+                catalog, heightfield, "hf1", cache_dir=cache_dir
             )
             layer: Node = layer_nodes[0]
             imported: list[Node] = import_road_shp(
@@ -111,8 +114,11 @@ class TestUsageOverlayFilter(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             shp: Path = write_fixture_shp(Path(tmp))
             heightfield = default_heightfield()
+            catalog = HeightmapCatalog()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
             _, layer_nodes = append_road_sections_edit_layer(
-                heightfield, "hf1"
+                catalog, heightfield, "hf1", cache_dir=cache_dir
             )
             layer: Node = layer_nodes[0]
             imported: list[Node] = import_road_shp(
@@ -126,10 +132,7 @@ class TestUsageOverlayFilter(unittest.TestCase):
                 for node in imported
                 if node.road_usage_group is not None
             )
-            catalog = HeightmapCatalog()
             all_key = road_sections_overlay_cache_key(
-                catalog,
-                heightfield,
                 "hf1",
                 layer.id,
                 None,
@@ -137,20 +140,16 @@ class TestUsageOverlayFilter(unittest.TestCase):
                 nodes,
             )
             usage_key = road_sections_overlay_cache_key(
-                catalog,
-                heightfield,
                 "hf1",
                 layer.id,
                 {usage.id},
                 0.0,
                 nodes,
             )
-            self.assertIsNone(all_key[4])
-            self.assertIsNotNone(usage_key[4])
+            self.assertIsNone(all_key[2])
+            self.assertEqual(usage_key[2], (usage.id,))
             self.assertEqual(
                 road_sections_overlay_cache_key(
-                    catalog,
-                    heightfield,
                     "hf1",
                     layer.id,
                     {usage.id},
@@ -166,8 +165,11 @@ class TestRoadSectionsImport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             shp: Path = write_fixture_shp(Path(tmp))
             heightfield = default_heightfield()
+            catalog = HeightmapCatalog()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
             updated, layer_nodes = append_road_sections_edit_layer(
-                heightfield, "hf1"
+                catalog, heightfield, "hf1", cache_dir=cache_dir
             )
             self.assertEqual(len(updated.edit_layers), 1)
             match updated.edit_layers[0].height:
@@ -203,8 +205,11 @@ class TestRoadSectionsImport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             shp: Path = write_fixture_shp(Path(tmp))
             heightfield = default_heightfield()
+            catalog = HeightmapCatalog()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
             _, layer_nodes = append_road_sections_edit_layer(
-                heightfield, "hf1"
+                catalog, heightfield, "hf1", cache_dir=cache_dir
             )
             layer: Node = layer_nodes[0]
             imported: list[Node] = import_road_shp(
@@ -228,8 +233,11 @@ class TestRoadSectionsImport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             shp: Path = write_fixture_shp(Path(tmp))
             heightfield = default_heightfield()
+            catalog = HeightmapCatalog()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
             _, layer_nodes = append_road_sections_edit_layer(
-                heightfield, "hf1"
+                catalog, heightfield, "hf1", cache_dir=cache_dir
             )
             layer: Node = layer_nodes[0]
             imported: list[Node] = import_road_shp(
@@ -263,23 +271,29 @@ class TestRoadSectionsImport(unittest.TestCase):
             )
 
     def test_sample_height_ignores_road_sections(self) -> None:
-        catalog: HeightmapCatalog = HeightmapCatalog()
-        heightfield = default_heightfield()
-        updated, layer_nodes = append_road_sections_edit_layer(
-            heightfield, "hf1"
-        )
-        before: float = sample_height(catalog, heightfield, 0.5, 0.5)
-        after: float = sample_height(catalog, updated, 0.5, 0.5)
-        self.assertAlmostEqual(before, after)
-        self.assertEqual(len(layer_nodes), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog: HeightmapCatalog = HeightmapCatalog()
+            heightfield = default_heightfield()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
+            updated, layer_nodes = append_road_sections_edit_layer(
+                catalog, heightfield, "hf1", cache_dir=cache_dir
+            )
+            before: float = sample_height(catalog, heightfield, 0.5, 0.5)
+            after: float = sample_height(catalog, updated, 0.5, 0.5)
+            self.assertAlmostEqual(before, after)
+            self.assertEqual(len(layer_nodes), 1)
 
     def test_scene_round_trip(self) -> None:
-        heightfield = default_heightfield()
-        updated, layer_nodes = append_road_sections_edit_layer(
-            heightfield, "hf1"
-        )
-        layer: Node = layer_nodes[0]
         with tempfile.TemporaryDirectory() as tmp:
+            heightfield = default_heightfield()
+            catalog = HeightmapCatalog()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
+            updated, layer_nodes = append_road_sections_edit_layer(
+                catalog, heightfield, "hf1", cache_dir=cache_dir
+            )
+            layer: Node = layer_nodes[0]
             shp: Path = write_fixture_shp(Path(tmp))
             imported: list[Node] = import_road_shp(layer.id, shp, updated)
             hf_node: Node = Node(
@@ -305,7 +319,7 @@ class TestRoadSectionsImport(unittest.TestCase):
                 if node.road_usage_group is not None
             }
             self.assertEqual(usage_names, {"primary", "footway"})
-            self.assertEqual(scene_format_version, 34)
+            self.assertEqual(scene_format_version, 39)
             document: SceneDocument = SceneDocument(
                 version=scene_format_version,
                 active_mesh_id=builtin_cube,
@@ -331,7 +345,7 @@ class TestRoadSectionsImport(unittest.TestCase):
             )
             text: str = dumps_document(document, {}, {}, {})
             loaded, _warnings = loads_document(text)
-            self.assertEqual(loaded.version, 34)
+            self.assertEqual(loaded.version, 39)
 
 
 if __name__ == "__main__":

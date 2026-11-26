@@ -17,6 +17,7 @@ from builder.heightfield.heightmap_catalog import (
     ensure_heightmap_buffer,
     register_heightmap_asset,
 )
+from builder.heightfield.road_sections.place import regenerate_road_piece_children
 from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.paint import decoded_f32_from_buffer
 from builder.heightfield.regenerate import regenerate_heightfield
@@ -401,10 +402,31 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
                     context.scene,
                     context.application.heightmap_catalog,
                     group.id,
+                    road_parts=context.application.road_parts,
                 )
             except (KeyError, ValueError, RuntimeError) as exc:
                 log_exception(f"heightfield regenerate failed: {group.id}", exc)
                 warnings.append(f"failed to regenerate heightfield '{group.id}': {exc}")
+        if (
+            group.road_usage_group is not None
+            and group.road_usage_group.placements
+        ):
+            try:
+                context.application.road_parts.ensure_loaded()
+                regenerate_road_piece_children(
+                    context.scene.nodes,
+                    group.id,
+                    context.application.road_parts,
+                    has_mesh=context.scene.has_mesh,
+                    register_mesh=context.scene.register_mesh,
+                    shader=context.scene.mesh_shader(),
+                    heightmap_catalog=context.application.heightmap_catalog,
+                )
+            except (KeyError, ValueError, RuntimeError) as exc:
+                log_exception(f"road pieces regenerate failed: {group.id}", exc)
+                warnings.append(
+                    f"failed to regenerate road pieces '{group.id}': {exc}"
+                )
 
     active: MeshId = remap_mesh_id(document.active_mesh_id, fallbacks) or builtin_cube
     if active not in catalog.entries:

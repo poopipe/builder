@@ -1,6 +1,7 @@
 """road sections: shp import and path display under a heightfield"""
 
 from builder.heightfield.road_sections.road_sections_types import (
+    RoadPiecePlacement,
     RoadPolyline,
     RoadSectionsLayerRecipe,
     RoadShpRecipe,
@@ -10,6 +11,7 @@ from builder.heightfield.road_sections.road_sections_types import (
 )
 
 __all__ = [
+    "RoadPiecePlacement",
     "RoadPolyline",
     "RoadSectionsLayerRecipe",
     "RoadShpRecipe",

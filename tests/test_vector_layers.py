@@ -386,9 +386,9 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
             )
             self.assertIsNotNone(layer_decoded.vector_layer)
             self.assertIsNotNone(shape_decoded.vector_shape)
-            self.assertEqual(scene_format_version, 34)
+            self.assertEqual(scene_format_version, 39)
 
-    def test_document_version_is_34(self) -> None:
+    def test_document_version_is_39(self) -> None:
         document: SceneDocument = SceneDocument(
             version=scene_format_version,
             active_mesh_id=builtin_cube,
@@ -414,7 +414,7 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
         )
         text: str = dumps_document(document, {}, {}, {})
         loaded, _warnings = loads_document(text)
-        self.assertEqual(loaded.version, 34)
+        self.assertEqual(loaded.version, 39)
 
 
 class TestVectorSculpt(unittest.TestCase):

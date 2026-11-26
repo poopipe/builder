@@ -81,7 +81,11 @@ from builder.ui.inspector import (
     sync_inspector_focus,
     update_inspector,
 )
+from builder.heightfield.road_sections.pick import (
+    clear_road_polyline_selection_if_stale,
+)
 from builder.ui.road_sections_inspector import (
+    RoadSectionsInspectorLayout,
     draw_road_sections_inspector,
     selected_road_sections_layer,
     update_road_sections_inspector,
@@ -297,6 +301,13 @@ class Application:
         sync_inspector_focus(self.ui, group)
         sync_modifiers_focus(self.ui, group)
         apply_text_exit_key(self.ui)
+        if clear_road_polyline_selection_if_stale(
+            self.scene.nodes.nodes,
+            self.ui.road_polyline_usage_group_id,
+            self.ui.road_polyline_ids,
+            self.scene.nodes.selected_ids,
+        ):
+            self.ui.clear_road_polyline_selection()
 
         show_inspector: bool = (
             group is not None
@@ -561,7 +572,9 @@ class Application:
         vector_inspector_buttons: list[Button] = []
         vector_float_rows: list[VectorShapeFloatRow] = []
         vector_layer_buttons: list[Button] = []
-        road_sections_buttons: list[Button] = []
+        road_sections_layout: RoadSectionsInspectorLayout = (
+            RoadSectionsInspectorLayout()
+        )
         modifiers_buttons: list[Button] = []
         modifiers_rows: list[ModifierPanelRow] = []
         if active_right is DockPanel.inspector and not browser_open:
@@ -616,11 +629,15 @@ class Application:
                         else None
                     )
             elif road_sections_layer is not None:
-                road_sections_buttons = update_road_sections_inspector(
+                road_sections_layout = update_road_sections_inspector(
                     self.scene.nodes,
                     self.ui,
                     right_content_rect,
                     road_sections_layer,
+                    journal=self.application.journal,
+                    road_parts=self.application.road_parts,
+                    scene_context=self.scene,
+                    heightmap_catalog=self.application.heightmap_catalog,
                 )
             elif group is not None:
                 group_id: str = group.id
@@ -829,7 +846,9 @@ class Application:
             text_focused=(
                 self.ui.focus is not None or self.ui.file_browser is not None
             ),
+            ui=self.ui,
             block_left_click=sculpting and not ui_over,
+            road_parts=self.application.road_parts,
         )
 
         begin_drawing()
@@ -843,8 +862,10 @@ class Application:
         self.scene.draw(
             layout.viewport,
             self.application.heightmap_catalog,
+            self.ui,
             sculpt_preview_center=preview_center,
             sculpt_preview_radius=preview_radius,
+            road_parts=self.application.road_parts,
         )
         draw_menu_bar(self.font, layout.menu, menu_buttons)
         if snap_bar is not None:
@@ -925,7 +946,8 @@ class Application:
                     self.font,
                     right_content_rect,
                     road_sections_layer,
-                    road_sections_buttons,
+                    self.ui,
+                    road_sections_layout,
                 )
             elif group is not None:
                 draw_inspector(
@@ -950,12 +972,18 @@ class Application:
                 modifiers_rows,
                 self.scene.nodes,
             )
+        orbit_target: Vector3 | None = self.scene.orbit.target
+        assert orbit_target is not None
         draw_status_bar(
             self.font,
             layout.status,
             self.ui.status,
             fps=get_fps(),
             frame_ms=get_frame_time() * 1000.0,
+            look=(
+                f"look {orbit_target.x:.1f} {orbit_target.z:.1f}"
+                f"  d {self.scene.orbit.distance:.0f}"
+            ),
         )
         if self.ui.file_browser is not None and browser_window is not None:
             draw_file_browser(

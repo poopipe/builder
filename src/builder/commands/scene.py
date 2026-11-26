@@ -218,6 +218,7 @@ def place_heightfield(context: CommandContext, _: None) -> None:
         context.scene,
         context.application.heightmap_catalog,
         group_id,
+        road_parts=context.application.road_parts,
     )
     layout: HeightfieldLayout = heightfield_layout(heightfield)
     tiles: int = layout.tiles_x * layout.tiles_z
@@ -226,7 +227,31 @@ def place_heightfield(context: CommandContext, _: None) -> None:
 
 
 def delete_selection(context: CommandContext, _: None) -> None:
-    """remove selected groups and their descendants"""
+    """remove selected road polylines, or selected groups and descendants"""
+    if (
+        context.ui.road_polyline_usage_group_id is not None
+        and context.ui.road_polyline_ids
+    ):
+        from builder.heightfield.road_sections.edit import (
+            delete_polylines,
+            set_usage_group_on_node,
+        )
+
+        usage_id: str = context.ui.road_polyline_usage_group_id
+        usage_node: Node | None = context.scene.nodes.nodes.get(usage_id)
+        if usage_node is not None and usage_node.road_usage_group is not None:
+            updated_group = delete_polylines(
+                usage_node.road_usage_group, context.ui.road_polyline_ids
+            )
+            context.scene.nodes.add_nodes(
+                [set_usage_group_on_node(usage_node, updated_group)]
+            )
+            count: int = len(context.ui.road_polyline_ids)
+            context.ui.clear_road_polyline_selection()
+            label: str = "polyline" if count == 1 else "polylines"
+            context.ui.status = f"Deleted {count} {label}"
+            return
+        context.ui.clear_road_polyline_selection()
     selected: list[str] = list(context.scene.nodes.selected_ids)
     if not selected:
         context.ui.status = "Nothing selected"
@@ -332,6 +357,7 @@ def duplicate_selection(context: CommandContext, _: None) -> None:
             context.scene,
             context.application.heightmap_catalog,
             root_id,
+            road_parts=context.application.road_parts,
         )
     context.scene.set_selection(new_roots)
     count: int = len(new_roots)

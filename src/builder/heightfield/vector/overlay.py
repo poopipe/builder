@@ -26,9 +26,17 @@ from pyray import (
     vector3_distance,
 )
 
+from builder.heightfield.gpu.heightfield_gpu import (
+    HeightfieldGpuState,
+    line_height_drape_for_overlay,
+)
 from builder.heightfield.heightfield_types import Heightfield, heightfield_layout
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
-from builder.heightfield.sample import sample_height, sample_height_below
+from builder.heightfield.sample import (
+    sample_height,
+    sample_height_below,
+    sample_height_through,
+)
 from builder.heightfield.vector.circle import CircleShapeParams, circle_rim_local_xz
 from builder.heightfield.vector.coords import (
     ordered_child_nodes,
@@ -46,8 +54,13 @@ from builder.heightfield.vector.overlay_scale import (
     point_cube_size_for_line_radius,
     shadow_line_pixels,
 )
+from builder.heightfield.vector.work_plane_point import (
+    draw_work_plane_point,
+    work_plane_point_selected_color,
+)
 from builder.view.line_shader import (
     LineBatch,
+    LineHeightDrape,
     LineShader,
     add_line_segment,
     clear_line_batch,
@@ -72,8 +85,6 @@ from builder.scene.transforms import matrix_translation, world_matrix
 overlay_color: Color = Color(80, 200, 255, 220)
 shadow_handle_color: Color = Color(180, 220, 255, 255)
 stem_color: Color = Color(120, 180, 220, 200)
-point_color: Color = Color(255, 220, 80, 255)
-point_selected_color: Color = Color(255, 140, 40, 255)
 plane_color: Color = Color(80, 180, 255, 36)
 # subdivide long segments so the shadow drapes over hills
 overlay_step_metres: float = 2.0
@@ -90,22 +101,33 @@ def surface_y(
     lift: float,
     *,
     below_layer_index: int | None = None,
+    through_layer_index: int | None = None,
 ) -> float:
     """composited height at local xz, plus overlay lift
 
-    when below_layer_index is set, sample only the stack under that edit layer
+    below_layer_index: stack strictly under that edit layer
+    through_layer_index: stack through that edit layer inclusive
     """
+    if below_layer_index is not None and through_layer_index is not None:
+        raise ValueError("pass only one of below_layer_index, through_layer_index")
     u: float
     v: float
     u, v = world_xz_to_uv(x, z, size_x, size_z)
-    if below_layer_index is None:
-        return sample_height(catalog, heightfield, u, v) + lift
-    return (
-        sample_height_below(
-            catalog, heightfield, below_layer_index, u, v
+    if through_layer_index is not None:
+        return (
+            sample_height_through(
+                catalog, heightfield, through_layer_index, u, v
+            )
+            + lift
         )
-        + lift
-    )
+    if below_layer_index is not None:
+        return (
+            sample_height_below(
+                catalog, heightfield, below_layer_index, u, v
+            )
+            + lift
+        )
+    return sample_height(catalog, heightfield, u, v) + lift
 
 
 def draw_segment_flat(
@@ -147,8 +169,10 @@ def draw_segment_draped(
     lift: float,
     *,
     below_layer_index: int | None = None,
+    through_layer_index: int | None = None,
+    gpu_drape: bool = False,
 ) -> None:
-    """queue one xz segment draped onto the terrain"""
+    """queue one xz segment; y from cpu sample or left for gpu heightMap"""
     dx: float = bx - ax
     dz: float = bz - az
     length: float = hypot(dx, dz)
@@ -163,26 +187,34 @@ def draw_segment_draped(
         z0: float = az + dz * t0
         x1: float = ax + dx * t1
         z1: float = az + dz * t1
-        y0: float = surface_y(
-            catalog,
-            heightfield,
-            x0,
-            z0,
-            size_x,
-            size_z,
-            lift,
-            below_layer_index=below_layer_index,
-        )
-        y1: float = surface_y(
-            catalog,
-            heightfield,
-            x1,
-            z1,
-            size_x,
-            size_z,
-            lift,
-            below_layer_index=below_layer_index,
-        )
+        y0: float
+        y1: float
+        if gpu_drape:
+            y0 = lift
+            y1 = lift
+        else:
+            y0 = surface_y(
+                catalog,
+                heightfield,
+                x0,
+                z0,
+                size_x,
+                size_z,
+                lift,
+                below_layer_index=below_layer_index,
+                through_layer_index=through_layer_index,
+            )
+            y1 = surface_y(
+                catalog,
+                heightfield,
+                x1,
+                z1,
+                size_x,
+                size_z,
+                lift,
+                below_layer_index=below_layer_index,
+                through_layer_index=through_layer_index,
+            )
         add_line_segment(
             batch, x0, y0, z0, x1, y1, z1, color, thickness_px
         )
@@ -251,9 +283,14 @@ def shape_polyline_points(
             return points, False
 
 
-def half_brightness(color: Color) -> Color:
-    """rgb at half intensity; keep alpha"""
-    return Color(color.r // 2, color.g // 2, color.b // 2, color.a)
+def shadow_line_brightness(color: Color) -> Color:
+    """rgb at ~75% intensity for draped shadow lines; keep alpha"""
+    return Color(
+        (color.r * 3) // 4,
+        (color.g * 3) // 4,
+        (color.b * 3) // 4,
+        color.a,
+    )
 
 
 def draw_polyline_shadow(
@@ -269,11 +306,13 @@ def draw_polyline_shadow(
     color: Color,
     *,
     below_layer_index: int | None = None,
+    through_layer_index: int | None = None,
+    gpu_drape: bool = False,
 ) -> None:
-    """drape polyline segments onto the terrain"""
+    """queue polyline shadow segments (cpu y or gpu heightMap at draw)"""
     if len(points) < 2:
         return
-    draped: Color = half_brightness(color)
+    draped: Color = shadow_line_brightness(color)
     i: int
     for i in range(len(points) if closed else len(points) - 1):
         a = points[i]
@@ -292,6 +331,8 @@ def draw_polyline_shadow(
             draped,
             lift,
             below_layer_index=below_layer_index,
+            through_layer_index=through_layer_index,
+            gpu_drape=gpu_drape,
         )
 
 
@@ -335,6 +376,7 @@ def draw_shape_shadow(
     lift: float,
     *,
     below_layer_index: int | None = None,
+    gpu_drape: bool = False,
 ) -> None:
     """terrain shadow for one vector shape"""
     polyline = shape_polyline_points(nodes, shape, heightfield_group_id)
@@ -355,6 +397,7 @@ def draw_shape_shadow(
         lift,
         overlay_color,
         below_layer_index=below_layer_index,
+        gpu_drape=gpu_drape,
     )
 
 
@@ -405,7 +448,7 @@ def draw_road_point_stems(
             + offset_y
         )
         handle_color: Color = (
-            point_selected_color
+            work_plane_point_selected_color
             if point_id in selected_ids
             else shadow_handle_color
         )
@@ -464,15 +507,12 @@ def draw_shape_flat(
         px: float
         pz: float
         point_id, px, pz = entry
-        color: Color = (
-            point_selected_color if point_id in selected_ids else point_color
-        )
-        draw_cube(
-            Vector3(px, plane_y, pz),
+        draw_work_plane_point(
+            px,
+            plane_y,
+            pz,
             cube_size,
-            cube_size,
-            cube_size,
-            color,
+            selected=point_id in selected_ids,
         )
     if (
         recipe is not None
@@ -494,12 +534,8 @@ def draw_shape_flat(
             rim_x, rim_z = circle_rim_local_xz(
                 points_xz[0][0], points_xz[0][1], shape_radius
             )
-            draw_cube(
-                Vector3(rim_x, plane_y, rim_z),
-                cube_size,
-                cube_size,
-                cube_size,
-                point_selected_color,
+            draw_work_plane_point(
+                rim_x, plane_y, rim_z, cube_size, selected=True
             )
 
 
@@ -568,6 +604,8 @@ def draw_vector_overlays(
     line_shader: LineShader,
     line_batch: LineBatch,
     selected_ids: Sequence[str] = (),
+    *,
+    heightfield_gpu: HeightfieldGpuState | None = None,
 ) -> None:
     """draw work-plane shapes, terrain shadows, and point cubes for one heightfield"""
     heightfield: Heightfield | None = heightfield_group.heightfield
@@ -616,6 +654,16 @@ def draw_vector_overlays(
     road_index: int | None = (
         vector_road_layer_index(heightfield, layer.id) if is_road else None
     )
+    use_gpu_drape: bool = heightfield_gpu is not None
+    shadow_drape: LineHeightDrape | None = None
+    if use_gpu_drape and heightfield_gpu is not None:
+        shadow_drape = line_height_drape_for_overlay(
+            heightfield_gpu,
+            catalog,
+            heightfield_group.id,
+            heightfield,
+            road_index,
+        )
     # shadow only for the selected shape, before the translucent plane
     if selected_shape_id is not None:
         shape: Node
@@ -634,8 +682,16 @@ def draw_vector_overlays(
                 shadow_line_pixels,
                 0.0,
                 below_layer_index=road_index,
+                gpu_drape=use_gpu_drape,
+            )
+            flush_line_batch(
+                line_batch,
+                line_shader,
+                depth_bias=line_shadow_depth_bias,
+                height_drape=shadow_drape,
             )
             if is_road:
+                # stems keep cpu y; do not heightMap-displace them
                 draw_road_point_stems(
                     line_batch,
                     catalog,
@@ -651,10 +707,10 @@ def draw_vector_overlays(
                     cube_size,
                     0.0,
                 )
+                flush_line_batch(
+                    line_batch, line_shader, depth_bias=line_shadow_depth_bias
+                )
             break
-        flush_line_batch(
-            line_batch, line_shader, depth_bias=line_shadow_depth_bias
-        )
     draw_work_plane(size_x, size_z, plane_y)
     shape_flat: Node
     for shape_flat in shapes:

@@ -73,6 +73,7 @@ from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
 from builder.view.draw_cache import DrawCache, fill_world_matrix, sync_draw_cache
 from builder.view.lighting import Lighting, set_vec3
+from builder.view.line_shader import LineHeightDrape
 from builder.view.prepare_mesh import PreparedMesh
 
 heightfield_albedo: Color = Color(210, 210, 210, 255)
@@ -86,6 +87,15 @@ class HeightfieldInstanceBatch:
     count: int
     lod: int
     edge_mask: int
+
+
+@dataclass
+class BelowHeightTexture:
+    """cached gpu composite of the stack strictly below one edit layer"""
+
+    texture: HeightTexture
+    result_target: R32RenderTarget | None
+    key: HeightTextureKey
 
 
 @dataclass
@@ -107,6 +117,8 @@ class HeightfieldGpuEntry:
     instance_batches: dict[tuple[int, int], HeightfieldInstanceBatch] = field(
         default_factory=dict
     )
+    # below_layer_index -> underlay composite for shadow draping
+    below_textures: dict[int, BelowHeightTexture] = field(default_factory=dict)
 
 
 @dataclass
@@ -173,6 +185,15 @@ def ensure_albedo_texture(
     entry.albedo_path = path
 
 
+def release_below_textures(entry: HeightfieldGpuEntry) -> None:
+    """drop cached below-layer composites"""
+    cached: BelowHeightTexture
+    for cached in entry.below_textures.values():
+        release_height_texture(cached.texture)
+        release_r32_target(cached.result_target)
+    entry.below_textures.clear()
+
+
 def drop_heightfield_entry(state: HeightfieldGpuState, group_id: str) -> None:
     """release one group's height texture"""
     entry: HeightfieldGpuEntry | None = state.entries.pop(group_id, None)
@@ -180,6 +201,7 @@ def drop_heightfield_entry(state: HeightfieldGpuState, group_id: str) -> None:
         release_height_texture(entry.texture)
         release_r32_target(entry.result_target)
         entry.result_target = None
+        release_below_textures(entry)
         release_albedo_texture(entry)
         invalidate_tile_draw_cache(entry)
 
@@ -237,6 +259,7 @@ def ensure_heightfield_gpu(
         release_height_texture(existing.texture)
         release_r32_target(existing.result_target)
         existing.result_target = None
+        release_below_textures(existing)
         release_albedo_texture(existing)
         invalidate_tile_draw_cache(existing)
     texture: HeightTexture
@@ -244,7 +267,7 @@ def ensure_heightfield_gpu(
     texture, result_target = make_height_texture(
         catalog, heightfield, state.composite
     )
-    entry: HeightfieldGpuEntry = HeightfieldGpuEntry(
+    entry = HeightfieldGpuEntry(
         texture=texture,
         layout=layout,
         spacing=spacing,
@@ -254,6 +277,84 @@ def ensure_heightfield_gpu(
     state.entries[group_id] = entry
     ensure_spacing_grids(state, spacing)
     return entry
+
+
+def ensure_height_texture_below(
+    state: HeightfieldGpuState,
+    catalog: HeightmapCatalog,
+    group_id: str,
+    heightfield: Heightfield,
+    below_layer_index: int,
+) -> HeightTexture:
+    """gpu composite of the stack strictly below below_layer_index"""
+    entry: HeightfieldGpuEntry = ensure_heightfield_gpu(
+        state, catalog, group_id, heightfield
+    )
+    key: HeightTextureKey = height_texture_key(
+        catalog, heightfield, below_layer_index=below_layer_index
+    )
+    cached: BelowHeightTexture | None = entry.below_textures.get(
+        below_layer_index
+    )
+    if cached is not None and cached.key == key:
+        scale: float
+        bias: float
+        scale, bias = height_texture_uniforms(
+            catalog, heightfield, below_layer_index=below_layer_index
+        )
+        cached.texture.height_scale = scale
+        cached.texture.height_bias = bias
+        return cached.texture
+    if cached is not None:
+        release_height_texture(cached.texture)
+        release_r32_target(cached.result_target)
+        del entry.below_textures[below_layer_index]
+    texture: HeightTexture
+    result_target: R32RenderTarget | None
+    texture, result_target = make_height_texture(
+        catalog,
+        heightfield,
+        state.composite,
+        below_layer_index=below_layer_index,
+    )
+    scale, bias = height_texture_uniforms(
+        catalog, heightfield, below_layer_index=below_layer_index
+    )
+    texture.height_scale = scale
+    texture.height_bias = bias
+    entry.below_textures[below_layer_index] = BelowHeightTexture(
+        texture=texture,
+        result_target=result_target,
+        key=key,
+    )
+    return texture
+
+
+def line_height_drape_for_overlay(
+    state: HeightfieldGpuState,
+    catalog: HeightmapCatalog,
+    group_id: str,
+    heightfield: Heightfield,
+    below_layer_index: int | None,
+) -> LineHeightDrape:
+    """heightMap binding for overlay shadows (full stack or below a layer)"""
+    entry: HeightfieldGpuEntry = ensure_heightfield_gpu(
+        state, catalog, group_id, heightfield
+    )
+    texture: HeightTexture
+    if below_layer_index is None:
+        texture = entry.texture
+    else:
+        texture = ensure_height_texture_below(
+            state, catalog, group_id, heightfield, below_layer_index
+        )
+    return LineHeightDrape(
+        texture=texture.texture,
+        size_x=entry.layout.size_x,
+        size_z=entry.layout.size_z,
+        height_scale=texture.height_scale,
+        height_bias=texture.height_bias,
+    )
 
 
 def prune_heightfield_gpu(state: HeightfieldGpuState, scene: Scene) -> None:

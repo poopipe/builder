@@ -337,9 +337,15 @@ def draw_button_stack(font: Font, panel: Rectangle, buttons: Sequence[Button]) -
 
 
 def draw_status_bar(
-    font: Font, rect: Rectangle, text: str, *, fps: int, frame_ms: float
+    font: Font,
+    rect: Rectangle,
+    text: str,
+    *,
+    fps: int,
+    frame_ms: float,
+    look: str | None = None,
 ) -> None:
-    """draw status text left and fps / frame time right"""
+    """draw status text left; look / fps on the right"""
     draw_rectangle_rec(rect, ui_color_status)
     size: float = float(ui_font_size - 2)
     draw_text_ex(
@@ -351,11 +357,12 @@ def draw_status_bar(
         ui_color_text,
     )
     timing: str = f"{fps} fps  {frame_ms:.1f} ms"
-    timing_w: float = measure_text_ex(font, timing, size, 0).x
+    right: str = timing if look is None else f"{look}  {timing}"
+    right_w: float = measure_text_ex(font, right, size, 0).x
     draw_text_ex(
         font,
-        timing,
-        Vector2(rect.x + rect.width - timing_w - ui_pad, rect.y + 4),
+        right,
+        Vector2(rect.x + rect.width - right_w - ui_pad, rect.y + 4),
         size,
         0,
         ui_color_text,

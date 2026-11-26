@@ -12,7 +12,6 @@ orbit_fly_speed_factor: float = 1.2
 orbit_dolly_speed_factor: float = 1.5
 move_speed_step: float = 0.25
 move_speed_minimum: float = 0.1
-move_speed_maximum: float = 100.0
 
 view_distance_default: float = 4096.0
 view_distance_step: float = 64.0
@@ -22,8 +21,8 @@ view_distance_near: float = 0.05
 
 
 def clamp_move_speed(value: float) -> float:
-    """keep move speed in a usable range"""
-    return max(move_speed_minimum, min(move_speed_maximum, value))
+    """keep move speed at or above the minimum; no upper cap"""
+    return max(move_speed_minimum, value)
 
 
 def nudged_move_speed(current: float, direction: int) -> float:

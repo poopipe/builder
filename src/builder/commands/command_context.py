@@ -8,6 +8,8 @@ from typing import Protocol
 
 from builder.io.mesh_import import ImportedMesh, MeshImporter
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
+from builder.heightfield.road_sections.road_sections_types import RoadEndpointRef
 from builder.meshes.mesh_catalog import MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import MeshId, Node
@@ -69,6 +71,10 @@ class SceneContext(Protocol):
         """insert or replace a prepared mesh in the mesh table"""
         ...
 
+    def has_mesh(self, mesh_id: MeshId) -> bool:
+        """true when the mesh table already has this id"""
+        ...
+
     def unload_mesh(self, mesh_id: MeshId) -> None:
         """unload one prepared mesh if present; builtins are ignored"""
         ...
@@ -105,6 +111,13 @@ class UiContext(Protocol):
     heightfield_layer_target: str | None
     heightfield_layer_replace_index: int | None
     road_sections_import_target: str | None
+    road_polyline_usage_group_id: str | None
+    road_polyline_ids: list[str]
+    road_endpoints: list[RoadEndpointRef]
+
+    def clear_road_polyline_selection(self) -> None:
+        """clear compact road polyline / endpoint picks"""
+        ...
 
     def toggle_side_panel(self) -> None:
         """show or hide the context side panel"""
@@ -134,6 +147,7 @@ class ApplicationContext(Protocol):
     importer: MeshImporter
     mesh_catalog: MeshCatalog
     heightmap_catalog: HeightmapCatalog
+    road_parts: RoadPartsCatalog
     active_mesh_id: MeshId
     scene_path: Path | None
     journal: SessionJournal

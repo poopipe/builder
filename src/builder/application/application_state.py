@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
 from builder.io.mesh_import import MeshImporter
 from builder.meshes.mesh_catalog import MeshCatalog, default_mesh_catalog
 from builder.scene.scene_types import builtin_cube, MeshId
@@ -20,6 +21,7 @@ class ApplicationState:
     importer: MeshImporter = field(default_factory=MeshImporter)
     mesh_catalog: MeshCatalog = field(default_factory=default_mesh_catalog)
     heightmap_catalog: HeightmapCatalog = field(default_factory=HeightmapCatalog)
+    road_parts: RoadPartsCatalog = field(default_factory=RoadPartsCatalog)
     active_mesh_id: MeshId = builtin_cube
     scene_path: Path | None = None
     journal: SessionJournal = field(default_factory=SessionJournal)

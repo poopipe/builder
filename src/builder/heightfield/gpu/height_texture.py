@@ -111,9 +111,12 @@ def make_height_texture(
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
     composite_cache: Any,
+    *,
+    below_layer_index: int | None = None,
 ) -> tuple[HeightTexture, Any]:
     """build displace height texture via raw upload or gpu composite
 
+    below_layer_index: stack strictly under that edit layer
     second value is an optional r32 result target the caller must free
     """
     from builder.heightfield.gpu.composite import (
@@ -122,25 +125,42 @@ def make_height_texture(
     )
 
     cache: HeightCompositeCache = composite_cache
-    return composite_height_texture(cache, catalog, heightfield)
+    return composite_height_texture(
+        cache,
+        catalog,
+        heightfield,
+        below_layer_index=below_layer_index,
+    )
 
 
 def height_texture_key(
-    catalog: HeightmapCatalog, heightfield: Heightfield
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+    *,
+    below_layer_index: int | None = None,
 ) -> HeightTextureKey:
     """fingerprint used to decide when to rebuild the height texture"""
     from builder.heightfield.gpu.composite import composite_texture_key
 
-    return composite_texture_key(catalog, heightfield)
+    return composite_texture_key(
+        catalog, heightfield, below_layer_index=below_layer_index
+    )
 
 
 def height_texture_uniforms(
-    catalog: HeightmapCatalog, heightfield: Heightfield
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+    *,
+    below_layer_index: int | None = None,
 ) -> tuple[float, float]:
-    """scale/bias when no enabled edit layers; composite uses (1, 0)"""
-    enabled: bool = any(layer.enabled for layer in heightfield.edit_layers)
-    if enabled:
-        return (1.0, 0.0)
+    """scale/bias when no enabled edit layers in range; composite uses (1, 0)"""
+    layer_index: int
+    layer = None
+    for layer_index, layer in enumerate(heightfield.edit_layers):
+        if below_layer_index is not None and layer_index >= below_layer_index:
+            break
+        if layer.enabled:
+            return (1.0, 0.0)
     return base_height_scale_bias(
         heightfield, base_sample_type(catalog, heightfield)
     )

@@ -16,6 +16,7 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapId,
 )
 from builder.heightfield.paint import touch_heightmap_buffer
+from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
 from builder.heightfield.sample import sample_height_below
 from builder.heightfield.vector.coords import (
     ordered_child_nodes,
@@ -302,6 +303,8 @@ def regenerate_vector_sources(
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
     nodes: dict[str, Node],
+    *,
+    road_parts: RoadPartsCatalog | None = None,
 ) -> None:
     """re-rasterize every vector edit layer on a heightfield"""
     layer_index: int
@@ -350,6 +353,13 @@ def regenerate_vector_sources(
                 )
             case _:
                 pass
+    from builder.heightfield.road_sections.rasterize import (
+        regenerate_road_sections_sources,
+    )
+
+    regenerate_road_sections_sources(
+        catalog, heightfield, nodes, road_parts=road_parts
+    )
 
 
 def regenerate_vector_layer_for_node(

@@ -15,7 +15,10 @@ dependencies = [
 
 [tool.poetry]
 packages = [{include = "builder", from = "src"}]
-include = ["builder/assets/fonts/*.ttf"]
+include = [
+    "builder/assets/fonts/*.ttf",
+    "src/builder/heightfield/road_sections/road_kit_widths.json",
+]
 
 [tool.poetry.group.dev.dependencies]
 pyright = "^1.1.411"

@@ -229,8 +229,17 @@ def source_cache_key(
                 f"vector_road:{heightmap_id.name}:{layer_node_id}:"
                 f"{coverage_id.name}:{vr_rev}:{cov_rev}"
             )
-        case RoadSectionsHeightSource(layer_node_id=layer_node_id):
-            return f"road_sections:{layer_node_id}"
+        case RoadSectionsHeightSource(
+            heightmap_id=heightmap_id,
+            layer_node_id=layer_node_id,
+            coverage_id=coverage_id,
+        ):
+            rs_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            rs_cov_rev: int = int(catalog.paint_revisions.get(coverage_id, 0))
+            return (
+                f"road_sections:{heightmap_id.name}:{layer_node_id}:"
+                f"{coverage_id.name}:{rs_rev}:{rs_cov_rev}"
+            )
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -285,6 +294,8 @@ def upload_source_texture(
             key_prefix = f"vector_sculpt:{heightmap_id.name}:"
         case VectorRoadHeightSource(heightmap_id=heightmap_id):
             key_prefix = f"vector_road:{heightmap_id.name}:"
+        case RoadSectionsHeightSource(heightmap_id=heightmap_id):
+            key_prefix = f"road_sections:{heightmap_id.name}:"
         case _:
             key_prefix = None
     reusable: HeightTexture | None = None
@@ -308,6 +319,7 @@ def upload_source_texture(
             | VectorHeightSource(heightmap_id=heightmap_id)
             | VectorSculptHeightSource(heightmap_id=heightmap_id)
             | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
+            | RoadSectionsHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
@@ -416,8 +428,20 @@ def source_key_parts(
                 road_cov_rev,
                 0.0,
             )
-        case RoadSectionsHeightSource(layer_node_id=layer_node_id):
-            return (f"rs:{layer_node_id}", 0.0, 0.0)
+        case RoadSectionsHeightSource(
+            heightmap_id=heightmap_id,
+            layer_node_id=layer_node_id,
+            coverage_id=coverage_id,
+        ):
+            rs_rev: int = int(catalog.paint_revisions.get(heightmap_id, 0))
+            rs_cov_rev: float = float(
+                catalog.paint_revisions.get(coverage_id, 0)
+            )
+            return (
+                f"rs:{heightmap_id.name}:{layer_node_id}:{coverage_id.name}:{rs_rev}",
+                rs_cov_rev,
+                0.0,
+            )
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -425,9 +449,15 @@ def source_key_parts(
 
 
 def composite_texture_key(
-    catalog: HeightmapCatalog, heightfield: Heightfield
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+    *,
+    below_layer_index: int | None = None,
 ) -> HeightTextureKey:
-    """fingerprint for gpu composite / raw base"""
+    """fingerprint for gpu composite / raw base
+
+    below_layer_index: include only edit layers strictly below that index
+    """
     parts: list[tuple[str, float, float]] = []
     base_name: str = "" if heightfield.base is None else heightfield.base.name
     sample_type: HeightSampleType | None = base_sample_type(catalog, heightfield)
@@ -444,9 +474,12 @@ def composite_texture_key(
             float(heightfield.base_height_max.value) + base_rev * 1e-6,
         )
     )
+    layer_index: int
     layer: HeightEditLayer
     enabled: bool = False
-    for layer in heightfield.edit_layers:
+    for layer_index, layer in enumerate(heightfield.edit_layers):
+        if below_layer_index is not None and layer_index >= below_layer_index:
+            break
         if not layer.enabled:
             continue
         enabled = True
@@ -465,7 +498,12 @@ def composite_texture_key(
                 float(layer.offset),
             )
         )
-    mode: str = "composite" if enabled else "raw"
+    if below_layer_index is not None:
+        mode: str = f"below:{below_layer_index}"
+    elif enabled:
+        mode = "composite"
+    else:
+        mode = "raw"
     return HeightTextureKey(mode=mode, parts=tuple(parts))
 
 
@@ -567,15 +605,25 @@ def composite_height_texture(
     cache: HeightCompositeCache,
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
+    *,
+    below_layer_index: int | None = None,
 ) -> tuple[HeightTexture, R32RenderTarget | None]:
     """build displace height texture: raw base or gpu-composited edit stack
 
+    below_layer_index: stack strictly under that edit layer (shadow underlay)
     when compositing, returns a dedicated result target the caller must free
     """
-    key: HeightTextureKey = composite_texture_key(catalog, heightfield)
-    enabled_layers: list[HeightEditLayer] = [
-        layer for layer in heightfield.edit_layers if layer.enabled
-    ]
+    key: HeightTextureKey = composite_texture_key(
+        catalog, heightfield, below_layer_index=below_layer_index
+    )
+    enabled_layers: list[HeightEditLayer] = []
+    layer_index: int
+    layer: HeightEditLayer
+    for layer_index, layer in enumerate(heightfield.edit_layers):
+        if below_layer_index is not None and layer_index >= below_layer_index:
+            break
+        if layer.enabled:
+            enabled_layers.append(layer)
     if not enabled_layers:
         return (make_raw_base_texture(catalog, heightfield, key), None)
 
@@ -622,8 +670,6 @@ def composite_height_texture(
     layer: HeightEditLayer
     for layer in enabled_layers:
         match layer.height:
-            case RoadSectionsHeightSource():
-                continue
             case VectorSculptHeightSource():
                 layer_tex = upload_source_texture(cache, catalog, layer.height)
                 draw_blend_pass(
@@ -644,7 +690,9 @@ def composite_height_texture(
                 )
                 read_target, write_target = write_target, read_target
                 continue
-            case VectorRoadHeightSource(coverage_id=road_coverage_id):
+            case VectorRoadHeightSource(
+                coverage_id=road_coverage_id
+            ) | RoadSectionsHeightSource(coverage_id=road_coverage_id):
                 layer_tex = upload_source_texture(cache, catalog, layer.height)
                 road_cov_tex: Texture = upload_source_texture(
                     cache,

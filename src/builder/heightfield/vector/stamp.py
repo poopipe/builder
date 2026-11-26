@@ -93,13 +93,14 @@ def apply_road_weight(
         return
     if (
         context.ribbon_height_at_xz is None
-        or context.below_at_uv is None
         or context.coverage_samples is None
     ):
         return
     wx: float = (u - 0.5) * context.size_x
     wz: float = (v - 0.5) * context.size_z
-    below: float = context.below_at_uv(u, v)
+    below: float = 0.0
+    if context.below_at_uv is not None:
+        below = context.below_at_uv(u, v)
     target: float = float(context.ribbon_height_at_xz(wx, wz, below))
     mix: float = weight * max(0.0, min(1.0, float(context.intensity)))
     if mix <= 0.0:

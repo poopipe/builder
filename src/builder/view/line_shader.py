@@ -9,11 +9,13 @@ from typing import Any
 from pyray import (
     Color,
     Material,
+    MaterialMapIndex,
     Matrix,
     Mesh,
     Shader,
     ShaderLocationIndex,
     ShaderUniformDataType,
+    Texture,
     Vector2,
     draw_mesh,
     ffi,
@@ -45,12 +47,33 @@ out vec4 fragColor;
 uniform mat4 mvp;
 uniform vec2 resolution;
 uniform float depthBias;
+uniform sampler2D heightMap;
+uniform int useHeightMap;
+uniform vec2 fieldSize;
+uniform float heightScale;
+uniform float heightBias;
+
+vec3 drapePoint(vec3 p)
+{
+    if (useHeightMap == 0) {
+        return p;
+    }
+    float sx = max(fieldSize.x, 1e-8);
+    float sz = max(fieldSize.y, 1e-8);
+    vec2 uv = vec2((p.x + 0.5 * sx) / sx, (p.z + 0.5 * sz) / sz);
+    uv = clamp(uv, vec2(0.0), vec2(1.0));
+    float h = texture(heightMap, uv).r * heightScale + heightBias;
+    return vec3(p.x, h, p.z);
+}
+
 void main()
 {
     float side = vertexTexCoord.x;
     float thicknessPx = vertexTexCoord.y;
-    vec4 clip0 = mvp * vec4(vertexPosition, 1.0);
-    vec4 clip1 = mvp * vec4(vertexNormal, 1.0);
+    vec3 p0 = drapePoint(vertexPosition);
+    vec3 p1 = drapePoint(vertexNormal);
+    vec4 clip0 = mvp * vec4(p0, 1.0);
+    vec4 clip1 = mvp * vec4(p1, 1.0);
     vec2 screen0 = (clip0.xy / max(abs(clip0.w), 1e-6)) * resolution;
     vec2 screen1 = (clip1.xy / max(abs(clip1.w), 1e-6)) * resolution;
     vec2 dir = screen1 - screen0;
@@ -114,6 +137,21 @@ class LineShader:
     material: Material
     loc_resolution: int
     loc_depth_bias: int
+    loc_use_height_map: int
+    loc_field_size: int
+    loc_height_scale: int
+    loc_height_bias: int
+
+
+@dataclass(frozen=True)
+class LineHeightDrape:
+    """bind a height texture so shadow lines sample y in the vertex shader"""
+
+    texture: Texture
+    size_x: float
+    size_z: float
+    height_scale: float
+    height_bias: float
 
 
 def line_batch_buffer_counts(segment_count: int) -> tuple[int, int]:
@@ -171,6 +209,44 @@ def set_depth_bias(line: LineShader, bias: float) -> None:
     )
 
 
+def set_line_height_drape(line: LineShader, drape: LineHeightDrape | None) -> None:
+    """enable or disable heightMap y displace for the next line draws"""
+    if drape is None:
+        set_shader_value(
+            line.shader,
+            line.loc_use_height_map,
+            ffi.new("int *", 0),
+            ShaderUniformDataType.SHADER_UNIFORM_INT,
+        )
+        return
+    line.material.maps[MaterialMapIndex.MATERIAL_MAP_HEIGHT].texture = (
+        drape.texture
+    )
+    set_shader_value(
+        line.shader,
+        line.loc_use_height_map,
+        ffi.new("int *", 1),
+        ShaderUniformDataType.SHADER_UNIFORM_INT,
+    )
+    set_vec2(
+        line.shader,
+        line.loc_field_size,
+        Vector2(float(drape.size_x), float(drape.size_z)),
+    )
+    set_shader_value(
+        line.shader,
+        line.loc_height_scale,
+        ffi.new("float *", float(drape.height_scale)),
+        ShaderUniformDataType.SHADER_UNIFORM_FLOAT,
+    )
+    set_shader_value(
+        line.shader,
+        line.loc_height_bias,
+        ffi.new("float *", float(drape.height_bias)),
+        ShaderUniformDataType.SHADER_UNIFORM_FLOAT,
+    )
+
+
 def load_line_shader() -> LineShader:
     """compile the screen-space line shader"""
     shader: Shader = load_shader_from_memory(VS_SOURCE, FS_SOURCE)
@@ -179,15 +255,33 @@ def load_line_shader() -> LineShader:
     shader.locs[ShaderLocationIndex.SHADER_LOC_MATRIX_MVP] = get_shader_location(
         shader, "mvp"
     )
+    shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_HEIGHT] = get_shader_location(
+        shader, "heightMap"
+    )
     loc_resolution: int = get_shader_location(shader, "resolution")
     loc_depth_bias: int = get_shader_location(shader, "depthBias")
+    loc_use_height_map: int = get_shader_location(shader, "useHeightMap")
+    loc_field_size: int = get_shader_location(shader, "fieldSize")
+    loc_height_scale: int = get_shader_location(shader, "heightScale")
+    loc_height_bias: int = get_shader_location(shader, "heightBias")
     if (
         shader.locs[ShaderLocationIndex.SHADER_LOC_MATRIX_MVP] < 0
+        or shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_HEIGHT] < 0
         or loc_resolution < 0
         or loc_depth_bias < 0
+        or loc_use_height_map < 0
+        or loc_field_size < 0
+        or loc_height_scale < 0
+        or loc_height_bias < 0
     ):
         unload_shader(shader)
         raise RuntimeError("line shader is missing required uniforms")
+    set_shader_value(
+        shader,
+        shader.locs[ShaderLocationIndex.SHADER_LOC_MAP_HEIGHT],
+        ffi.new("int *", int(MaterialMapIndex.MATERIAL_MAP_HEIGHT)),
+        ShaderUniformDataType.SHADER_UNIFORM_INT,
+    )
     material: Material = load_material_default()
     material.shader = shader
     line: LineShader = LineShader(
@@ -195,8 +289,13 @@ def load_line_shader() -> LineShader:
         material=material,
         loc_resolution=loc_resolution,
         loc_depth_bias=loc_depth_bias,
+        loc_use_height_map=loc_use_height_map,
+        loc_field_size=loc_field_size,
+        loc_height_scale=loc_height_scale,
+        loc_height_bias=loc_height_bias,
     )
     set_depth_bias(line, 0.0)
+    set_line_height_drape(line, None)
     return line
 
 
@@ -417,11 +516,15 @@ def draw_line_mesh_cache(cache: LineMeshCache, line: LineShader) -> None:
 def draw_split_line_mesh_cache(
     cache: LineMeshCache,
     line: LineShader,
+    *,
+    shadow_drape: LineHeightDrape | None = None,
 ) -> None:
     """draw draped shadows with clip depth bias, then flat overlays"""
     if len(cache.shadow_meshes) > 0:
         set_depth_bias(line, line_shadow_depth_bias)
+        set_line_height_drape(line, shadow_drape)
         draw_uploaded_line_meshes(cache.shadow_meshes, line)
+        set_line_height_drape(line, None)
         set_depth_bias(line, 0.0)
     draw_uploaded_line_meshes(cache.flat_meshes, line)
 
@@ -431,11 +534,14 @@ def flush_line_batch(
     line: LineShader,
     *,
     depth_bias: float = 0.0,
+    height_drape: LineHeightDrape | None = None,
 ) -> None:
     """upload, draw once, and discard (uncached path)"""
     set_depth_bias(line, depth_bias)
+    set_line_height_drape(line, height_drape)
     meshes: list[UploadedLineMesh] = upload_line_batch(batch)
     draw_uploaded_line_meshes(meshes, line)
+    set_line_height_drape(line, None)
     set_depth_bias(line, 0.0)
     uploaded: UploadedLineMesh
     for uploaded in meshes:

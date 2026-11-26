@@ -17,7 +17,11 @@ from builder.heightfield.heightfield_types import (
     SculptHeightSource,
 )
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
-from builder.heightfield.sample import sample_height, sample_height_below
+from builder.heightfield.sample import (
+    sample_height,
+    sample_height_below,
+    sample_height_through,
+)
 from builder.heightfield.sculpt import (
     append_sculpt_edit_layer,
     set_sculpt_layer_mode,
@@ -117,6 +121,13 @@ class TestSculptLayerComposite(unittest.TestCase):
             # stack below sculpt = 5 + 4 = 9
             below = sample_height_below(catalog, heightfield, 1, 0.5, 0.5)
             self.assertAlmostEqual(below, 9.0)
+            # through bump layer (index 0) includes the bump
+            through0 = sample_height_through(catalog, heightfield, 0, 0.5, 0.5)
+            self.assertAlmostEqual(through0, 9.0)
+            # below bump excludes it
+            self.assertAlmostEqual(
+                sample_height_below(catalog, heightfield, 0, 0.5, 0.5), 5.0
+            )
             target: float = 9.0
             stamped, heightfield = stamp(
                 catalog,

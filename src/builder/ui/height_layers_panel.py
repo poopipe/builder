@@ -617,9 +617,12 @@ def update_height_layers_panel(
         )
 
         ui.clear_focus()
+        cache_dir = Path.cwd() / "heightmaps"
         updated, new_nodes = append_road_sections_edit_layer(
+            catalog,
             heightfield,
             group_id,
+            cache_dir=cache_dir,
         )
         host.add_nodes(new_nodes)
         set_heightfield(host, catalog, group_id, updated)
