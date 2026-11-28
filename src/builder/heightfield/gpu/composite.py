@@ -53,6 +53,7 @@ from builder.heightfield.gpu.height_texture import (
     HeightTexture,
     HeightTextureKey,
     release_height_texture,
+    update_height_texture_region,
     update_or_upload_height_texture,
     upload_height_texture,
 )
@@ -76,6 +77,7 @@ from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.heightmap_catalog import (
     HeightmapBuffer,
     HeightmapCatalog,
+    HeightmapId,
     ensure_heightmap_buffer,
 )
 from builder.heightfield.sample import (
@@ -108,6 +110,11 @@ class HeightCompositeCache:
     solid_zero: HeightTexture | None = None
     ping: R32RenderTarget | None = None
     pong: R32RenderTarget | None = None
+    # vector sculpt stamp (lazy); layers keyed by heightmap id name
+    sculpt_stamp: Any = None
+    sculpt_layers: dict[str, Any] = field(default_factory=dict)
+    sculpt_live: dict[str, R32RenderTarget] = field(default_factory=dict)
+    sculpt_seed_keepalives: dict[str, Any] = field(default_factory=dict)
 
 
 def create_height_composite_cache() -> HeightCompositeCache:
@@ -275,6 +282,14 @@ def upload_source_texture(
 ) -> Texture:
     """upload or reuse a source bitmap as an r32 texture"""
     ensure_solid_textures(cache)
+    # live gpu sculpt fbo skips cpu buffer upload
+    match source:
+        case VectorSculptHeightSource(heightmap_id=live_id):
+            live: R32RenderTarget | None = cache.sculpt_live.get(live_id.name)
+            if live is not None:
+                return live.texture
+        case _:
+            pass
     key: str = source_cache_key(catalog, source)
     existing: HeightTexture | None = cache.source_textures.get(key)
     if existing is not None:
@@ -311,6 +326,7 @@ def upload_source_texture(
     samples: list[float]
     width: int
     height: int
+    source_heightmap_id: HeightmapId | None = None
     match source:
         case (
             CatalogHeightSource(heightmap_id=heightmap_id)
@@ -321,6 +337,7 @@ def upload_source_texture(
             | VectorRoadHeightSource(heightmap_id=heightmap_id, coverage_id=_)
             | RoadSectionsHeightSource(heightmap_id=heightmap_id, coverage_id=_)
         ):
+            source_heightmap_id = heightmap_id
             buffer: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
             )
@@ -340,15 +357,47 @@ def upload_source_texture(
                     width = 1
                     height = 1
                     samples = [float(constant_value)]
-    uploaded: HeightTexture = update_or_upload_height_texture(
-        reusable,
-        width,
-        height,
-        samples,
-        HeightTextureKey(mode="source", parts=((key, 0.0, 0.0),)),
-        1.0,
-        0.0,
+    source_key: HeightTextureKey = HeightTextureKey(
+        mode="source", parts=((key, 0.0, 0.0),)
     )
+    uploaded: HeightTexture
+    dirty_rect: tuple[int, int, int, int] | None = None
+    has_dirty: bool = False
+    if source_heightmap_id is not None and (
+        source_heightmap_id in catalog.paint_dirty_rects
+    ):
+        dirty_rect = catalog.paint_dirty_rects.pop(source_heightmap_id)
+        has_dirty = True
+    if (
+        has_dirty
+        and dirty_rect is not None
+        and reusable is not None
+        and int(reusable.texture.width) == width
+        and int(reusable.texture.height) == height
+    ):
+        uploaded = update_height_texture_region(
+            reusable,
+            width,
+            height,
+            samples,
+            dirty_rect[0],
+            dirty_rect[1],
+            dirty_rect[2],
+            dirty_rect[3],
+            source_key,
+            1.0,
+            0.0,
+        )
+    else:
+        uploaded = update_or_upload_height_texture(
+            reusable,
+            width,
+            height,
+            samples,
+            source_key,
+            1.0,
+            0.0,
+        )
     # edit-layer / mask bitmaps tile under uv scale; fbo/solids stay clamp
     set_texture_wrap(uploaded.texture, TextureWrap.TEXTURE_WRAP_REPEAT)
     cache.source_textures[key] = uploaded
@@ -607,10 +656,12 @@ def composite_height_texture(
     heightfield: Heightfield,
     *,
     below_layer_index: int | None = None,
+    reusable_result: R32RenderTarget | None = None,
 ) -> tuple[HeightTexture, R32RenderTarget | None]:
     """build displace height texture: raw base or gpu-composited edit stack
 
     below_layer_index: stack strictly under that edit layer (shadow underlay)
+    reusable_result: prior per-entry fbo rewritten when size matches
     when compositing, returns a dedicated result target the caller must free
     """
     key: HeightTextureKey = composite_texture_key(
@@ -625,6 +676,7 @@ def composite_height_texture(
         if layer.enabled:
             enabled_layers.append(layer)
     if not enabled_layers:
+        release_r32_target(reusable_result)
         return (make_raw_base_texture(catalog, heightfield, key), None)
 
     ensure_solid_textures(cache)
@@ -708,7 +760,7 @@ def composite_height_texture(
                     read_target.texture,
                     layer_tex,
                     road_cov_tex,
-                    blend_mode=6,
+                    blend_mode=7,
                     use_mask=True,
                     opacity=float(layer.opacity.value),
                     layer_amp=1.0,
@@ -809,7 +861,16 @@ def composite_height_texture(
         read_target, write_target = write_target, read_target
 
     # copy out of shared scratch into a per-entry result target
-    result: R32RenderTarget = create_r32_target(width, height)
+    result: R32RenderTarget
+    if (
+        reusable_result is not None
+        and reusable_result.width == width
+        and reusable_result.height == height
+    ):
+        result = reusable_result
+    else:
+        release_r32_target(reusable_result)
+        result = create_r32_target(width, height)
     draw_blend_pass(
         cache,
         result,
@@ -837,6 +898,9 @@ def composite_height_texture(
 
 def unload_height_composite_cache(cache: HeightCompositeCache) -> None:
     """release composite shader, sources, and ping-pong targets"""
+    from builder.heightfield.gpu.sculpt_stamp import release_sculpt_layer_cache
+
+    release_sculpt_layer_cache(cache)
     key: str
     for key in list(cache.source_textures):
         uploaded: HeightTexture = cache.source_textures.pop(key)

@@ -9,6 +9,8 @@ from enum import IntEnum
 from math import radians
 from pathlib import Path
 
+from builder.heightfield.road_sections.kit_widths import PieceSnapPoints
+
 default_parts_roots: tuple[Path, ...] = (
     Path(r"P:\DZ\structures_bliss\roads"),
     Path(r"P:\DZ\structures\roads"),
@@ -27,11 +29,15 @@ re_end: re.Pattern[str] = re.compile(r"^(.+)_6end\d*$")
 re_curve: re.Pattern[str] = re.compile(r"^(.+)_curve$")
 re_digits: re.Pattern[str] = re.compile(r"^(.+)_(\d+)$")
 
+# kit used when usage has no explicit mapping
+default_usage_kit: str = "asf3"
+
 # usage class -> dayz kit name
 usage_to_kit: dict[str, str] = {
     "provincial": "asf1",
     "primary": "asf1",
     "trunk": "asf1",
+    "motorway": "asf1",
     "secondary": "asf2",
     "tertiary": "asf3",
     "residential": "city",
@@ -273,15 +279,15 @@ def straight_stem(kit: RoadKit, length_m: int) -> str:
 
 
 def kit_for_usage(usage: str) -> str | None:
-    """map a usage class to a default kit name"""
+    """explicit kit for a usage class, or none when unmapped"""
     return usage_to_kit.get(usage.strip().lower())
 
 
 def require_kit_for_usage(usage: str) -> str:
-    """default kit for a usage class; raises when unmapped"""
+    """default kit for a usage class; falls back to asf3 when unmapped"""
     kit_name: str | None = kit_for_usage(usage)
     if kit_name is None:
-        raise ValueError(f"no kit mapped for usage {usage!r}")
+        return default_usage_kit
     return kit_name
 
 
@@ -301,13 +307,17 @@ class RoadPartsCatalog:
     stem_length_m: dict[str, float] = field(default_factory=dict)
     stem_corners: dict[str, CornerPiece] = field(default_factory=dict)
     kit_width_m: dict[str, float] = field(default_factory=dict)
+    stem_snaps: dict[str, PieceSnapPoints] = field(default_factory=dict)
     loaded: bool = False
 
     def ensure_loaded(self, roots: Sequence[Path] | None = None) -> None:
         """scan parts roots once; missing roots are skipped"""
         if self.loaded:
             return
-        from builder.heightfield.road_sections.kit_widths import load_kit_widths
+        from builder.heightfield.road_sections.kit_widths import (
+            load_kit_widths,
+            load_piece_metrics,
+        )
 
         self.kits = build_kits(roots)
         lengths: dict[str, float] = {}
@@ -323,21 +333,43 @@ class RoadPartsCatalog:
                 corners[corner.stem] = corner
             if kit.terminator is not None:
                 lengths.setdefault(kit.terminator, 6.0)
-        self.stem_length_m = lengths
-        self.stem_corners = corners
+        snaps: dict[str, PieceSnapPoints] = {}
         try:
             self.kit_width_m = load_kit_widths()
+            metrics = load_piece_metrics()
+            stem: str
+            for stem, row in metrics.items():
+                if row.snap_points is not None:
+                    snaps[stem] = row.snap_points
+                measured: float | None = None
+                if row.snap_points is not None:
+                    measured = row.snap_points.length_m()
+                elif row.length_axis_m is not None:
+                    measured = row.length_axis_m
+                if measured is not None and measured > 0.5:
+                    # prefer measured packing length for straights / terminators
+                    if stem in lengths and stem not in corners:
+                        lengths[stem] = measured
         except FileNotFoundError:
             self.kit_width_m = {}
+        self.stem_length_m = lengths
+        self.stem_corners = corners
+        self.stem_snaps = snaps
         self.loaded = True
 
     def length_for_stem(self, stem: str) -> float:
-        """proxy length for a stem; default 6 m when unknown"""
+        """proxy / pack length for a stem; default 6 m when unknown"""
+        self.ensure_loaded()
         return self.stem_length_m.get(stem, 6.0)
 
     def corner_for_stem(self, stem: str) -> CornerPiece | None:
         """corner geometry for a stem, or none for straights/terminators"""
         return self.stem_corners.get(stem)
+
+    def snaps_for_stem(self, stem: str) -> PieceSnapPoints | None:
+        """lb/le/pb/pe mating points for a stem, or none"""
+        self.ensure_loaded()
+        return self.stem_snaps.get(stem)
 
     def width_for_kit(self, kit_name: str) -> float:
         """full road width metres for a kit; 6 m when catalogue has no entry"""

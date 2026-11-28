@@ -76,11 +76,13 @@ def ribbon_height_rectangle(
     z: float,
     points_abs_xzy: list[tuple[float, float, float]],
 ) -> float:
-    """absolute ribbon height for a rectangle from two opposite corners"""
+    """absolute ribbon height for a rectangle (two opposite or four oriented corners)"""
     if len(points_abs_xzy) == 0:
         return 0.0
     if len(points_abs_xzy) == 1:
         return points_abs_xzy[0][2]
+    if len(points_abs_xzy) >= 4:
+        return nearest_segment_lerp_y(x, z, points_abs_xzy, closed=True)
     ax: float
     az: float
     ay: float

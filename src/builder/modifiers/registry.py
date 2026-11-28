@@ -9,10 +9,12 @@ from builder.modifiers.modifier_types import ModifierSpec
 from builder.modifiers.modifier_template import template_translate_spec
 from builder.modifiers.noise_displace import noise_displace_spec
 from builder.modifiers.project_heightfield import project_heightfield_spec
+from builder.modifiers.scale_local import scale_local_spec
 
 modifier_specs: tuple[ModifierSpec, ...] = (
     noise_displace_spec,
     template_translate_spec,
+    scale_local_spec,
     project_heightfield_spec,
 )
 

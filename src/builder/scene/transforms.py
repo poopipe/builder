@@ -15,10 +15,15 @@ from pyray import (
     quaternion_invert,
     quaternion_multiply,
     quaternion_to_matrix,
+    vector3_add,
     vector3_length,
+    vector3_rotate_by_quaternion,
+    vector3_subtract,
+    vector3_transform,
 )
 
 from builder.scene.scene_types import Node, Quaternion
+from builder.scene.transform_ops import rotate_transform_world
 
 
 def transform_matrix(transform: Transform) -> Matrix:
@@ -79,6 +84,42 @@ def world_delta_to_local(
         matrix_invert(world_matrix(nodes, node.parent_id)),
         delta_world,
     )
+
+
+def rotate_nested_about_world_pivot(
+    nodes: Mapping[str, Node],
+    node_id: str,
+    start: Transform,
+    world_rotation_delta: Quaternion,
+    pivot: Vector3,
+) -> Transform:
+    """rotate a (possibly nested) start transform about a world-space pivot"""
+    node: Node = nodes[node_id]
+    if node.parent_id is None:
+        return rotate_transform_world(start, world_rotation_delta, pivot)
+    parent_world: Matrix = world_matrix(nodes, node.parent_id)
+    start_world: Matrix = matrix_multiply(
+        transform_matrix(start), parent_world
+    )
+    start_world_t: Vector3 = matrix_translation(start_world)
+    offset: Vector3 = vector3_subtract(start_world_t, pivot)
+    new_world_t: Vector3 = vector3_add(
+        pivot,
+        vector3_rotate_by_quaternion(offset, world_rotation_delta),
+    )
+    inv_parent: Matrix = matrix_invert(parent_world)
+    new_local_t: Vector3 = vector3_transform(new_world_t, inv_parent)
+    parent_rot: Quaternion = world_rotation(nodes, node.parent_id)
+    start_world_rot: Quaternion = quaternion_multiply(
+        parent_rot, start.rotation
+    )
+    new_world_rot: Quaternion = quaternion_multiply(
+        world_rotation_delta, start_world_rot
+    )
+    new_local_rot: Quaternion = quaternion_multiply(
+        quaternion_invert(parent_rot), new_world_rot
+    )
+    return Transform(new_local_t, new_local_rot, start.scale)
 
 
 def matrix_scale_lengths(matrix: Matrix) -> Vector3:

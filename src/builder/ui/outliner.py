@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from pyray import (
+    Color,
     Font,
     MouseButton,
     Rectangle,
@@ -26,6 +27,8 @@ from builder.generators.registry import get_spec
 from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node, NodeRole
+from builder.ui.color_palette import palette_color
+from builder.ui.color_palette_popup import make_color_palette_popup
 from builder.ui.text_field import (
     FieldId,
     TextAction,
@@ -54,6 +57,10 @@ outliner_panel: str = "outliner"
 outliner_row_height: float = float(ui_font_size) + 6.0
 outliner_indent: float = 14.0
 outliner_caret_width: float = 16.0
+outliner_swatch_size: float = 12.0
+outliner_visibility_width: float = 16.0
+outliner_chrome_gap: float = 4.0
+_empty_swatch: Color = Color(55, 58, 64, 255)
 
 
 @dataclass
@@ -65,10 +72,14 @@ class OutlinerRow:
     has_children: bool
     collapsed: bool
     rect: Rectangle
+    color_rect: Rectangle
+    visibility_rect: Rectangle
     caret_rect: Rectangle
     name_rect: Rectangle
     is_selected: bool
     is_parent_target: bool
+    visible: bool
+    color_index: int | None
     is_hovered: bool = False
 
 
@@ -223,6 +234,45 @@ def click_row(scene: Scene, ui: UiState, node: Node) -> None:
         scene.set_selection([node.id])
 
 
+def toggle_node_visible(scene: Scene, node: Node) -> None:
+    """flip a node's own visible flag; children keep theirs"""
+    scene.set_node(replace(node, visible=not node.visible))
+    if scene.journal is not None:
+        scene.journal.record(
+            "toggle_node_visible",
+            node_id=node.id,
+            visible=not node.visible,
+        )
+
+
+def open_node_color_palette(
+    ui: UiState, node: Node, swatch_rect: Rectangle
+) -> None:
+    """open the shared palette popup anchored near the row swatch"""
+    ui.color_palette = make_color_palette_popup(
+        owner_id=node.id,
+        selected_index=node.color_index,
+        anchor_x=swatch_rect.x,
+        anchor_y=swatch_rect.y + swatch_rect.height + 2.0,
+    )
+
+
+def set_node_color_index(
+    scene: Scene, node_id: str, color_index: int | None
+) -> None:
+    """assign or clear a node's palette color"""
+    node: Node | None = scene.nodes.get(node_id)
+    if node is None:
+        return
+    scene.set_node(replace(node, color_index=color_index))
+    if scene.journal is not None:
+        scene.journal.record(
+            "set_node_color",
+            node_id=node_id,
+            color_index=color_index,
+        )
+
+
 def update_outliner(
     scene: Scene,
     ui: UiState,
@@ -288,6 +338,12 @@ def update_outliner(
 
     parent_target: str | None = scene.first_selected()
     clicked: bool = is_mouse_button_pressed(MouseButton.MOUSE_BUTTON_LEFT)
+    chrome_w: float = (
+        outliner_swatch_size
+        + outliner_chrome_gap
+        + outliner_visibility_width
+        + outliner_chrome_gap
+    )
 
     rows: list[OutlinerRow] = []
     y: float = list_top - ui.outliner_scroll
@@ -297,12 +353,26 @@ def update_outliner(
     for node, depth, has_children in flat:
         rect: Rectangle = Rectangle(area.x, y, area.width, outliner_row_height)
         indent_x: float = area.x + ui_pad + depth * outliner_indent
+        swatch_y: float = y + (outliner_row_height - outliner_swatch_size) * 0.5
+        color_rect: Rectangle = Rectangle(
+            indent_x,
+            swatch_y,
+            outliner_swatch_size,
+            outliner_swatch_size,
+        )
+        visibility_rect: Rectangle = Rectangle(
+            indent_x + outliner_swatch_size + outliner_chrome_gap,
+            y,
+            outliner_visibility_width,
+            outliner_row_height,
+        )
+        caret_x: float = indent_x + chrome_w
         caret_rect: Rectangle = (
-            Rectangle(indent_x, y, outliner_caret_width, outliner_row_height)
+            Rectangle(caret_x, y, outliner_caret_width, outliner_row_height)
             if has_children
             else Rectangle(0.0, 0.0, 0.0, 0.0)
         )
-        name_x: float = indent_x + outliner_caret_width
+        name_x: float = caret_x + outliner_caret_width
         name_rect: Rectangle = Rectangle(
             name_x,
             y,
@@ -317,18 +387,26 @@ def update_outliner(
             has_children=has_children,
             collapsed=node.id in ui.outliner_collapsed,
             rect=rect,
+            color_rect=color_rect,
+            visibility_rect=visibility_rect,
             caret_rect=caret_rect,
             name_rect=name_rect,
             is_selected=node.id in scene.selected_ids,
             is_parent_target=node.id == parent_target,
+            visible=node.visible,
+            color_index=node.color_index,
             is_hovered=is_point_in_rect(mouse.x, mouse.y, rect),
         )
-        visible: bool = (
+        row_visible: bool = (
             rect.y + rect.height > list_rect.y
             and rect.y < list_rect.y + list_rect.height
         )
-        if clicked and pointer_in_list and visible and row.is_hovered:
-            if has_children and is_point_in_rect(mouse.x, mouse.y, caret_rect):
+        if clicked and pointer_in_list and row_visible and row.is_hovered:
+            if is_point_in_rect(mouse.x, mouse.y, color_rect):
+                open_node_color_palette(ui, node, color_rect)
+            elif is_point_in_rect(mouse.x, mouse.y, visibility_rect):
+                toggle_node_visible(scene, node)
+            elif has_children and is_point_in_rect(mouse.x, mouse.y, caret_rect):
                 toggle_collapsed(ui, node.id)
             else:
                 click_row(scene, ui, node)
@@ -376,7 +454,7 @@ def draw_outliner(
 
 
 def draw_outliner_row(font: Font, ui: UiState, row: OutlinerRow) -> None:
-    """draw one tree row: caret, name (or rename field), and mesh summary"""
+    """draw one tree row: swatch, visibility, caret, name, mesh summary"""
     if row.is_selected:
         draw_rectangle_rec(row.rect, ui_color_selection)
     elif row.is_hovered:
@@ -384,8 +462,22 @@ def draw_outliner_row(font: Font, ui: UiState, row: OutlinerRow) -> None:
     if row.is_parent_target:
         draw_rectangle_lines_ex(row.rect, 2.0, ui_color_input_focus)
 
+    swatch: Color | None = palette_color(row.color_index)
+    draw_rectangle_rec(
+        row.color_rect, swatch if swatch is not None else _empty_swatch
+    )
+    draw_rectangle_lines_ex(row.color_rect, 1.0, ui_color_border)
+
     size: float = float(ui_font_size)
     ty: float = row.rect.y + (row.rect.height - size) * 0.5
+    draw_text_ex(
+        font,
+        "o" if row.visible else "-",
+        Vector2(row.visibility_rect.x + 2.0, ty),
+        size,
+        0,
+        ui_color_text if row.visible else ui_color_border,
+    )
     if row.has_children:
         draw_text_ex(
             font,

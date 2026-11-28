@@ -68,6 +68,8 @@ class FileBrowserPurpose(IntEnum):
     export_heightmap = 4
     import_road_shp = 5
     import_heightfield_albedo = 6
+    export_tb_roads = 7
+    import_tb_objects = 8
 
 
 class FileBrowserCancel(IntEnum):
@@ -169,6 +171,10 @@ def browser_title(purpose: FileBrowserPurpose) -> str:
             return "Import road shapefile"
         case FileBrowserPurpose.import_heightfield_albedo:
             return "Set heightfield albedo"
+        case FileBrowserPurpose.export_tb_roads:
+            return "Export TB road objects"
+        case FileBrowserPurpose.import_tb_objects:
+            return "Import TB objects"
 
 
 def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
@@ -188,6 +194,10 @@ def browser_confirm_label(purpose: FileBrowserPurpose) -> str:
             return "Import"
         case FileBrowserPurpose.import_heightfield_albedo:
             return "Set"
+        case FileBrowserPurpose.export_tb_roads:
+            return "Export"
+        case FileBrowserPurpose.import_tb_objects:
+            return "Import"
 
 
 def make_open_browser(
@@ -265,6 +275,26 @@ def make_heightfield_albedo_browser(directory: Path) -> FileBrowserState:
         directory,
         (".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp"),
         purpose=FileBrowserPurpose.import_heightfield_albedo,
+    )
+
+
+def make_tb_roads_export_browser(
+    directory: Path,
+    initial_name: str = "import_roads.txt",
+) -> FileBrowserState:
+    """save-mode browser; chosen path's parent receives import_<kit>.txt files"""
+    return make_save_browser(
+        directory,
+        ".txt",
+        initial_name,
+        purpose=FileBrowserPurpose.export_tb_roads,
+    )
+
+
+def make_tb_objects_browser(directory: Path) -> FileBrowserState:
+    """open-mode browser for a terrain builder object-import .txt"""
+    return make_open_browser(
+        directory, ".txt", purpose=FileBrowserPurpose.import_tb_objects
     )
 
 

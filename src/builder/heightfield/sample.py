@@ -310,7 +310,8 @@ def apply_edit_layer_height(
             road_buf: HeightmapBuffer | None = ensure_heightmap_buffer(
                 catalog, heightmap_id
             )
-            absolute: float = (
+            # absolute buffer stores premultiplied height (h*cov)
+            absolute_pre: float = (
                 0.0
                 if road_buf is None
                 else sample_buffer(road_buf, layer_u, layer_v, wrap=True)
@@ -324,7 +325,7 @@ def apply_edit_layer_height(
                     cov_buf, layer_u, layer_v, wrap=True
                 )
             road_mix: float = clamp01(road_coverage) * opacity
-            return accum * (1.0 - road_mix) + absolute * road_mix
+            return accum * (1.0 - road_mix) + absolute_pre * opacity
         case _:
             raw: float = sample_source(
                 catalog, layer.height, layer_u, layer_v, missing=0.0, wrap=True

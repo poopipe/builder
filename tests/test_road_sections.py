@@ -18,6 +18,7 @@ from builder.heightfield.road_sections.edit import (
     import_road_shp,
 )
 from builder.heightfield.road_sections.overlay import (
+    road_overlay_content_sig,
     road_sections_overlay_cache_key,
     selected_usage_group_ids,
     usage_overlay_color,
@@ -61,8 +62,10 @@ class TestClassifyRoadUsage(unittest.TestCase):
         self.assertEqual(classify_road_usage("primary", ""), "primary")
         self.assertEqual(classify_road_usage("unfiltered", "trunk"), "trunk")
         self.assertEqual(classify_road_usage("", "residential"), "residential")
-        self.assertIsNone(classify_road_usage("raceway", ""))
-        self.assertIsNone(classify_road_usage("", "unknown_class"))
+        self.assertEqual(classify_road_usage("raceway", ""), "raceway")
+        self.assertEqual(classify_road_usage("", "motorway"), "motorway")
+        self.assertEqual(classify_road_usage("", "unknown_class"), "unknown_class")
+        self.assertEqual(classify_road_usage("", ""), "unknown")
 
     def test_usage_colors_differ_for_road_vs_path(self) -> None:
         primary = usage_overlay_color("primary")
@@ -74,7 +77,7 @@ class TestClassifyRoadUsage(unittest.TestCase):
 
 
 class TestUsageOverlayFilter(unittest.TestCase):
-    def test_usage_selection_isolates_group(self) -> None:
+    def test_usage_selection_targets_shadows_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             shp: Path = write_fixture_shp(Path(tmp))
             heightfield = default_heightfield()
@@ -88,17 +91,26 @@ class TestUsageOverlayFilter(unittest.TestCase):
             imported: list[Node] = import_road_shp(
                 layer.id, shp, heightfield
             )
-            nodes: dict[str, Node] = {layer.id: layer}
+            assert layer.parent_id is not None
+            hf_root: Node = Node(
+                id=layer.parent_id,
+                parent_id=None,
+                transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                mesh_id=None,
+            )
+            nodes: dict[str, Node] = {hf_root.id: hf_root, layer.id: layer}
             for node in imported:
                 nodes[node.id] = node
-            usage = next(
+            usages: list[Node] = [
                 node
                 for node in imported
                 if node.road_usage_group is not None
-            )
+            ]
+            usage = usages[0]
             shp_node = next(
                 node for node in imported if node.road_shp is not None
             )
+            # selected usage ids name shadow targets only
             self.assertEqual(
                 selected_usage_group_ids(nodes, layer.id, [usage.id]),
                 {usage.id},
@@ -109,6 +121,20 @@ class TestUsageOverlayFilter(unittest.TestCase):
             self.assertIsNone(
                 selected_usage_group_ids(nodes, layer.id, [layer.id])
             )
+            # flat overlay content always includes every visible usage
+            all_sig = road_overlay_content_sig(nodes, layer.id, None)
+            filtered_sig = road_overlay_content_sig(
+                nodes, layer.id, {usage.id}
+            )
+            self.assertEqual(len(all_sig), len(usages))
+            self.assertGreater(len(all_sig), len(filtered_sig))
+            cache_all = road_sections_overlay_cache_key(
+                "hf1", layer.id, None, 0.0, nodes
+            )
+            cache_usage = road_sections_overlay_cache_key(
+                "hf1", layer.id, {usage.id}, 0.0, nodes
+            )
+            self.assertEqual(cache_all[4], cache_usage[4])
 
     def test_overlay_cache_key_includes_height_only_when_draping(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -148,6 +174,7 @@ class TestUsageOverlayFilter(unittest.TestCase):
             )
             self.assertIsNone(all_key[2])
             self.assertEqual(usage_key[2], (usage.id,))
+            self.assertEqual(all_key[4], usage_key[4])
             self.assertEqual(
                 road_sections_overlay_cache_key(
                     "hf1",
@@ -319,7 +346,7 @@ class TestRoadSectionsImport(unittest.TestCase):
                 if node.road_usage_group is not None
             }
             self.assertEqual(usage_names, {"primary", "footway"})
-            self.assertEqual(scene_format_version, 39)
+            self.assertEqual(scene_format_version, 41)
             document: SceneDocument = SceneDocument(
                 version=scene_format_version,
                 active_mesh_id=builtin_cube,
@@ -345,7 +372,7 @@ class TestRoadSectionsImport(unittest.TestCase):
             )
             text: str = dumps_document(document, {}, {}, {})
             loaded, _warnings = loads_document(text)
-            self.assertEqual(loaded.version, 39)
+            self.assertEqual(loaded.version, 40)
 
 
 if __name__ == "__main__":

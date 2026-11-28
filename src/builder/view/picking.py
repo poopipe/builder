@@ -9,6 +9,7 @@ from pyray import BoundingBox, Ray, RayCollision, get_ray_collision_box
 from builder.scene.bounds import transform_bounding_box
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
+from builder.scene.visibility import node_effectively_visible
 from builder.view.draw_cache import DrawCache, sync_draw_cache, world_matrix_for
 from builder.view.mesh_table import MeshTable
 from builder.view.prepare_mesh import PreparedMesh
@@ -34,6 +35,8 @@ def pick_nearest_mesh_node(
     node: Node
     for node in scene.all_nodes():
         if node.mesh_id is None:
+            continue
+        if not node_effectively_visible(scene.nodes, node.id):
             continue
         if not mesh_table.has_mesh(node.mesh_id):
             continue

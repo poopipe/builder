@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from math import atan2, ceil, cos, degrees, hypot, radians, sin, tan
 
+from builder.heightfield.road_sections.kit_widths import PieceSnapPoints
 from builder.heightfield.road_sections.part_catalog import (
     CornerPiece,
     RoadKit,
@@ -349,11 +350,13 @@ def fill_straights(
     start_d: float,
     end_d: float,
     yaw: float,
+    *,
+    length_for_stem: Callable[[str], float] | None = None,
 ) -> list[FittedPiece]:
     """place straights spanning [start_d, end_d] with slight overlap if needed
 
-    chooses lengths that meet/slightly exceed the span, then spaces centers so
-    the first piece starts at start_d and the last ends at end_d
+    chooses declared stems that meet/slightly exceed the span, then spaces
+    centers using measured stem lengths when length_for_stem is provided.
     """
     pieces: list[FittedPiece] = []
     if not kit.straights_m:
@@ -365,30 +368,36 @@ def fill_straights(
     if not lengths:
         return pieces
 
-    total: float = float(sum(lengths))
-    n: int = len(lengths)
+    stems: list[str] = [straight_stem(kit, length) for length in lengths]
+    measured: list[float] = []
+    stem: str
+    length: int
+    for stem, length in zip(stems, lengths, strict=True):
+        if length_for_stem is not None:
+            measured.append(max(float(length_for_stem(stem)), 0.5))
+        else:
+            measured.append(float(length))
+
+    total: float = float(sum(measured))
+    n: int = len(measured)
     centers: list[float] = []
     if n == 1:
         centers.append(0.5 * (start_d + end_d))
     elif total <= span + 1e-9:
-        # end-to-end from start (may leave a tiny end gap on fallback)
         cursor: float = start_d
-        length: int
-        for length in lengths:
-            centers.append(cursor + float(length) * 0.5)
-            cursor += float(length)
+        meas: float
+        for meas in measured:
+            centers.append(cursor + meas * 0.5)
+            cursor += meas
     else:
-        # distribute overshoot as uniform joint overlap
         overshoot: float = total - span
         joint_overlap: float = overshoot / float(n - 1)
-        cursor = start_d + float(lengths[0]) * 0.5
+        cursor = start_d + measured[0] * 0.5
         centers.append(cursor)
         i: int
         for i in range(n - 1):
             step: float = (
-                float(lengths[i]) * 0.5
-                + float(lengths[i + 1]) * 0.5
-                - joint_overlap
+                measured[i] * 0.5 + measured[i + 1] * 0.5 - joint_overlap
             )
             cursor += step
             centers.append(cursor)
@@ -400,7 +409,7 @@ def fill_straights(
         x, z, _ = point_at(pts, centers[i])
         pieces.append(
             FittedPiece(
-                stem=straight_stem(kit, lengths[i]),
+                stem=stems[i],
                 x=x,
                 z=z,
                 yaw_deg=yaw,
@@ -438,6 +447,40 @@ def corner_placement_yaw_deg(
     if clockwise:
         return entry_yaw_deg % 360.0
     return (entry_yaw_deg + 180.0 - angle_deg) % 360.0
+
+
+def corner_mesh_travel_entry_local(
+    corner: CornerPiece, *, clockwise: bool
+) -> tuple[float, float]:
+    """mesh-local xz that maps to travel entry under placement yaw"""
+    # cw: mesh begin. ccw y-spin: mesh end runs at travel entry
+    t: float = 0.0 if clockwise else 1.0
+    return corner_local_centerline_xz(corner, t)
+
+
+def corner_snap_origin_delta_local(
+    corner: CornerPiece,
+    snaps: PieceSnapPoints,
+    *,
+    clockwise: bool,
+) -> tuple[float, float]:
+    """mid-arc local → snap/mesh origin: ideal_entry - snap_entry
+
+    placement at mid-arc M becomes P = M + R(yaw)*delta so travel entry lands
+    on the planned fillet entry when the real mesh origin is used.
+    """
+    ideal_x: float
+    ideal_z: float
+    ideal_x, ideal_z = corner_mesh_travel_entry_local(
+        corner, clockwise=clockwise
+    )
+    snap_x: float
+    snap_z: float
+    if clockwise:
+        snap_x, snap_z = snaps.begin_mid_xz()
+    else:
+        snap_x, snap_z = snaps.end_mid_xz()
+    return ideal_x - snap_x, ideal_z - snap_z
 
 
 def apply_yaw_xz(
@@ -478,11 +521,14 @@ def place_corner_stack_arc(
     entry_z: float,
     yaw_in: float,
     stack: list[tuple[CornerPiece, float]],
+    *,
+    snaps_for_stem: Callable[[str], PieceSnapPoints | None] | None = None,
 ) -> tuple[list[FittedPiece], float, float, float]:
     """place corner prefabs along arcs; returns pieces and exit x, z, yaw
 
     stack pairs are (corner, roll_flag) with roll_flag 0=cw / 180=ccw for planning;
-    stored placement uses roll=0 and a y-spin yaw for ccw.
+    stored yaw is y-spin for display/export; roll 0/180 is chirality only (not
+    applied as mesh roll). position uses snap/mesh origin when snaps exist.
     """
     pieces: list[FittedPiece] = []
     ex: float = entry_x
@@ -508,15 +554,32 @@ def place_corner_stack_arc(
         mz: float
         mx, mz = rotate_cw(ex - cx, ez - cz, half)
         mx, mz = cx + mx, cz + mz
+        yaw_deg: float = corner_placement_yaw_deg(
+            h, corner.angle_deg, clockwise=clockwise
+        )
+        px: float = mx
+        pz: float = mz
+        if snaps_for_stem is not None:
+            snaps: PieceSnapPoints | None = snaps_for_stem(corner.stem)
+            if snaps is not None:
+                dx: float
+                dz: float
+                dx, dz = corner_snap_origin_delta_local(
+                    corner, snaps, clockwise=clockwise
+                )
+                ox: float
+                oz: float
+                ox, oz = apply_yaw_xz(0.0, 0.0, yaw_deg, dx, dz)
+                px = mx + ox
+                pz = mz + oz
         pieces.append(
             FittedPiece(
                 stem=corner.stem,
-                x=mx,
-                z=mz,
-                yaw_deg=corner_placement_yaw_deg(
-                    h, corner.angle_deg, clockwise=clockwise
-                ),
-                roll_deg=0.0,
+                x=px,
+                z=pz,
+                yaw_deg=yaw_deg,
+                # chirality flag only; mesh transform / tb export keep roll 0
+                roll_deg=0.0 if clockwise else 180.0,
             )
         )
         full: float = sign * corner.angle_deg
@@ -532,28 +595,46 @@ def fill_straights_between(
     start: tuple[float, float],
     end: tuple[float, float],
     kit: RoadKit,
+    *,
+    length_for_stem: Callable[[str], float] | None = None,
 ) -> tuple[list[FittedPiece], tuple[float, float]]:
     """pack straights along the chord; returns pieces and where the pack ends"""
     span: float = hypot(end[0] - start[0], end[1] - start[1])
     if span < 0.5:
         return [], start
     yaw: float = heading(start, end)
-    pieces: list[FittedPiece] = fill_straights([start, end], kit, 0.0, span, yaw)
+    pieces: list[FittedPiece] = fill_straights(
+        [start, end],
+        kit,
+        0.0,
+        span,
+        yaw,
+        length_for_stem=length_for_stem,
+    )
     if not pieces:
         return [], start
-    lengths: list[int] = choose_straight_lengths(span, kit.straights_m)
-    total: float = float(sum(lengths))
+    measured_total: float
+    if length_for_stem is not None:
+        measured_total = 0.0
+        for piece in pieces:
+            measured_total += max(float(length_for_stem(piece.stem)), 0.5)
+    else:
+        declared: list[int] = choose_straight_lengths(span, kit.straights_m)
+        measured_total = float(sum(declared))
     ux: float
     uz: float
     ux, uz = heading_unit(yaw)
-    if len(lengths) == 1:
+    if len(pieces) == 1:
         mid_x: float = 0.5 * (start[0] + end[0])
         mid_z: float = 0.5 * (start[1] + end[1])
-        half: float = total * 0.5
+        half: float = measured_total * 0.5
         return pieces, (mid_x + half * ux, mid_z + half * uz)
-    if total <= span + 1e-9:
+    if measured_total <= span + 1e-9:
         # under-cover / exact: pack runs end-to-end from start
-        return pieces, (start[0] + total * ux, start[1] + total * uz)
+        return pieces, (
+            start[0] + measured_total * ux,
+            start[1] + measured_total * uz,
+        )
     # overshoot: last piece ends on the target junction
     return pieces, end
 
@@ -668,8 +749,14 @@ def fit_polyline_pieces(
     kit: RoadKit,
     *,
     min_length_m: float = 6.0,
+    length_for_stem: Callable[[str], float] | None = None,
+    snaps_for_stem: Callable[[str], PieceSnapPoints | None] | None = None,
 ) -> list[FittedPiece]:
-    """fit straights between fillets; merge curves when the gap is too short"""
+    """fit straights between fillets; merge curves when the gap is too short
+
+    length_for_stem / snaps_for_stem calibrate packing and corner origins to
+    measured mesh frames when provided.
+    """
     pts = simplify_polyline(dedupe_pts(pts), simplify_eps_m)
     if len(pts) < 2:
         return []
@@ -707,7 +794,12 @@ def fit_polyline_pieces(
         if corner_at_end is None:
             filled: list[FittedPiece]
             pack_end: tuple[float, float]
-            filled, pack_end = fill_straights_between(pos, pts[i + 1], kit)
+            filled, pack_end = fill_straights_between(
+                pos,
+                pts[i + 1],
+                kit,
+                length_for_stem=length_for_stem,
+            )
             pieces.extend(filled)
             pos = pack_end if filled else pts[i + 1]
             from_fillet = False
@@ -727,10 +819,19 @@ def fit_polyline_pieces(
         if from_fillet and gap_should_merge_curves(gap, kit):
             # absorb short / stubby inter-fillet gap: continue arcs from exit
             corner_pieces, exit_x, exit_z, exit_yaw = place_corner_stack_arc(
-                pos[0], pos[1], exit_yaw, stack
+                pos[0],
+                pos[1],
+                exit_yaw,
+                stack,
+                snaps_for_stem=snaps_for_stem,
             )
         else:
-            filled, pack_end = fill_straights_between(pos, entry, kit)
+            filled, pack_end = fill_straights_between(
+                pos,
+                entry,
+                kit,
+                length_for_stem=length_for_stem,
+            )
             pieces.extend(filled)
             # short under-cover: start the corner at the pack end (mild reshape)
             corner_x: float = entry_x
@@ -741,14 +842,23 @@ def fit_polyline_pieces(
             if filled and 0.05 < leftover < merge_span:
                 corner_x, corner_z = pack_end
             corner_pieces, exit_x, exit_z, exit_yaw = place_corner_stack_arc(
-                corner_x, corner_z, yaw_in, stack
+                corner_x,
+                corner_z,
+                yaw_in,
+                stack,
+                snaps_for_stem=snaps_for_stem,
             )
         pieces.extend(corner_pieces)
         pos = (exit_x, exit_z)
         from_fillet = True
 
     if hypot(pos[0] - pts[-1][0], pos[1] - pts[-1][1]) > 0.5:
-        filled, pack_end = fill_straights_between(pos, pts[-1], kit)
+        filled, pack_end = fill_straights_between(
+            pos,
+            pts[-1],
+            kit,
+            length_for_stem=length_for_stem,
+        )
         pieces.extend(filled)
         pos = pack_end if filled else pts[-1]
 
@@ -783,11 +893,13 @@ def fitted_centerline_xz(
     *,
     length_for_stem: Callable[[str], float],
     corner_for_stem: Callable[[str], CornerPiece | None],
+    snaps_for_stem: Callable[[str], PieceSnapPoints | None] | None = None,
     step_m: float = 2.0,
 ) -> list[tuple[float, float]]:
     """densified centerline through fitted piece geometry (entry→exit)
 
     corners follow the cw mesh under placement yaw (ccw uses the reverse yaw-spin).
+    when snaps exist, piece xz is the mesh origin so mid-arc locals are shifted.
     """
     spacing: float = max(0.5, step_m)
     out: list[tuple[float, float]] = []
@@ -797,6 +909,15 @@ def fitted_centerline_xz(
         if corner is not None:
             arc_len: float = float(corner.arc_length_m)
             steps: int = max(2, int(ceil(arc_len / spacing)))
+            dx: float = 0.0
+            dz: float = 0.0
+            if snaps_for_stem is not None:
+                snaps: PieceSnapPoints | None = snaps_for_stem(piece.stem)
+                if snaps is not None:
+                    clockwise: bool = abs(piece.roll_deg) < 90.0
+                    dx, dz = corner_snap_origin_delta_local(
+                        corner, snaps, clockwise=clockwise
+                    )
             seg: list[tuple[float, float]] = []
             sample: int
             for sample in range(steps + 1):
@@ -805,7 +926,13 @@ def fitted_centerline_xz(
                 lz: float
                 lx, lz = corner_local_centerline_xz(corner, t)
                 seg.append(
-                    apply_yaw_xz(piece.x, piece.z, piece.yaw_deg, lx, lz)
+                    apply_yaw_xz(
+                        piece.x,
+                        piece.z,
+                        piece.yaw_deg,
+                        lx - dx,
+                        lz - dz,
+                    )
                 )
             # ccw y-spin runs the cw mesh reverse; keep travel continuity
             if out and hypot(

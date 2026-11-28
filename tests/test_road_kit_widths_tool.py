@@ -81,6 +81,8 @@ class TestRoadKitWidthsTool(unittest.TestCase):
         self.assertEqual(len(kits), 1)
         self.assertEqual(kits[0].kit, "asf1")
         self.assertEqual(kits[0].straight_count, 3)
+        self.assertIsNotNone(kits[0].width_m)
+        assert kits[0].width_m is not None
         self.assertAlmostEqual(kits[0].width_m, 10.0)
 
 

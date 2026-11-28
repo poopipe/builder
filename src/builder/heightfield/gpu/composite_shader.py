@@ -68,6 +68,9 @@ void main()
         outHeight = mix(a, min(a, b), m);
     } else if (blendMode == 6) {
         outHeight = mix(a, b, m);
+    } else if (blendMode == 7) {
+        // premultiplied absolute (b = h*cov); m = opacity*cov
+        outHeight = a * (1.0 - m) + b * opacity;
     }
     finalColor = vec4(outHeight, 0.0, 0.0, 1.0);
 }

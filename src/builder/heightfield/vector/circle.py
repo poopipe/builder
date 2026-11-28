@@ -8,6 +8,7 @@ from math import hypot
 from builder.generators.param_types import FloatParam
 from builder.heightfield.vector.stamp import (
     apply_weighted_sample,
+    clip_texel_range,
     path_stroke_weight,
     soft_band_weight,
     world_aabb_to_texel_range,
@@ -71,11 +72,16 @@ def circle_rasterize(
     )
     if ranges is None:
         return
+    clipped: tuple[int, int, int, int] | None = clip_texel_range(
+        ranges[0], ranges[1], ranges[2], ranges[3], context
+    )
+    if clipped is None:
+        return
     x0: int
     x1: int
     y0: int
     y1: int
-    x0, x1, y0, y1 = ranges
+    x0, x1, y0, y1 = clipped
     inv_w: float = 1.0 / float(context.width)
     inv_h: float = 1.0 / float(context.height)
     match context.apply_mode:

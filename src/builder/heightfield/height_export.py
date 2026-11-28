@@ -77,6 +77,8 @@ def write_height_export_meta(
     size_z: float,
     height_min: float,
     height_max: float,
+    origin_x: float = 0.0,
+    origin_z: float = 0.0,
 ) -> None:
     """write {stem}_meta.json beside an exported height file"""
     meta_path: Path = path.parent / f"{path.stem}_meta.json"
@@ -87,10 +89,15 @@ def write_height_export_meta(
             "cell_size_m": cell_size_m,
             "world_size_m_x": size_x,
             "world_size_m_z": size_z,
+            "origin_x": origin_x,
+            "origin_z": origin_z,
         },
         "elevation_m": {"min": height_min, "max": height_max},
         "coordinates": {
-            "png_asc_origin": "row 0 = north (max z), column 0 = west (x = 0)",
+            "png_asc_origin": (
+                "row 0 = north (max z), column 0 = west "
+                f"(x = {origin_x}, z = {origin_z})"
+            ),
         },
     }
     meta_path.write_text(
@@ -104,6 +111,8 @@ def write_height_asc(
     *,
     size_x: float,
     size_z: float,
+    origin_x: float = 0.0,
+    origin_z: float = 0.0,
 ) -> None:
     """write ESRI ASCII grid (metres, north-first) and sidecar meta"""
     if buffer.width < 1 or buffer.height < 1:
@@ -113,8 +122,8 @@ def write_height_asc(
     lines: list[str] = [
         f"ncols         {buffer.width}",
         f"nrows         {buffer.height}",
-        "xllcorner     0.0",
-        "yllcorner     0.0",
+        f"xllcorner     {origin_x:.6f}",
+        f"yllcorner     {origin_z:.6f}",
         f"cellsize      {cellsize}",
         "NODATA_value  -9999.0",
     ]
@@ -133,6 +142,8 @@ def write_height_asc(
         size_z=size_z,
         height_min=buffer.sample_min,
         height_max=buffer.sample_max,
+        origin_x=origin_x,
+        origin_z=origin_z,
     )
 
 
@@ -160,6 +171,8 @@ def write_height_png_u16(
     *,
     size_x: float,
     size_z: float,
+    origin_x: float = 0.0,
+    origin_z: float = 0.0,
 ) -> None:
     """write 16-bit gray png (north-first) and sidecar meta with elevation bounds"""
     if buffer.width < 1 or buffer.height < 1:
@@ -182,6 +195,8 @@ def write_height_png_u16(
         size_z=size_z,
         height_min=height_min,
         height_max=height_max,
+        origin_x=origin_x,
+        origin_z=origin_z,
     )
 
 
@@ -194,12 +209,28 @@ def export_composited_height(
     buffer: HeightmapBuffer = composite_height_buffer(catalog, heightfield)
     size_x: float = float(heightfield.size_x.value)
     size_z: float = float(heightfield.size_z.value)
+    origin_x: float = float(heightfield.origin_x.value)
+    origin_z: float = float(heightfield.origin_z.value)
     suffix: str = path.suffix.lower()
     match suffix:
         case ".asc":
-            write_height_asc(path, buffer, size_x=size_x, size_z=size_z)
+            write_height_asc(
+                path,
+                buffer,
+                size_x=size_x,
+                size_z=size_z,
+                origin_x=origin_x,
+                origin_z=origin_z,
+            )
         case ".png":
-            write_height_png_u16(path, buffer, size_x=size_x, size_z=size_z)
+            write_height_png_u16(
+                path,
+                buffer,
+                size_x=size_x,
+                size_z=size_z,
+                origin_x=origin_x,
+                origin_z=origin_z,
+            )
         case _:
             raise ValueError(f"unsupported height export suffix {suffix!r}")
     return buffer

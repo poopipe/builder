@@ -11,6 +11,7 @@ from pyray import (
     CameraProjection,
     Color,
     KeyboardKey,
+    Matrix,
     MouseButton,
     Ray,
     Rectangle,
@@ -50,6 +51,7 @@ from builder.heightfield.gpu import (
 )
 from builder.heightfield.sculpt_stroke import draw_sculpt_brush_preview
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.paint import tick_deferred_gpu_flush
 from builder.heightfield.pick import HeightfieldPickHit, pick_nearest_heightfield
 from builder.heightfield.vector.circle_handle import (
     CircleRadiusDrag,
@@ -67,10 +69,23 @@ from builder.heightfield.road_sections.place import (
     drop_placements,
     regenerate_road_piece_children,
 )
+from builder.heightfield.road_sections.rasterize import (
+    dirty_aabb_for_road_endpoints,
+)
+from builder.heightfield.road_sections.road_sections_types import RoadEndpointRef
 from builder.heightfield.road_sections.vertex_drag import (
     RoadVertexDrag,
     apply_road_vertex_drag,
     pick_road_vertex_drag,
+)
+from builder.heightfield.road_sections.vertex_gizmo import (
+    RoadVertexAxisDrag,
+    apply_road_vertex_axis_drag,
+    dragged_polyline_ids,
+    draw_road_vertex_move_gizmo,
+    hf_local_xz_axes,
+    pick_road_vertex_axis_drag,
+    selection_pivot_world,
 )
 from builder.heightfield.vector.overlay import draw_vector_overlays
 from builder.heightfield.vector.pick import (
@@ -78,7 +93,11 @@ from builder.heightfield.vector.pick import (
     pick_nearest_vector_point,
 )
 from builder.ui.ui_state import UiState
-from builder.heightfield.vector.rasterize import regenerate_vectors_touching
+from builder.heightfield.vector.rasterize import (
+    dirty_aabb_for_vector_nodes,
+    regenerate_vectors_touching,
+    union_aabb,
+)
 from builder.heightfield.vector.road_handle import (
     RoadHeightDrag,
     apply_road_height_drag,
@@ -117,11 +136,13 @@ from builder.view.gizmo import (
     gizmo_axis_directions,
     gizmo_size,
     hit_test_gizmo,
+    selection_is_vector_workplane_nodes,
     selection_pivot,
     selection_rotation,
     snap_vector_points_to_plane,
+    vector_shape_rotate_pivot_and_axes,
 )
-from builder.view.gizmo_types import GizmoAxis
+from builder.view.gizmo_types import GizmoAxis, GizmoMode
 from builder.view.grid import draw_ground_grid
 from builder.view.instances import draw_nodes_instanced
 from builder.view.lighting import Lighting
@@ -218,12 +239,61 @@ class Viewport:
 
         self.show_grid: bool = True
         self.show_heightfield_wireframe: bool = False
+        self.show_sea_plane: bool = True
         self.dragging_orbit: bool = False
         self.dragging_pan: bool = False
         self.circle_radius_drag: CircleRadiusDrag | None = None
         self.road_height_drag: RoadHeightDrag | None = None
         self.road_vertex_drag: RoadVertexDrag | None = None
+        self.road_vertex_axis_drag: RoadVertexAxisDrag | None = None
+        # stamp footprint before a vector edit (unioned with post-edit dirty)
+        self.vector_edit_prior_dirty: (
+            tuple[float, float, float, float] | None
+        ) = None
+        self.road_vertex_prior_dirty: (
+            tuple[float, float, float, float] | None
+        ) = None
         self.last_mouse: Vector2 = Vector2(0.0, 0.0)
+
+    def begin_vector_edit_dirty(self, node_ids: list[str]) -> None:
+        """snapshot shape stamp aabbs before a vector transform/radius edit"""
+        self.vector_edit_prior_dirty = dirty_aabb_for_vector_nodes(
+            self.nodes.nodes, node_ids
+        )
+
+    def begin_road_vertex_edit_dirty(
+        self,
+        usage_group_id: str,
+        endpoints: Sequence[RoadEndpointRef],
+        road_parts: RoadPartsCatalog | None,
+    ) -> None:
+        """snapshot ribbon neighborhoods before a road vertex move"""
+        usage = self.nodes.nodes.get(usage_group_id)
+        if usage is None or usage.road_usage_group is None:
+            self.road_vertex_prior_dirty = None
+            return
+        self.road_vertex_prior_dirty = dirty_aabb_for_road_endpoints(
+            usage.road_usage_group,
+            endpoints,
+            road_parts=road_parts,
+        )
+
+    def finish_vector_edit_dirty(
+        self,
+        heightmap_catalog: HeightmapCatalog,
+        node_ids: list[str],
+    ) -> None:
+        """regen vector layers with prior∪current dirty, then clear prior"""
+        prior = self.vector_edit_prior_dirty
+        self.vector_edit_prior_dirty = None
+        regenerate_vectors_touching(
+            heightmap_catalog,
+            self.nodes.nodes,
+            node_ids,
+            prior_dirty_aabb=prior,
+            defer_gpu=True,
+            heightfield_gpu=self.heightfield_gpu,
+        )
 
     def apply_orbit(self) -> None:
         pitch: float = max(-89.0, min(89.0, self.orbit.pitch))
@@ -253,6 +323,10 @@ class Viewport:
     def toggle_heightfield_wireframe(self) -> None:
         """toggle heightfield solid vs wireframe draw"""
         self.show_heightfield_wireframe = not self.show_heightfield_wireframe
+
+    def toggle_sea_plane(self) -> None:
+        """toggle sea plane visibility"""
+        self.show_sea_plane = not self.show_sea_plane
 
     def add_nodes(self, nodes: Sequence[Node]) -> None:
         """insert or replace scene nodes"""
@@ -473,27 +547,33 @@ class Viewport:
         )
         return True
 
-    def commit_road_vertex_drag(
+    def commit_road_vertex_move(
         self,
-        drag: RoadVertexDrag,
+        usage_group_id: str,
+        polyline_ids: Sequence[str],
         heightmap_catalog: HeightmapCatalog,
         road_parts: RoadPartsCatalog | None,
+        *,
+        endpoints: Sequence[RoadEndpointRef] | None = None,
     ) -> None:
         """drop stale placements, journal, rebuild pieces (ribbon if flatten)"""
-        usage: Node | None = self.nodes.nodes.get(drag.usage_group_id)
-        if usage is None or usage.road_usage_group is None:
+        if not polyline_ids:
+            self.road_vertex_prior_dirty = None
             return
-        cleared = drop_placements(
-            usage.road_usage_group, [drag.endpoint.polyline_id]
-        )
-        self.nodes.add_nodes([set_usage_group_on_node(usage, cleared)])
-        usage = self.nodes.nodes.get(drag.usage_group_id)
+        usage: Node | None = self.nodes.nodes.get(usage_group_id)
         if usage is None or usage.road_usage_group is None:
+            self.road_vertex_prior_dirty = None
+            return
+        cleared = drop_placements(usage.road_usage_group, list(polyline_ids))
+        self.nodes.add_nodes([set_usage_group_on_node(usage, cleared)])
+        usage = self.nodes.nodes.get(usage_group_id)
+        if usage is None or usage.road_usage_group is None:
+            self.road_vertex_prior_dirty = None
             return
         if road_parts is not None:
             regenerate_road_piece_children(
                 self.nodes,
-                drag.usage_group_id,
+                usage_group_id,
                 road_parts,
                 has_mesh=self.has_mesh,
                 register_mesh=self.register_mesh,
@@ -505,18 +585,31 @@ class Viewport:
                 regenerate_road_sections_touching,
             )
 
+            prior = self.road_vertex_prior_dirty
+            self.road_vertex_prior_dirty = None
+            current_dirty = None
+            if endpoints is not None:
+                current_dirty = dirty_aabb_for_road_endpoints(
+                    usage.road_usage_group,
+                    endpoints,
+                    road_parts=road_parts,
+                )
+            dirty = union_aabb(prior, current_dirty)
             regenerate_road_sections_touching(
                 heightmap_catalog,
                 self.nodes.nodes,
-                [drag.usage_group_id],
+                [usage_group_id],
                 road_parts=road_parts,
+                dirty_world_aabb=dirty,
+                defer_gpu=True,
             )
+        else:
+            self.road_vertex_prior_dirty = None
         if self.nodes.journal is not None:
             self.nodes.journal.record(
                 "move_road_vertex",
-                usage_group_id=drag.usage_group_id,
-                polyline_id=drag.endpoint.polyline_id,
-                vertex_index=drag.endpoint.vertex_index,
+                usage_group_id=usage_group_id,
+                polyline_ids=list(polyline_ids),
             )
 
     def handle_input(
@@ -555,12 +648,14 @@ class Viewport:
                     else []
                 )
                 road_vertex: RoadVertexDrag | None = self.road_vertex_drag
+                road_axis: RoadVertexAxisDrag | None = self.road_vertex_axis_drag
                 if dragged:
                     snap_vector_points_to_plane(self.nodes, dragged)
                 end_gizmo_drag(self.gizmo)
                 self.circle_radius_drag = None
                 self.road_height_drag = None
                 self.road_vertex_drag = None
+                self.road_vertex_axis_drag = None
                 if dragged:
                     self.record_gizmo_commit(dragged)
                     regenerate_splines_touching(
@@ -568,20 +663,34 @@ class Viewport:
                         dragged,
                         heightmap_catalog=heightmap_catalog,
                     )
-                    regenerate_vectors_touching(
-                        heightmap_catalog, self.nodes.nodes, dragged
+                    self.finish_vector_edit_dirty(
+                        heightmap_catalog, dragged
                     )
                 elif radius_shape_ids:
-                    regenerate_vectors_touching(
-                        heightmap_catalog, self.nodes.nodes, radius_shape_ids
+                    self.finish_vector_edit_dirty(
+                        heightmap_catalog, radius_shape_ids
                     )
                 elif road_point_ids:
-                    regenerate_vectors_touching(
-                        heightmap_catalog, self.nodes.nodes, road_point_ids
+                    self.finish_vector_edit_dirty(
+                        heightmap_catalog, road_point_ids
+                    )
+                elif road_axis is not None:
+                    self.commit_road_vertex_move(
+                        road_axis.usage_group_id,
+                        dragged_polyline_ids(road_axis),
+                        heightmap_catalog,
+                        road_parts,
+                        endpoints=[
+                            start.endpoint for start in road_axis.starts
+                        ],
                     )
                 elif road_vertex is not None:
-                    self.commit_road_vertex_drag(
-                        road_vertex, heightmap_catalog, road_parts
+                    self.commit_road_vertex_move(
+                        road_vertex.usage_group_id,
+                        [road_vertex.endpoint.polyline_id],
+                        heightmap_catalog,
+                        road_parts,
+                        endpoints=[road_vertex.endpoint],
                     )
             return
 
@@ -598,8 +707,8 @@ class Viewport:
                     self.circle_radius_drag.shape_id
                 ]
                 self.circle_radius_drag = None
-                regenerate_vectors_touching(
-                    heightmap_catalog, self.nodes.nodes, release_radius_ids
+                self.finish_vector_edit_dirty(
+                    heightmap_catalog, release_radius_ids
                 )
             return
 
@@ -615,8 +724,30 @@ class Viewport:
                     self.road_height_drag.point_id
                 ]
                 self.road_height_drag = None
-                regenerate_vectors_touching(
-                    heightmap_catalog, self.nodes.nodes, release_road_ids
+                self.finish_vector_edit_dirty(
+                    heightmap_catalog, release_road_ids
+                )
+            return
+
+        if self.road_vertex_axis_drag is not None:
+            if is_mouse_button_down(MouseButton.MOUSE_BUTTON_LEFT):
+                apply_road_vertex_axis_drag(
+                    self.nodes,
+                    self.road_vertex_axis_drag,
+                    ray,
+                    self.camera.position,
+                )
+            if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
+                finished_axis: RoadVertexAxisDrag = self.road_vertex_axis_drag
+                self.road_vertex_axis_drag = None
+                self.commit_road_vertex_move(
+                    finished_axis.usage_group_id,
+                    dragged_polyline_ids(finished_axis),
+                    heightmap_catalog,
+                    road_parts,
+                    endpoints=[
+                        start.endpoint for start in finished_axis.starts
+                    ],
                 )
             return
 
@@ -628,15 +759,39 @@ class Viewport:
             if is_mouse_button_released(MouseButton.MOUSE_BUTTON_LEFT):
                 finished: RoadVertexDrag = self.road_vertex_drag
                 self.road_vertex_drag = None
-                self.commit_road_vertex_drag(
-                    finished, heightmap_catalog, road_parts
+                self.commit_road_vertex_move(
+                    finished.usage_group_id,
+                    [finished.endpoint.polyline_id],
+                    heightmap_catalog,
+                    road_parts,
+                    endpoints=[finished.endpoint],
                 )
             return
 
         pivot: Vector3 | None = selection_pivot(self.nodes, self.nodes.selected_ids)
         axes: dict[GizmoAxis, Vector3] | None = None
         size: float = 1.0
-        if pivot is not None:
+        plane_handle: bool = (
+            self.gizmo.mode is GizmoMode.translate
+            and selection_is_vector_workplane_nodes(
+                self.nodes, self.nodes.selected_ids
+            )
+        )
+        if (
+            self.gizmo.mode is GizmoMode.rotate
+            and selection_is_vector_workplane_nodes(
+                self.nodes, self.nodes.selected_ids
+            )
+        ):
+            shape_gizmo: tuple[Vector3, dict[GizmoAxis, Vector3]] | None = (
+                vector_shape_rotate_pivot_and_axes(
+                    self.nodes, self.nodes.selected_ids
+                )
+            )
+            if shape_gizmo is not None:
+                pivot, axes = shape_gizmo
+                size = gizmo_size(self.camera, pivot)
+        elif pivot is not None:
             rotation: Quaternion = selection_rotation(
                 self.nodes, self.nodes.selected_ids
             )
@@ -644,6 +799,7 @@ class Viewport:
                 gizmo_axis_directions(self.gizmo.space, rotation),
                 self.nodes,
                 self.nodes.selected_ids,
+                self.gizmo.mode,
             )
             size = gizmo_size(self.camera, pivot)
 
@@ -658,6 +814,7 @@ class Viewport:
                 list(self.nodes.selected_ids),
             )
             if radius_drag is not None:
+                self.begin_vector_edit_dirty([radius_drag.shape_id])
                 self.circle_radius_drag = radius_drag
                 return
             height_drag: RoadHeightDrag | None = pick_road_height_handle(
@@ -669,9 +826,10 @@ class Viewport:
                 list(self.nodes.selected_ids),
             )
             if height_drag is not None:
+                self.begin_vector_edit_dirty([height_drag.point_id])
                 self.road_height_drag = height_drag
                 return
-            # drag only an already-selected vertex; otherwise fall through to pick
+            # axis gizmo then free cube drag on already-selected vertices
             if (
                 ui.road_polyline_usage_group_id is not None
                 and ui.road_polyline_ids
@@ -681,6 +839,23 @@ class Viewport:
                     or is_key_down(KeyboardKey.KEY_RIGHT_CONTROL)
                 )
             ):
+                axis_drag: RoadVertexAxisDrag | None = (
+                    pick_road_vertex_axis_drag(
+                        self.nodes.nodes,
+                        ray,
+                        self.camera,
+                        ui.road_polyline_usage_group_id,
+                        ui.road_endpoints,
+                    )
+                )
+                if axis_drag is not None:
+                    self.begin_road_vertex_edit_dirty(
+                        axis_drag.usage_group_id,
+                        [start.endpoint for start in axis_drag.starts],
+                        road_parts,
+                    )
+                    self.road_vertex_axis_drag = axis_drag
+                    return
                 vertex_drag: RoadVertexDrag | None = pick_road_vertex_drag(
                     self.nodes.nodes,
                     ray,
@@ -700,6 +875,11 @@ class Viewport:
                         for endpoint in ui.road_endpoints
                     )
                     if selected_vertex:
+                        self.begin_road_vertex_edit_dirty(
+                            vertex_drag.usage_group_id,
+                            [vertex_drag.endpoint],
+                            road_parts,
+                        )
                         self.road_vertex_drag = vertex_drag
                         return
 
@@ -724,9 +904,7 @@ class Viewport:
                     dragged,
                     heightmap_catalog=heightmap_catalog,
                 )
-                regenerate_vectors_touching(
-                    heightmap_catalog, self.nodes.nodes, dragged
-                )
+                self.finish_vector_edit_dirty(heightmap_catalog, dragged)
             return
 
         if not block_left_click and (
@@ -735,9 +913,17 @@ class Viewport:
             and axes is not None
         ):
             handle: GizmoAxis | None = hit_test_gizmo(
-                self.gizmo, ray, pivot, axes, size
+                self.gizmo,
+                ray,
+                pivot,
+                axes,
+                size,
+                plane_handle=plane_handle,
             )
             if handle is not None:
+                self.begin_vector_edit_dirty(
+                    list(self.nodes.selected_ids)
+                )
                 begin_gizmo_drag(
                     self.gizmo,
                     self.nodes,
@@ -825,6 +1011,7 @@ class Viewport:
         road_parts: RoadPartsCatalog | None = None,
     ) -> None:
         """render the 3D scene into the viewport rectangle using scissor"""
+        tick_deferred_gpu_flush(heightmap_catalog)
         begin_scissor_mode(
             int(view_rect.x),
             int(view_rect.y),
@@ -851,6 +1038,7 @@ class Viewport:
                 self.lighting,
                 self.camera.position,
                 wireframe=self.show_heightfield_wireframe,
+                show_sea=self.show_sea_plane,
             )
         node: Node
         for node in self.nodes.nodes.values():
@@ -866,11 +1054,15 @@ class Viewport:
                     self.nodes.selected_ids,
                     heightfield_gpu=self.heightfield_gpu,
                 )
-                live_road_ids: list[str] = (
-                    [self.road_vertex_drag.endpoint.polyline_id]
-                    if self.road_vertex_drag is not None
-                    else []
-                )
+                live_road_ids: list[str] = []
+                if self.road_vertex_axis_drag is not None:
+                    live_road_ids = dragged_polyline_ids(
+                        self.road_vertex_axis_drag
+                    )
+                elif self.road_vertex_drag is not None:
+                    live_road_ids = [
+                        self.road_vertex_drag.endpoint.polyline_id
+                    ]
                 draw_road_sections_overlays(
                     heightmap_catalog,
                     self.nodes.nodes,
@@ -881,6 +1073,8 @@ class Viewport:
                     self.nodes.selected_ids,
                     ui.road_polyline_ids,
                     ui.road_endpoints,
+                    camera=self.camera,
+                    viewport_height_px=float(view_rect.height),
                     road_parts=road_parts,
                     live_polyline_ids=live_road_ids,
                     heightfield_gpu=self.heightfield_gpu,
@@ -895,21 +1089,62 @@ class Viewport:
                 sculpt_preview_center, sculpt_preview_radius
             )
         pivot: Vector3 | None = selection_pivot(self.nodes, self.nodes.selected_ids)
-        if pivot is not None:
+        draw_axes: dict[GizmoAxis, Vector3] | None = None
+        draw_plane_handle: bool = (
+            self.gizmo.mode is GizmoMode.translate
+            and selection_is_vector_workplane_nodes(
+                self.nodes, self.nodes.selected_ids
+            )
+        )
+        if (
+            self.gizmo.mode is GizmoMode.rotate
+            and selection_is_vector_workplane_nodes(
+                self.nodes, self.nodes.selected_ids
+            )
+        ):
+            shape_draw: tuple[Vector3, dict[GizmoAxis, Vector3]] | None = (
+                vector_shape_rotate_pivot_and_axes(
+                    self.nodes, self.nodes.selected_ids
+                )
+            )
+            if shape_draw is not None:
+                pivot, draw_axes = shape_draw
+        elif pivot is not None:
             rotation: Quaternion = selection_rotation(
                 self.nodes, self.nodes.selected_ids
             )
-            axes: dict[GizmoAxis, Vector3] = filter_gizmo_axes_for_selection(
+            draw_axes = filter_gizmo_axes_for_selection(
                 gizmo_axis_directions(self.gizmo.space, rotation),
                 self.nodes,
                 self.nodes.selected_ids,
+                self.gizmo.mode,
             )
+        if pivot is not None and draw_axes is not None:
             draw_gizmo(
                 self.gizmo,
                 pivot,
-                axes,
+                draw_axes,
                 gizmo_size(self.camera, pivot),
+                plane_handle=draw_plane_handle,
             )
+        if (
+            ui.road_polyline_usage_group_id is not None
+            and ui.road_endpoints
+        ):
+            vertex_context = selection_pivot_world(
+                self.nodes.nodes,
+                ui.road_polyline_usage_group_id,
+                ui.road_endpoints,
+            )
+            if vertex_context is not None:
+                vertex_pivot: Vector3
+                hf_world_gizmo: Matrix
+                vertex_pivot, hf_world_gizmo, _, _ = vertex_context
+                draw_road_vertex_move_gizmo(
+                    self.camera,
+                    vertex_pivot,
+                    hf_local_xz_axes(hf_world_gizmo),
+                )
         rl_draw_render_batch_active()
         rl_enable_depth_test()
 

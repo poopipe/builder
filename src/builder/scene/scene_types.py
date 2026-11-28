@@ -64,6 +64,10 @@ class Node:
     path_point: PathPointRecipe | None = None
     name: str = ""
     role: NodeRole = NodeRole.none
+    # own flag; ancestors gate effective visibility without rewriting children
+    visible: bool = True
+    # index into the shared outliner/viewport palette; none = default look
+    color_index: int | None = None
 
 
 def transform_at(translation: Vector3) -> Transform:

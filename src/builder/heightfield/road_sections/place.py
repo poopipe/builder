@@ -92,7 +92,10 @@ def place_polylines(
         if polyline is None:
             raise ValueError(f"unknown polyline {polyline_id!r}")
         fitted: list[FittedPiece] = fit_polyline_pieces(
-            list(polyline.points), kit
+            list(polyline.points),
+            kit,
+            length_for_stem=catalog.length_for_stem,
+            snaps_for_stem=catalog.snaps_for_stem,
         )
         piece: FittedPiece
         for piece in fitted:
@@ -103,6 +106,7 @@ def place_polylines(
                     x=piece.x,
                     z=piece.z,
                     yaw_deg=piece.yaw_deg,
+                    # chirality flag only; mesh / tb keep roll 0
                     roll_deg=piece.roll_deg,
                 )
             )
@@ -229,7 +233,8 @@ def regenerate_road_piece_children(
                         x,
                         z,
                         placement.yaw_deg,
-                        placement.roll_deg,
+                        # roll on placement is chirality only; mesh stays +Y up
+                        0.0,
                         y=y,
                         pitch_deg=0.0,
                     ),

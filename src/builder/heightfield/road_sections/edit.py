@@ -31,6 +31,7 @@ from builder.heightfield.road_sections.road_sections_types import (
     RoadUsageGroupRecipe,
     polyline_by_id,
     road_endpoint_snap_m,
+    road_sections_raster_max,
 )
 from builder.heightfield.road_sections.shp_import import (
     ImportedRoadPart,
@@ -53,6 +54,8 @@ def append_road_sections_edit_layer(
     width: int
     height: int
     width, height = paint_resolution_for_heightfield(catalog, heightfield)
+    width = min(width, road_sections_raster_max)
+    height = min(height, road_sections_raster_max)
     heightmap_id: HeightmapId = create_paint_heightmap(
         catalog,
         label=f"{label} Raster",
@@ -261,6 +264,60 @@ def delete_polylines(
         if placement.polyline_id in kept_ids
     )
     return replace(group, polylines=tuple(kept), placements=placements)
+
+
+def move_polylines_between_groups(
+    source: RoadUsageGroupRecipe,
+    dest: RoadUsageGroupRecipe,
+    polyline_ids: Sequence[str],
+) -> tuple[RoadUsageGroupRecipe, RoadUsageGroupRecipe]:
+    """move polylines by id from source to dest; placements for those ids are dropped"""
+    move_ids: set[str] = set(polyline_ids)
+    if not move_ids:
+        return source, dest
+    moving: list[RoadPolyline] = [
+        polyline for polyline in source.polylines if polyline.id in move_ids
+    ]
+    if not moving:
+        return source, dest
+    moved_ids: set[str] = {polyline.id for polyline in moving}
+    source_kept: list[RoadPolyline] = [
+        polyline for polyline in source.polylines if polyline.id not in moved_ids
+    ]
+    source_placements = tuple(
+        placement
+        for placement in source.placements
+        if placement.polyline_id not in moved_ids
+    )
+    dest_polylines: list[RoadPolyline] = [
+        polyline for polyline in dest.polylines if polyline.id not in moved_ids
+    ]
+    dest_polylines.extend(moving)
+    dest_placements = tuple(
+        placement
+        for placement in dest.placements
+        if placement.polyline_id not in moved_ids
+    )
+    return (
+        replace(
+            source,
+            polylines=tuple(source_kept),
+            placements=source_placements,
+        ),
+        replace(
+            dest,
+            polylines=tuple(dest_polylines),
+            placements=dest_placements,
+        ),
+    )
+
+
+def normalize_usage_name(name: str) -> str:
+    """strip and lowercase a usage label; empty raises"""
+    cleaned: str = name.strip().lower()
+    if not cleaned:
+        raise ValueError("usage name is empty")
+    return cleaned
 
 
 def simplify_polylines(

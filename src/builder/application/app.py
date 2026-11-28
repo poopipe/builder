@@ -44,10 +44,12 @@ from builder.application.application_state import ApplicationState
 from builder.commands.commands_types import CommandEntry, CommandItem
 from builder.commands.file import (
     apply_export_heightmap_path,
+    apply_export_tb_roads_path,
     apply_import_heightfield_albedo_path,
     apply_import_heightmap_path,
     apply_import_mesh_path,
     apply_import_road_shp_path,
+    apply_import_tb_objects_path,
     apply_open_scene_path,
     apply_save_scene_path,
     cmd_import_mesh,
@@ -74,6 +76,24 @@ from builder.ui.file_browser import (
     draw_file_browser,
     update_file_browser,
 )
+from builder.ui.color_palette_popup import (
+    ColorPaletteCancel,
+    ColorPaletteClear,
+    ColorPaletteFrameResult,
+    ColorPaletteSwatch,
+    draw_color_palette_popup,
+    update_color_palette_popup,
+)
+from builder.ui.list_picker import (
+    ListPickerCancel,
+    ListPickerFrameResult,
+    ListPickerPurpose,
+    ListPickerRow,
+    draw_list_picker,
+    list_picker_new_item,
+    update_list_picker,
+)
+from builder.ui.outliner import set_node_color_index
 from builder.ui.font import load_app_font, unload_app_font
 from builder.ui.inspector import (
     ParamRowRects,
@@ -86,6 +106,9 @@ from builder.heightfield.road_sections.pick import (
 )
 from builder.ui.road_sections_inspector import (
     RoadSectionsInspectorLayout,
+    apply_move_polylines_to_usage,
+    apply_road_kit_choice,
+    begin_move_usage_name,
     draw_road_sections_inspector,
     selected_road_sections_layer,
     update_road_sections_inspector,
@@ -221,8 +244,13 @@ def dropped_path_string(raw: Any) -> str:
 
 
 def apply_text_exit_key(ui: UiState) -> None:
-    """disable window-close-on-escape while typing or a file dialog is open"""
-    if ui.focus is not None or ui.file_browser is not None:
+    """disable window-close-on-escape while typing or a modal dialog is open"""
+    if (
+        ui.focus is not None
+        or ui.file_browser is not None
+        or ui.list_picker is not None
+        or ui.color_palette is not None
+    ):
         set_exit_key(0)
     else:
         set_exit_key(KeyboardKey.KEY_ESCAPE)
@@ -356,8 +384,12 @@ class Application:
             right_width=right_width,
         )
 
-        browser_open: bool = self.ui.file_browser is not None
-        if not browser_open:
+        modal_open: bool = (
+            self.ui.file_browser is not None
+            or self.ui.list_picker is not None
+            or self.ui.color_palette is not None
+        )
+        if not modal_open:
             resized_left: float
             resized_right: float
             resized_left, resized_right = update_dock_resize(
@@ -406,7 +438,7 @@ class Application:
             min_width=float(ui_button_min_width),
             font_size=float(ui_font_size),
         )
-        if not browser_open:
+        if not modal_open:
             update_buttons(menu_buttons, layout.menu)
 
         snap_bar: SnapBarRects | None = None
@@ -418,7 +450,7 @@ class Application:
         move_buttons: list[Button] = []
         view_bar: ViewDistanceBarRects | None = None
         view_buttons: list[Button] = []
-        if not browser_open:
+        if not modal_open:
             menu_right: float = float(ui_pad)
             if menu_buttons:
                 last_menu: Button = menu_buttons[-1]
@@ -499,12 +531,12 @@ class Application:
                 gap=float(ui_button_gap),
                 button_height=float(ui_button_height),
             )
-            if not browser_open:
+            if not modal_open:
                 update_buttons(panel_buttons, left_content)
 
         outliner_rows: list[OutlinerRow] = []
         outliner_buttons: list[Button] = []
-        if active_left is DockPanel.outliner and not browser_open:
+        if active_left is DockPanel.outliner and not modal_open:
             sync_outliner_focus(self.scene.nodes, self.ui)
             outliner_rows, outliner_buttons = update_outliner(
                 self.scene.nodes,
@@ -518,7 +550,7 @@ class Application:
 
         mesh_rows: list[MeshRow] = []
         mesh_buttons: list[Button] = []
-        if active_right is DockPanel.meshes and not browser_open:
+        if active_right is DockPanel.meshes and not modal_open:
 
             def select_active_mesh(mesh_id: MeshId) -> None:
                 bind_entry(self, CommandEntry(cmd_select_mesh, mesh_id))()
@@ -540,7 +572,7 @@ class Application:
         heightfield_group: Node | None = selected_or_ancestor_heightfield_group(
             self.scene.nodes
         )
-        if active_right is DockPanel.height_layers and not browser_open:
+        if active_right is DockPanel.height_layers and not modal_open:
             (
                 height_layer_rows,
                 height_layer_float_rows,
@@ -562,7 +594,7 @@ class Application:
         sculpt_brush_rows: list[SculptBrushRow] = []
         sculpt_float_rows: list[SculptFloatRow] = []
         sculpt_buttons: list[Button] = []
-        if active_right is DockPanel.sculpt and not browser_open:
+        if active_right is DockPanel.sculpt and not modal_open:
             sculpt_brush_rows, sculpt_float_rows, sculpt_buttons = update_sculpt_panel(
                 self.ui, right_content_rect
             )
@@ -577,7 +609,7 @@ class Application:
         )
         modifiers_buttons: list[Button] = []
         modifiers_rows: list[ModifierPanelRow] = []
-        if active_right is DockPanel.inspector and not browser_open:
+        if active_right is DockPanel.inspector and not modal_open:
             if vector_shape is not None:
                 vector_inspector_buttons, vector_float_rows = (
                     update_vector_shape_inspector(
@@ -586,6 +618,7 @@ class Application:
                         self.ui,
                         right_content_rect,
                         vector_shape,
+                        heightfield_gpu=self.scene.heightfield_gpu,
                     )
                 )
                 refreshed_shape: Node | None = self.scene.nodes.nodes.get(
@@ -604,6 +637,7 @@ class Application:
                     self.ui,
                     right_content_rect,
                     vector_layer,
+                    heightfield_gpu=self.scene.heightfield_gpu,
                 )
                 # add-shape may change selection to the new shape
                 vector_shape = selected_vector_shape_group(self.scene.nodes)
@@ -616,6 +650,7 @@ class Application:
                             self.ui,
                             right_content_rect,
                             vector_shape,
+                            heightfield_gpu=self.scene.heightfield_gpu,
                         )
                     )
                 else:
@@ -665,7 +700,7 @@ class Application:
             active_right is DockPanel.modifiers
             and group is not None
             and group.generator is not None
-            and not browser_open
+            and not modal_open
         ):
             modifiers_group_id: str = group.id
             modifiers_buttons, modifiers_rows = update_modifiers_panel(
@@ -706,6 +741,7 @@ class Application:
                     self.ui.heightfield_layer_target = None
                     self.ui.heightfield_layer_replace_index = None
                     self.ui.road_sections_import_target = None
+                    self.ui.tb_import_target = None
                     self.ui.status = "Cancelled"
                 case Path() as chosen:
                     purpose: FileBrowserPurpose = self.ui.file_browser.purpose
@@ -726,11 +762,96 @@ class Application:
                             apply_import_road_shp_path(self, chosen)
                         case FileBrowserPurpose.import_heightfield_albedo:
                             apply_import_heightfield_albedo_path(self, chosen)
+                        case FileBrowserPurpose.export_tb_roads:
+                            apply_export_tb_roads_path(self, chosen)
+                        case FileBrowserPurpose.import_tb_objects:
+                            apply_import_tb_objects_path(self, chosen)
+                case None:
+                    pass
+
+        picker_rows: list[ListPickerRow] = []
+        picker_buttons: list[Button] = []
+        picker_window: Rectangle | None = None
+        if self.ui.list_picker is not None:
+            picker_result: ListPickerFrameResult
+            picker_result, picker_rows, picker_buttons, picker_window = (
+                update_list_picker(
+                    self.ui.list_picker,
+                    get_screen_width(),
+                    get_screen_height(),
+                )
+            )
+            match picker_result:
+                case ListPickerCancel.cancelled:
+                    self.ui.list_picker = None
+                    self.ui.status = "Cancelled"
+                case str() as chosen:
+                    purpose_picker: ListPickerPurpose = self.ui.list_picker.purpose
+                    target_id: str | None = self.ui.list_picker.target_id
+                    self.ui.list_picker = None
+                    match purpose_picker:
+                        case ListPickerPurpose.road_kit:
+                            if target_id is None:
+                                self.ui.status = "Kit target missing"
+                            else:
+                                apply_road_kit_choice(
+                                    self.scene.nodes,
+                                    self.ui,
+                                    target_id,
+                                    chosen,
+                                    self.application.journal,
+                                    road_parts=self.application.road_parts,
+                                    scene_context=self.scene,
+                                    heightmap_catalog=self.application.heightmap_catalog,
+                                )
+                        case ListPickerPurpose.road_move_usage:
+                            if target_id is None:
+                                self.ui.status = "Move source missing"
+                            elif chosen == list_picker_new_item:
+                                begin_move_usage_name(self.ui, target_id)
+                            else:
+                                apply_move_polylines_to_usage(
+                                    self.scene.nodes,
+                                    self.ui,
+                                    target_id,
+                                    chosen,
+                                    self.application.journal,
+                                    road_parts=self.application.road_parts,
+                                    scene_context=self.scene,
+                                    heightmap_catalog=self.application.heightmap_catalog,
+                                )
+                case None:
+                    pass
+
+        palette_swatches: list[ColorPaletteSwatch] = []
+        palette_window: Rectangle | None = None
+        if self.ui.color_palette is not None:
+            palette_result: ColorPaletteFrameResult
+            palette_result, palette_swatches, palette_window = (
+                update_color_palette_popup(
+                    self.ui.color_palette,
+                    get_screen_width(),
+                    get_screen_height(),
+                )
+            )
+            match palette_result:
+                case ColorPaletteCancel():
+                    self.ui.color_palette = None
+                case ColorPaletteClear():
+                    owner_id: str = self.ui.color_palette.owner_id
+                    self.ui.color_palette = None
+                    set_node_color_index(self.scene.nodes, owner_id, None)
+                case int() as chosen_index:
+                    owner_pick: str = self.ui.color_palette.owner_id
+                    self.ui.color_palette = None
+                    set_node_color_index(
+                        self.scene.nodes, owner_pick, chosen_index
+                    )
                 case None:
                     pass
 
         mouse: Vector2 = get_mouse_position()
-        ui_over: bool = browser_open or (
+        ui_over: bool = modal_open or (
             is_point_in_rect(mouse.x, mouse.y, layout.menu)
             or (
                 len(left_tabs) > 0
@@ -844,7 +965,10 @@ class Application:
             ui_over,
             self.application.heightmap_catalog,
             text_focused=(
-                self.ui.focus is not None or self.ui.file_browser is not None
+                self.ui.focus is not None
+                or self.ui.file_browser is not None
+                or self.ui.list_picker is not None
+                or self.ui.color_palette is not None
             ),
             ui=self.ui,
             block_left_click=sculpting and not ui_over,
@@ -992,6 +1116,25 @@ class Application:
                 browser_rows,
                 browser_buttons,
                 browser_window,
+                get_screen_width(),
+                get_screen_height(),
+            )
+        if self.ui.list_picker is not None and picker_window is not None:
+            draw_list_picker(
+                self.font,
+                self.ui.list_picker,
+                picker_rows,
+                picker_buttons,
+                picker_window,
+                get_screen_width(),
+                get_screen_height(),
+            )
+        if self.ui.color_palette is not None and palette_window is not None:
+            draw_color_palette_popup(
+                self.font,
+                self.ui.color_palette,
+                palette_swatches,
+                palette_window,
                 get_screen_width(),
                 get_screen_height(),
             )

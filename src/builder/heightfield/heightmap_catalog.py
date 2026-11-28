@@ -63,6 +63,14 @@ class HeightmapCatalog:
     buffers: dict[HeightmapId, HeightmapBuffer] = field(default_factory=dict)
     # content revision for paint (and any mutated) buffers — gpu cache invalidation
     paint_revisions: dict[HeightmapId, int] = field(default_factory=dict)
+    # pending gpu upload region (x0,x1,y0,y1); None value means full buffer
+    paint_dirty_rects: dict[HeightmapId, tuple[int, int, int, int] | None] = field(
+        default_factory=dict
+    )
+    # heightmaps awaiting a deferred paint_revisions bump (cpu already edited)
+    deferred_paint_bumps: set[HeightmapId] = field(default_factory=set)
+    # frames to wait before flushing deferred bumps (1 = next frame)
+    gpu_flush_hold_frames: int = 0
     decode: DecodeHeightImage = field(default=default_decode_height_image)
 
 
@@ -81,6 +89,9 @@ def clear_heightmap_catalog(catalog: HeightmapCatalog) -> None:
     catalog.entries.clear()
     catalog.buffers.clear()
     catalog.paint_revisions.clear()
+    catalog.paint_dirty_rects.clear()
+    catalog.deferred_paint_bumps.clear()
+    catalog.gpu_flush_hold_frames = 0
 
 
 def heightmap_id_for_path(path: Path) -> HeightmapId:

@@ -121,11 +121,16 @@ class TestCompositeExport(unittest.TestCase):
             base=base_id,
             size_x=replace(default_heightfield().size_x, value=256.0),
             size_z=replace(default_heightfield().size_z, value=256.0),
+            origin_x=replace(default_heightfield().origin_x, value=200000.0),
+            origin_z=replace(default_heightfield().origin_z, value=5000.0),
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             asc_path: Path = Path(temp_dir) / "out.asc"
             export_composited_height(catalog, heightfield, asc_path)
             self.assertTrue(asc_path.is_file())
+            text: str = asc_path.read_text(encoding="utf-8")
+            self.assertIn("xllcorner     200000.000000", text)
+            self.assertIn("yllcorner     5000.000000", text)
             meta_path: Path = Path(temp_dir) / "out_meta.json"
             self.assertTrue(meta_path.is_file())
             meta: object = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -134,6 +139,10 @@ class TestCompositeExport(unittest.TestCase):
             assert isinstance(elevation, dict)
             self.assertEqual(elevation["min"], 1.0)
             self.assertEqual(elevation["max"], 4.0)
+            grid: object = meta["grid"]
+            assert isinstance(grid, dict)
+            self.assertEqual(grid["origin_x"], 200000.0)
+            self.assertEqual(grid["origin_z"], 5000.0)
             # re-decode flips north→south, so buffer matches original
             decoded = asc_decode_height_image(asc_path)
             samples: list[float] = samples_from_f32(decoded.data)
@@ -152,15 +161,14 @@ class TestCompositeExport(unittest.TestCase):
             self.assertTrue((Path(temp_dir) / "out_meta.json").is_file())
             decoded = pillow_decode_height_image(png_path)
             self.assertEqual(decoded.sample_type, HeightSampleType.u16)
-            # north-first on disk: max z row first → [100,100] then [0,50]
-            # after pillow load row0 is file row0
+            # north-first / west-first on disk: [100,100] then reversed south [50,0]
             from builder.heightfield.height_image_decode import samples_from_u16
 
             norms: list[float] = samples_from_u16(decoded.data)
             self.assertAlmostEqual(norms[0], 1.0, places=4)
             self.assertAlmostEqual(norms[1], 1.0, places=4)
-            self.assertAlmostEqual(norms[2], 0.0, places=4)
-            self.assertAlmostEqual(norms[3], 0.5, places=4)
+            self.assertAlmostEqual(norms[2], 0.5, places=4)
+            self.assertAlmostEqual(norms[3], 0.0, places=4)
 
     def test_pack_u16_endpoints(self) -> None:
         packed: list[int] = pack_u16_heights([10.0, 20.0], 10.0, 20.0)

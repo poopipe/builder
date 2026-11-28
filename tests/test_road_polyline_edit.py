@@ -72,7 +72,7 @@ def line(polyline_id: str, *points: tuple[float, float]) -> RoadPolyline:
 
 class TestRoadPolylineIds(unittest.TestCase):
     def test_scene_format_is_37(self) -> None:
-        self.assertEqual(scene_format_version, 39)
+        self.assertEqual(scene_format_version, 41)
 
     def test_polyline_json_round_trip(self) -> None:
         polyline: RoadPolyline = line("abc", (0.0, 0.0), (10.0, 0.0))
@@ -612,10 +612,10 @@ class TestRoadPolylineDocument(unittest.TestCase):
             nodes=(),
         )
         payload = document_to_json(document, {}, {}, {})
-        self.assertEqual(payload["version"], 39)
+        self.assertEqual(payload["version"], 40)
         decoded, warnings = document_from_json(payload)
         self.assertEqual(warnings, [])
-        self.assertEqual(decoded.version, 39)
+        self.assertEqual(decoded.version, 40)
 
 
 if __name__ == "__main__":

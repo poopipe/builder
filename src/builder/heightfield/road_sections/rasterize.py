@@ -21,8 +21,10 @@ from builder.heightfield.paint import touch_heightmap_buffer
 from builder.heightfield.road_sections.overlay import shadow_centerline_for_polyline
 from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
 from builder.heightfield.road_sections.road_sections_types import (
+    RoadEndpointRef,
     RoadPolyline,
     RoadUsageGroupRecipe,
+    polyline_by_id,
     road_sections_ribbon_radius_m,
 )
 from builder.heightfield.vector.coords import ordered_child_nodes
@@ -31,17 +33,18 @@ from builder.heightfield.vector.rasterize import (
     find_heightfield_group_for_descendant,
 )
 from builder.heightfield.vector.stamp import (
-    apply_weighted_sample,
-    path_stroke_weight,
+    apply_road_absolute,
+    clip_texel_range,
+    ribbon_plateau_weight,
     world_aabb_to_texel_range,
 )
 from builder.heightfield.vector.vector_types import (
     RibbonScalarAtXz,
-    RibbonTargetAtXz,
     VectorApplyMode,
     VectorRasterContext,
 )
 from builder.scene.scene_types import Node
+from builder.scene.visibility import node_effectively_visible
 
 
 def clear_buffer_samples_fast(buffer: HeightmapBuffer) -> None:
@@ -112,15 +115,29 @@ def sparse_grade_knots(
     ]
 
 
-def distance_to_segment(
+# grade sampling step relative to paint texel size (metres)
+_grade_texel_scale: float = 2.0
+
+
+def grade_step_metres(
+    size_x: float, size_z: float, width: int, height: int
+) -> float:
+    """sparse underlay sample spacing for ribbon grade (~2 texels, ≥ overlay)"""
+    texel_x: float = size_x / float(max(width, 1))
+    texel_z: float = size_z / float(max(height, 1))
+    texel: float = min(texel_x, texel_z)
+    return max(overlay_step_metres, texel * _grade_texel_scale)
+
+
+def distance_and_t_on_segment(
     x: float,
     z: float,
     ax: float,
     az: float,
     bx: float,
     bz: float,
-) -> float:
-    """distance from xz to one open segment"""
+) -> tuple[float, float]:
+    """distance to segment and clamped param t in [0, 1]"""
     dx: float = bx - ax
     dz: float = bz - az
     length_sq: float = dx * dx + dz * dz
@@ -129,27 +146,63 @@ def distance_to_segment(
         t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / length_sq))
     px: float = ax + dx * t
     pz: float = az + dz * t
-    return hypot(x - px, z - pz)
+    return hypot(x - px, z - pz), t
 
 
-def stamp_segment_ribbon(
+def clear_buffer_region(
+    buffer: HeightmapBuffer,
+    x0: int,
+    x1: int,
+    y0: int,
+    y1: int,
+) -> None:
+    """zero samples in an inclusive-exclusive texel rectangle"""
+    width: int = buffer.width
+    y: int
+    for y in range(max(0, y0), min(buffer.height, y1)):
+        row: int = y * width
+        start: int = row + max(0, x0)
+        end: int = row + min(width, x1)
+        if start < end:
+            buffer.samples[start:end] = [0.0] * (end - start)
+
+
+def polyline_world_aabb(
+    points: Sequence[tuple[float, float]],
+    pad_metres: float,
+) -> tuple[float, float, float, float] | None:
+    """padded world xz aabb, or none if empty"""
+    if len(points) == 0:
+        return None
+    xs: list[float] = [p[0] for p in points]
+    zs: list[float] = [p[1] for p in points]
+    pad: float = max(0.0, pad_metres)
+    return (
+        min(xs) - pad,
+        max(xs) + pad,
+        min(zs) - pad,
+        max(zs) + pad,
+    )
+
+
+def stamp_grade_segment(
     context: VectorRasterContext,
     ax: float,
     az: float,
+    ay: float,
     bx: float,
     bz: float,
+    by: float,
 ) -> None:
-    """stamp one segment with a local aabb (avoids whole-polyline bbox cost)"""
+    """sweep one grade segment aabb; height lerps ay→by along the foot"""
+    if hypot(bx - ax, bz - az) < 1e-8:
+        return
     pad: float = context.radius_metres
-    min_x: float = min(ax, bx) - pad
-    max_x: float = max(ax, bx) + pad
-    min_z: float = min(az, bz) - pad
-    max_z: float = max(az, bz) + pad
     ranges: tuple[int, int, int, int] | None = world_aabb_to_texel_range(
-        min_x,
-        max_x,
-        min_z,
-        max_z,
+        min(ax, bx) - pad,
+        max(ax, bx) + pad,
+        min(az, bz) - pad,
+        max(az, bz) + pad,
         context.size_x,
         context.size_z,
         context.width,
@@ -157,104 +210,73 @@ def stamp_segment_ribbon(
     )
     if ranges is None:
         return
+    clipped: tuple[int, int, int, int] | None = clip_texel_range(
+        ranges[0], ranges[1], ranges[2], ranges[3], context
+    )
+    if clipped is None:
+        return
+    half_width: float = context.radius_metres
     x0: int
     x1: int
     y0: int
     y1: int
-    x0, x1, y0, y1 = ranges
+    x0, x1, y0, y1 = clipped
     inv_w: float = 1.0 / float(context.width)
     inv_h: float = 1.0 / float(context.height)
     y: int
     for y in range(y0, y1):
-        v: float = (float(y) + 0.5) * inv_h
-        wz: float = (v - 0.5) * context.size_z
+        wz: float = ((float(y) + 0.5) * inv_h - 0.5) * context.size_z
         x: int
         for x in range(x0, x1):
-            u: float = (float(x) + 0.5) * inv_w
-            wx: float = (u - 0.5) * context.size_x
-            dist: float = distance_to_segment(wx, wz, ax, az, bx, bz)
-            weight: float = path_stroke_weight(context, dist, x=wx, z=wz)
+            wx: float = ((float(x) + 0.5) * inv_w - 0.5) * context.size_x
+            dist: float
+            t: float
+            dist, t = distance_and_t_on_segment(wx, wz, ax, az, bx, bz)
+            weight: float = ribbon_plateau_weight(dist, half_width)
             if weight <= 0.0:
                 continue
-            apply_weighted_sample(
+            height: float = ay + (by - ay) * t
+            apply_road_absolute(
                 context,
                 y * context.width + x,
-                u,
-                v,
+                height,
                 weight,
             )
-
-
-def segment_foot_height_fn(
-    ax: float,
-    az: float,
-    bx: float,
-    bz: float,
-    surface_at_xz: RibbonScalarAtXz,
-) -> RibbonTargetAtXz:
-    """absolute height = surface under the centerline foot (flat cross-section)"""
-    dx: float = bx - ax
-    dz: float = bz - az
-    length_sq: float = dx * dx + dz * dz
-
-    def ribbon_height_at(x: float, z: float, _below: float) -> float:
-        t: float = 0.0
-        if length_sq > 1e-12:
-            t = max(
-                0.0,
-                min(1.0, ((x - ax) * dx + (z - az) * dz) / length_sq),
-            )
-        return float(surface_at_xz(ax + dx * t, az + dz * t))
-
-    return ribbon_height_at
 
 
 def stamp_road_centerline_ribbon(
     context: VectorRasterContext,
     points: Sequence[tuple[float, float]],
     surface_at_xz: RibbonScalarAtXz,
+    *,
+    grade_step_m: float | None = None,
 ) -> None:
-    """stamp ribbon; height = same surface_y the shadow uses, at centerline foot"""
+    """path-local aabb sweep; absolute y from sparse underlay grade knots"""
     if len(points) < 2:
         return
-    # match shadow draping densify (overlay_step_metres)
-    stroke: list[tuple[float, float]] = sparse_centerline_xz(
-        points,
-        overlay_step_metres,
+    step: float = (
+        float(grade_step_m)
+        if grade_step_m is not None
+        else grade_step_metres(
+            context.size_x, context.size_z, context.width, context.height
+        )
     )
-    if len(stroke) < 2:
+    knots: list[tuple[float, float, float]] = sparse_grade_knots(
+        points, step, surface_at_xz
+    )
+    if len(knots) < 2:
         return
     index: int
-    for index in range(len(stroke) - 1):
+    for index in range(len(knots) - 1):
         ax: float
         az: float
+        ay: float
         bx: float
         bz: float
-        ax, az = stroke[index]
-        bx, bz = stroke[index + 1]
-        if hypot(bx - ax, bz - az) < 1e-8:
-            continue
-        stamped: VectorRasterContext = VectorRasterContext(
-            samples=context.samples,
-            width=context.width,
-            height=context.height,
-            size_x=context.size_x,
-            size_z=context.size_z,
-            radius_metres=context.radius_metres,
-            offset=context.offset,
-            intensity=context.intensity,
-            apply_mode=context.apply_mode,
-            brush_kind=context.brush_kind,
-            sculpt_metres=True,
-            flatten_target=None,
-            below_at_uv=context.below_at_uv,
-            ribbon_height_at_xz=segment_foot_height_fn(
-                ax, az, bx, bz, surface_at_xz
-            ),
-            ribbon_half_width_at_xz=None,
-            coverage_samples=context.coverage_samples,
-        )
-        stamp_segment_ribbon(stamped, ax, az, bx, bz)
+        by: float
+        ax, az, ay = knots[index]
+        bx, bz, by = knots[index + 1]
+        stamp_grade_segment(context, ax, az, ay, bx, bz, by)
 
 
 def layer_has_ribbon_flatten(
@@ -273,6 +295,16 @@ def layer_has_ribbon_flatten(
     return False
 
 
+def _aabb_intersects(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+) -> bool:
+    """true if world xz aabbs overlap (min_x, max_x, min_z, max_z)"""
+    return not (
+        a[1] < b[0] or b[1] < a[0] or a[3] < b[2] or b[3] < a[2]
+    )
+
+
 def rasterize_road_sections_layer(
     catalog: HeightmapCatalog,
     heightfield: Heightfield,
@@ -283,11 +315,13 @@ def rasterize_road_sections_layer(
     *,
     layer_index: int,
     road_parts: RoadPartsCatalog | None = None,
+    dirty_world_aabb: tuple[float, float, float, float] | None = None,
+    defer_gpu: bool = False,
 ) -> bool:
     """clear and rebuild road-sections ribbon buffers from flatten-enabled groups
 
     stamps the fit/placement centerline when road_parts is set; otherwise the
-    authored polyline.
+    authored polyline. dirty_world_aabb limits clear + restamp to that band.
     """
     layer_node: Node | None = nodes.get(layer_node_id)
     if layer_node is None or layer_node.road_sections_layer is None:
@@ -304,16 +338,53 @@ def rasterize_road_sections_layer(
     if heightfield_group_id is None:
         return False
     layout = heightfield_layout(heightfield)
-    clear_buffer_samples_fast(buffer)
-    clear_buffer_samples_fast(coverage_buffer)
-    if not layer_has_ribbon_flatten(nodes, layer_node_id):
-        touch_heightmap_buffer(catalog, heightmap_id)
-        touch_heightmap_buffer(catalog, coverage_id)
+    size_x: float = layout.size_x
+    size_z: float = layout.size_z
+    touch_dirty: tuple[int, int, int, int] | None = None
+    if dirty_world_aabb is None:
+        clear_buffer_samples_fast(buffer)
+        clear_buffer_samples_fast(coverage_buffer)
+    else:
+        dirty_range: tuple[int, int, int, int] | None = (
+            world_aabb_to_texel_range(
+                dirty_world_aabb[0],
+                dirty_world_aabb[1],
+                dirty_world_aabb[2],
+                dirty_world_aabb[3],
+                size_x,
+                size_z,
+                buffer.width,
+                buffer.height,
+            )
+        )
+        if dirty_range is not None:
+            dx0: int
+            dx1: int
+            dy0: int
+            dy1: int
+            dx0, dx1, dy0, dy1 = dirty_range
+            touch_dirty = dirty_range
+            clear_buffer_region(buffer, dx0, dx1, dy0, dy1)
+            clear_buffer_region(coverage_buffer, dx0, dx1, dy0, dy1)
+    if (
+        not node_effectively_visible(nodes, layer_node_id)
+        or not layer_has_ribbon_flatten(nodes, layer_node_id)
+    ):
+        touch_heightmap_buffer(
+            catalog,
+            heightmap_id,
+            dirty_texels=touch_dirty,
+            defer_gpu=defer_gpu,
+        )
+        touch_heightmap_buffer(
+            catalog,
+            coverage_id,
+            dirty_texels=touch_dirty,
+            defer_gpu=defer_gpu,
+        )
         return True
     if road_parts is not None:
         road_parts.ensure_loaded()
-    size_x: float = layout.size_x
-    size_z: float = layout.size_z
 
     def shadow_surface_at_xz(x: float, z: float) -> float:
         # underlay under this layer (same stack the gpu shadow drape uses)
@@ -328,12 +399,15 @@ def rasterize_road_sections_layer(
             below_layer_index=layer_index,
         )
 
-    def below_at_uv(u: float, v: float) -> float:
-        return shadow_surface_at_xz(
-            (u - 0.5) * size_x,
-            (v - 0.5) * size_z,
-        )
-
+    grade_step: float = grade_step_metres(
+        size_x, size_z, buffer.width, buffer.height
+    )
+    clip_x0: int | None = None
+    clip_x1: int | None = None
+    clip_y0: int | None = None
+    clip_y1: int | None = None
+    if touch_dirty is not None:
+        clip_x0, clip_x1, clip_y0, clip_y1 = touch_dirty
     base_context: VectorRasterContext = VectorRasterContext(
         samples=buffer.samples,
         width=buffer.width,
@@ -347,19 +421,27 @@ def rasterize_road_sections_layer(
         brush_kind="add",
         sculpt_metres=True,
         flatten_target=None,
-        below_at_uv=below_at_uv,
+        below_at_uv=None,
         ribbon_height_at_xz=None,
         ribbon_half_width_at_xz=None,
         coverage_samples=coverage_buffer.samples,
+        clip_x0=clip_x0,
+        clip_x1=clip_x1,
+        clip_y0=clip_y0,
+        clip_y1=clip_y1,
     )
     shp: Node
     for shp in ordered_child_nodes(nodes, layer_node_id):
         if shp.road_shp is None:
             continue
+        if not node_effectively_visible(nodes, shp.id):
+            continue
         usage_node: Node
         for usage_node in ordered_child_nodes(nodes, shp.id):
             group: RoadUsageGroupRecipe | None = usage_node.road_usage_group
             if group is None or not group.ribbon_flatten:
+                continue
+            if not node_effectively_visible(nodes, usage_node.id):
                 continue
             # stamp radius = full kit width (centerline half-width param)
             ribbon_radius: float = road_sections_ribbon_radius_m
@@ -374,18 +456,38 @@ def rasterize_road_sections_layer(
                 if road_parts is None:
                     points = list(polyline.points)
                 else:
-                    # same centerline densify as shadow overlay (default 2 m)
                     points = shadow_centerline_for_polyline(
                         group,
                         polyline,
                         road_parts,
-                        step_m=overlay_step_metres,
+                        step_m=grade_step,
                     )
+                if dirty_world_aabb is not None:
+                    poly_aabb: tuple[float, float, float, float] | None = (
+                        polyline_world_aabb(points, ribbon_radius)
+                    )
+                    if poly_aabb is None or not _aabb_intersects(
+                        dirty_world_aabb, poly_aabb
+                    ):
+                        continue
                 stamp_road_centerline_ribbon(
-                    group_context, points, shadow_surface_at_xz
+                    group_context,
+                    points,
+                    shadow_surface_at_xz,
+                    grade_step_m=grade_step,
                 )
-    touch_heightmap_buffer(catalog, heightmap_id)
-    touch_heightmap_buffer(catalog, coverage_id)
+    touch_heightmap_buffer(
+        catalog,
+        heightmap_id,
+        dirty_texels=touch_dirty,
+        defer_gpu=defer_gpu,
+    )
+    touch_heightmap_buffer(
+        catalog,
+        coverage_id,
+        dirty_texels=touch_dirty,
+        defer_gpu=defer_gpu,
+    )
     return True
 
 
@@ -427,6 +529,8 @@ def regenerate_road_sections_for_node(
     layer_node_id: str,
     *,
     road_parts: RoadPartsCatalog | None = None,
+    dirty_world_aabb: tuple[float, float, float, float] | None = None,
+    defer_gpu: bool = False,
 ) -> bool:
     """re-rasterize the road-sections source that references layer_node_id"""
     group: Node | None = nodes.get(heightfield_group_id)
@@ -450,6 +554,8 @@ def regenerate_road_sections_for_node(
                     coverage_id,
                     layer_index=layer_index,
                     road_parts=road_parts,
+                    dirty_world_aabb=dirty_world_aabb,
+                    defer_gpu=defer_gpu,
                 )
             case _:
                 pass
@@ -471,12 +577,160 @@ def find_road_sections_layer_ancestor(
     return None
 
 
+# pad beyond ribbon width when building dirty aabb from live edits (metres)
+_dirty_edit_slack_m: float = 64.0
+
+
+def _expand_dirty_from_group(
+    group: RoadUsageGroupRecipe,
+    *,
+    road_parts: RoadPartsCatalog | None,
+    min_x: float,
+    max_x: float,
+    min_z: float,
+    max_z: float,
+) -> tuple[bool, float, float, float, float]:
+    """fold one flatten usage group's polylines into a running aabb"""
+    if not group.ribbon_flatten:
+        return (False, min_x, max_x, min_z, max_z)
+    radius: float = road_sections_ribbon_radius_m
+    if road_parts is not None:
+        radius = road_parts.width_for_kit(group.kit)
+    pad: float = radius + _dirty_edit_slack_m
+    found: bool = False
+    polyline: RoadPolyline
+    for polyline in group.polylines:
+        box: tuple[float, float, float, float] | None = polyline_world_aabb(
+            polyline.points, pad
+        )
+        if box is None:
+            continue
+        found = True
+        min_x = min(min_x, box[0])
+        max_x = max(max_x, box[1])
+        min_z = min(min_z, box[2])
+        max_z = max(max_z, box[3])
+    return (found, min_x, max_x, min_z, max_z)
+
+
+def vertex_neighborhood_aabb(
+    points: Sequence[tuple[float, float]],
+    vertex_index: int,
+    pad_metres: float,
+) -> tuple[float, float, float, float] | None:
+    """padded aabb of one vertex and its adjacent open-polyline knots"""
+    count: int = len(points)
+    if count == 0 or vertex_index < 0 or vertex_index >= count:
+        return None
+    neighbor: list[tuple[float, float]] = [points[vertex_index]]
+    if vertex_index > 0:
+        neighbor.append(points[vertex_index - 1])
+    if vertex_index + 1 < count:
+        neighbor.append(points[vertex_index + 1])
+    return polyline_world_aabb(neighbor, pad_metres)
+
+
+def dirty_aabb_for_road_endpoints(
+    group: RoadUsageGroupRecipe,
+    endpoints: Sequence[RoadEndpointRef],
+    *,
+    road_parts: RoadPartsCatalog | None = None,
+) -> tuple[float, float, float, float] | None:
+    """union neighborhood aabbs for specific road polyline vertices"""
+    pad: float = road_sections_ribbon_radius_m
+    if road_parts is not None:
+        pad = road_parts.width_for_kit(group.kit)
+    dirty: tuple[float, float, float, float] | None = None
+    endpoint: RoadEndpointRef
+    for endpoint in endpoints:
+        poly: RoadPolyline | None = polyline_by_id(
+            group, endpoint.polyline_id
+        )
+        if poly is None:
+            continue
+        local: tuple[float, float, float, float] | None = (
+            vertex_neighborhood_aabb(
+                poly.points, endpoint.vertex_index, pad
+            )
+        )
+        if local is None:
+            continue
+        if dirty is None:
+            dirty = local
+        else:
+            dirty = (
+                min(dirty[0], local[0]),
+                max(dirty[1], local[1]),
+                min(dirty[2], local[2]),
+                max(dirty[3], local[3]),
+            )
+    return dirty
+
+
+def dirty_aabb_for_nodes(
+    nodes: dict[str, Node],
+    node_ids: Sequence[str],
+    *,
+    road_parts: RoadPartsCatalog | None = None,
+) -> tuple[float, float, float, float] | None:
+    """union padded aabb of flatten polylines under the given nodes"""
+    min_x: float = 1e30
+    max_x: float = -1e30
+    min_z: float = 1e30
+    max_z: float = -1e30
+    found: bool = False
+    node_id: str
+    for node_id in node_ids:
+        node: Node | None = nodes.get(node_id)
+        if node is None:
+            continue
+        if node.road_usage_group is not None:
+            hit: bool
+            hit, min_x, max_x, min_z, max_z = _expand_dirty_from_group(
+                node.road_usage_group,
+                road_parts=road_parts,
+                min_x=min_x,
+                max_x=max_x,
+                min_z=min_z,
+                max_z=max_z,
+            )
+            found = found or hit
+            continue
+        layer_id: str | None = find_road_sections_layer_ancestor(
+            nodes, node_id
+        )
+        if layer_id is None:
+            continue
+        shp: Node
+        for shp in ordered_child_nodes(nodes, layer_id):
+            if shp.road_shp is None:
+                continue
+            usage: Node
+            for usage in ordered_child_nodes(nodes, shp.id):
+                if usage.road_usage_group is None:
+                    continue
+                hit, min_x, max_x, min_z, max_z = _expand_dirty_from_group(
+                    usage.road_usage_group,
+                    road_parts=road_parts,
+                    min_x=min_x,
+                    max_x=max_x,
+                    min_z=min_z,
+                    max_z=max_z,
+                )
+                found = found or hit
+    if not found:
+        return None
+    return (min_x, max_x, min_z, max_z)
+
+
 def regenerate_road_sections_touching(
     catalog: HeightmapCatalog,
     nodes: dict[str, Node],
     node_ids: list[str],
     *,
     road_parts: RoadPartsCatalog | None = None,
+    dirty_world_aabb: tuple[float, float, float, float] | None = None,
+    defer_gpu: bool = True,
 ) -> None:
     """re-rasterize road-sections layers affected by edited nodes"""
     touched_layers: set[str] = set()
@@ -487,6 +741,11 @@ def regenerate_road_sections_touching(
         )
         if layer_id is not None:
             touched_layers.add(layer_id)
+    dirty: tuple[float, float, float, float] | None = dirty_world_aabb
+    if dirty is None:
+        dirty = dirty_aabb_for_nodes(
+            nodes, node_ids, road_parts=road_parts
+        )
     layer_id_touched: str
     for layer_id_touched in touched_layers:
         hf_id: str | None = find_heightfield_group_for_descendant(
@@ -500,4 +759,6 @@ def regenerate_road_sections_touching(
             hf_id,
             layer_id_touched,
             road_parts=road_parts,
+            dirty_world_aabb=dirty,
+            defer_gpu=defer_gpu,
         )

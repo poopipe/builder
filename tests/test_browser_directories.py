@@ -70,7 +70,7 @@ class TestRememberedBrowserDirectory(unittest.TestCase):
 
 class TestBrowserDirectoriesSceneRoundTrip(unittest.TestCase):
     def test_scene_format_is_37(self) -> None:
-        self.assertEqual(scene_format_version, 39)
+        self.assertEqual(scene_format_version, 41)
 
     def test_ui_browser_directories_round_trip(self) -> None:
         document: SceneDocument = SceneDocument(

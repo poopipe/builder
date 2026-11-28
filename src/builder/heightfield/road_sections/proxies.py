@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from math import cos, radians, sin
+from math import cos, hypot, radians, sin
 from typing import Any
 
 from pyray import Mesh, Shader, Transform, Vector3, ffi, gen_mesh_cube, upload_mesh
 
+from builder.heightfield.road_sections.kit_widths import PieceSnapPoints
 from builder.heightfield.road_sections.part_catalog import (
     CornerPiece,
     RoadPartsCatalog,
@@ -61,14 +62,78 @@ def corner_segment_count(angle_deg: float) -> int:
     return max(road_proxy_corner_seg_min, from_angle)
 
 
-def build_corner_proxy_geometry(
-    corner: CornerPiece, width_m: float
-) -> CornerProxyGeometry:
-    """cw arc ribbon; origin at centerline mid-arc; entry heading +Z
+def _rotate_cw_xz(vx: float, vz: float, deg: float) -> tuple[float, float]:
+    r: float = radians(deg)
+    c: float = cos(r)
+    s: float = sin(r)
+    return vx * c + vz * s, -vx * s + vz * c
 
-    pivot at arc midpoint. cw: yaw = entry heading. ccw: yaw-spin the same
-    mesh so it runs reverse (see corner_placement_yaw_deg) — keeps +Y up.
+
+def _ring_indices(segments: int) -> list[int]:
+    """side quads + end caps for a 4-vert-per-ring ribbon"""
+    indices: list[int] = []
+    seg: int
+    for seg in range(segments):
+        base: int = seg * 4
+        nxt: int = base + 4
+        # bottom / top wound for outward normals (-Y / +Y)
+        indices.extend([base + 0, nxt + 1, base + 1, base + 0, nxt + 0, nxt + 1])
+        indices.extend([base + 2, nxt + 3, nxt + 2, base + 2, base + 3, nxt + 3])
+        indices.extend([base + 0, nxt + 0, nxt + 2, base + 0, nxt + 2, base + 2])
+        indices.extend([base + 1, base + 3, nxt + 3, base + 1, nxt + 3, nxt + 1])
+    last: int = segments * 4
+    indices.extend([0, 2, 3, 0, 3, 1])
+    indices.extend([last + 0, last + 1, last + 3, last + 0, last + 3, last + 2])
+    return indices
+
+
+def _append_ring_verts(
+    positions: list[float],
+    normals: list[float],
+    texcoords: list[float],
+    colors: list[int],
+    *,
+    left_x: float,
+    left_z: float,
+    right_x: float,
+    right_z: float,
+    half_h: float,
+    t: float,
+) -> None:
+    """four verts: left/right × bottom/top"""
+    for x, z, y, v in (
+        (left_x, left_z, -half_h, 0.0),
+        (right_x, right_z, -half_h, 1.0),
+        (left_x, left_z, half_h, 0.0),
+        (right_x, right_z, half_h, 1.0),
+    ):
+        positions.extend([x, y, z])
+        normals.extend([0.0, 1.0 if y > 0.0 else -1.0, 0.0])
+        texcoords.extend([t, v])
+        colors.extend([220, 220, 220, 255])
+
+
+def build_corner_proxy_geometry(
+    corner: CornerPiece,
+    width_m: float,
+    *,
+    snaps: PieceSnapPoints | None = None,
+) -> CornerProxyGeometry:
+    """cw arc ribbon in p3d local space
+
+    with snaps: begin/end rings pin to catalogue lb/pb and le/pe; origin is
+    the catalog mesh origin. without snaps: ideal mid-arc ribbon.
     """
+    if snaps is not None:
+        return build_corner_proxy_from_snaps(corner, snaps)
+    return build_ideal_corner_proxy_geometry(corner, width_m)
+
+
+def build_ideal_corner_proxy_geometry(
+    corner: CornerPiece,
+    width_m: float,
+) -> CornerProxyGeometry:
+    """cw arc ribbon; entry heading +Z; origin at mid-arc"""
     angle_deg: float = max(float(corner.angle_deg), 1.0)
     width: float = max(width_m, 0.5)
     radius: float = max(float(corner.radius_m), width)
@@ -85,7 +150,6 @@ def build_corner_proxy_geometry(
     normals: list[float] = []
     texcoords: list[float] = []
     colors: list[int] = []
-    indices: list[int] = []
 
     ring: int
     for ring in range(segments + 1):
@@ -93,48 +157,142 @@ def build_corner_proxy_geometry(
         theta: float = radians(angle_deg * t)
         c: float = cos(theta)
         s: float = sin(theta)
-        for radial, y in (
-            (inner_r, -half_h),
-            (outer_r, -half_h),
-            (inner_r, half_h),
-            (outer_r, half_h),
-        ):
-            px: float = radius - radial * c - mid_x
-            pz: float = radial * s - mid_z
-            positions.extend([px, y, pz])
-            normals.extend([0.0, 1.0 if y > 0.0 else -1.0, 0.0])
-            texcoords.extend([t, 0.0 if radial == inner_r else 1.0])
-            colors.extend([220, 220, 220, 255])
-
-    seg: int
-    for seg in range(segments):
-        base: int = seg * 4
-        nxt: int = base + 4
-        # bottom / top wound for outward normals (-Y / +Y)
-        indices.extend([base + 0, nxt + 1, base + 1, base + 0, nxt + 0, nxt + 1])
-        indices.extend([base + 2, nxt + 3, nxt + 2, base + 2, base + 3, nxt + 3])
-        indices.extend([base + 0, nxt + 0, nxt + 2, base + 0, nxt + 2, base + 2])
-        indices.extend([base + 1, base + 3, nxt + 3, base + 1, nxt + 3, nxt + 1])
-
-    last: int = segments * 4
-    indices.extend([0, 2, 3, 0, 3, 1])
-    indices.extend([last + 0, last + 1, last + 3, last + 0, last + 3, last + 2])
+        left_x: float = radius - inner_r * c - mid_x
+        left_z: float = inner_r * s - mid_z
+        right_x: float = radius - outer_r * c - mid_x
+        right_z: float = outer_r * s - mid_z
+        _append_ring_verts(
+            positions,
+            normals,
+            texcoords,
+            colors,
+            left_x=left_x,
+            left_z=left_z,
+            right_x=right_x,
+            right_z=right_z,
+            half_h=half_h,
+            t=t,
+        )
 
     return CornerProxyGeometry(
         positions=tuple(positions),
         normals=tuple(normals),
         texcoords=tuple(texcoords),
         colors=tuple(colors),
-        indices=tuple(indices),
+        indices=tuple(_ring_indices(segments)),
+        segments=segments,
+    )
+
+
+def build_corner_proxy_from_snaps(
+    corner: CornerPiece,
+    snaps: PieceSnapPoints,
+) -> CornerProxyGeometry:
+    """cw ribbon pinned to catalogue snaps; origin is p3d origin"""
+    angle_deg: float = max(float(corner.angle_deg), 1.0)
+    radius: float = max(float(corner.radius_m), 0.5)
+    half_h: float = road_proxy_height_m * 0.5
+    segments: int = corner_segment_count(angle_deg)
+    lb: tuple[float, float, float] = snaps.lb
+    le: tuple[float, float, float] = snaps.le
+    pb: tuple[float, float, float] = snaps.pb
+    pe: tuple[float, float, float] = snaps.pe
+    bx: float
+    bz: float
+    bx, bz = snaps.begin_mid_xz()
+    # entry heading from begin edge (left→right × up → forward)
+    right_x: float = pb[0] - lb[0]
+    right_z: float = pb[2] - lb[2]
+    right_len: float = hypot(right_x, right_z)
+    if right_len < 1e-6:
+        right_x, right_z = 1.0, 0.0
+        right_len = 1.0
+    right_x /= right_len
+    right_z /= right_len
+    entry_x: float = -right_z
+    entry_z: float = right_x
+    # cw arc center from begin mid
+    cx: float = bx + radius * entry_z
+    cz: float = bz - radius * entry_x
+
+    positions: list[float] = []
+    normals: list[float] = []
+    texcoords: list[float] = []
+    colors: list[int] = []
+
+    # ribbon left/right = inner/outer (same as ideal cw mesh). road-tool
+    # lb/le are outer on a cw bend, pb/pe are inner — swap for winding.
+    inner_b_x: float
+    inner_b_z: float
+    outer_b_x: float
+    outer_b_z: float
+    inner_e_x: float
+    inner_e_z: float
+    outer_e_x: float
+    outer_e_z: float
+    inner_b_x, inner_b_z = pb[0], pb[2]
+    outer_b_x, outer_b_z = lb[0], lb[2]
+    inner_e_x, inner_e_z = pe[0], pe[2]
+    outer_e_x, outer_e_z = le[0], le[2]
+
+    ring: int
+    for ring in range(segments + 1):
+        t: float = float(ring) / float(segments)
+        left_x: float
+        left_z: float
+        right_px: float
+        right_pz: float
+        if ring == 0:
+            left_x, left_z = inner_b_x, inner_b_z
+            right_px, right_pz = outer_b_x, outer_b_z
+        elif ring == segments:
+            left_x, left_z = inner_e_x, inner_e_z
+            right_px, right_pz = outer_e_x, outer_e_z
+        else:
+            sweep: float = angle_deg * t
+            left_x, left_z = _rotate_cw_xz(
+                inner_b_x - cx, inner_b_z - cz, sweep
+            )
+            left_x += cx
+            left_z += cz
+            right_px, right_pz = _rotate_cw_xz(
+                outer_b_x - cx, outer_b_z - cz, sweep
+            )
+            right_px += cx
+            right_pz += cz
+        _append_ring_verts(
+            positions,
+            normals,
+            texcoords,
+            colors,
+            left_x=left_x,
+            left_z=left_z,
+            right_x=right_px,
+            right_z=right_pz,
+            half_h=half_h,
+            t=t,
+        )
+
+    return CornerProxyGeometry(
+        positions=tuple(positions),
+        normals=tuple(normals),
+        texcoords=tuple(texcoords),
+        colors=tuple(colors),
+        indices=tuple(_ring_indices(segments)),
         segments=segments,
     )
 
 
 def make_corner_proxy_mesh(
-    corner: CornerPiece, width_m: float
+    corner: CornerPiece,
+    width_m: float,
+    *,
+    snaps: PieceSnapPoints | None = None,
 ) -> tuple[Mesh, tuple[Any, ...]]:
     """upload a corner arc ribbon; requires an active gl context"""
-    geo: CornerProxyGeometry = build_corner_proxy_geometry(corner, width_m)
+    geo: CornerProxyGeometry = build_corner_proxy_geometry(
+        corner, width_m, snaps=snaps
+    )
     vertices_buf: Any = ffi.new("float[]", list(geo.positions))
     normals_buf: Any = ffi.new("float[]", list(geo.normals))
     texcoords_buf: Any = ffi.new("float[]", list(geo.texcoords))
@@ -177,9 +335,12 @@ def ensure_road_proxy(
     corner: CornerPiece | None = catalog.corner_for_stem(stem)
     prepared: PreparedMesh
     if corner is not None:
+        snaps: PieceSnapPoints | None = catalog.snaps_for_stem(stem)
         mesh: Mesh
         keep_alive: tuple[Any, ...]
-        mesh, keep_alive = make_corner_proxy_mesh(corner, width_m)
+        mesh, keep_alive = make_corner_proxy_mesh(
+            corner, width_m, snaps=snaps
+        )
         base: PreparedMesh = prepare_mesh(mesh, shader)
         prepared = PreparedMesh(
             mesh=base.mesh,

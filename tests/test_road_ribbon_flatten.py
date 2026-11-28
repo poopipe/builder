@@ -339,9 +339,121 @@ class TestRibbonRasterize(unittest.TestCase):
             for index, coverage in enumerate(cov):
                 if coverage < 0.9:
                     continue
-                self.assertAlmostEqual(abs_h[index], expected, places=4)
+                # buffer stores premultiplied height (h*cov)
+                self.assertAlmostEqual(
+                    abs_h[index] / coverage, expected, places=4
+                )
                 matched += 1
             self.assertGreater(matched, 10)
+
+    def test_premult_ribbon_no_trench_on_upsample(self) -> None:
+        """bilinear sample between road and empty exterior must not pull toward 0"""
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = HeightmapCatalog()
+            cache_dir = Path(tmp) / "heightmaps"
+            cache_dir.mkdir()
+            heightmap_id = create_paint_heightmap(
+                catalog,
+                label="rs",
+                width=32,
+                height=32,
+                cache_dir=cache_dir,
+            )
+            coverage_id = create_paint_heightmap(
+                catalog,
+                label="rs_cov",
+                width=32,
+                height=32,
+                cache_dir=cache_dir,
+            )
+            layer_id: str = new_node_id()
+            shp_id: str = new_node_id()
+            usage_id: str = new_node_id()
+            underlay_y: float = 100.0
+            group = RoadUsageGroupRecipe(
+                usage="primary",
+                kit="asf1",
+                polylines=(
+                    RoadPolyline(
+                        id="p0",
+                        points=((-40.0, 0.0), (40.0, 0.0)),
+                    ),
+                ),
+                ribbon_flatten=True,
+            )
+            heightfield = default_heightfield()
+            updated = replace(
+                heightfield,
+                edit_layers=(
+                    HeightEditLayer(
+                        name="Underlay",
+                        height=ProceduralHeightSource(
+                            ProceduralHeightType.constant, underlay_y
+                        ),
+                    ),
+                    HeightEditLayer(
+                        name="Road Sections",
+                        height=RoadSectionsHeightSource(
+                            layer_node_id=layer_id,
+                            heightmap_id=heightmap_id,
+                            coverage_id=coverage_id,
+                        ),
+                    ),
+                ),
+            )
+            nodes: dict[str, Node] = {
+                "hf1": Node(
+                    id="hf1",
+                    parent_id=None,
+                    transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                    mesh_id=None,
+                    heightfield=updated,
+                    name="Heightfield",
+                ),
+                layer_id: Node(
+                    id=layer_id,
+                    parent_id="hf1",
+                    transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                    mesh_id=None,
+                    road_sections_layer=RoadSectionsLayerRecipe(),
+                    name="Road Sections",
+                ),
+                shp_id: Node(
+                    id=shp_id,
+                    parent_id=layer_id,
+                    transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                    mesh_id=None,
+                    road_shp=RoadShpRecipe(source_path="x.shp"),
+                    name="roads",
+                ),
+                usage_id: Node(
+                    id=usage_id,
+                    parent_id=shp_id,
+                    transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                    mesh_id=None,
+                    road_usage_group=group,
+                    name="primary",
+                ),
+            }
+            ok = rasterize_road_sections_layer(
+                catalog,
+                updated,
+                nodes,
+                layer_id,
+                heightmap_id,
+                coverage_id,
+                layer_index=1,
+            )
+            self.assertTrue(ok)
+            from builder.heightfield.sample import sample_height
+
+            # dense uv scan across the centerline; no sample below underlay
+            samples: list[float] = []
+            i: int
+            for i in range(64):
+                u: float = float(i) / 63.0
+                samples.append(sample_height(catalog, updated, u, 0.5))
+            self.assertGreaterEqual(min(samples), underlay_y - 0.05)
 
 
 if __name__ == "__main__":

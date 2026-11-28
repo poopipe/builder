@@ -20,18 +20,20 @@ from pyray import Matrix, ffi, matrix_multiply
 from builder.scene.scene import RemovedNode, Scene
 from builder.scene.scene_types import MeshId, Node
 from builder.scene.transforms import transform_matrix
+from builder.scene.visibility import node_effectively_visible
 
-type BatchKey = tuple[MeshId, str | None]
+type BatchKey = tuple[MeshId, str | None, int | None]
 
 
 @dataclass
 class MeshInstanceBatch:
-    """local instance transforms for one (mesh, parent) draw call"""
+    """local instance transforms for one (mesh, parent, color) draw call"""
 
     transforms: Any
     count: int
     mesh_id: MeshId
     parent_id: str | None
+    color_index: int | None
     index_by_id: dict[str, int] = field(default_factory=dict)
 
 
@@ -144,6 +146,20 @@ def has_dirty_ancestor(scene: Scene, node_id: str, dirty: set[str]) -> bool:
     return False
 
 
+def existing_mesh_parent_batch_keys(
+    cache: DrawCache,
+    mesh_id: MeshId,
+    parent_id: str | None,
+) -> set[BatchKey]:
+    """existing batch keys for a mesh under a parent (any color slot)"""
+    keys: set[BatchKey] = set()
+    key: BatchKey
+    for key in cache.batches:
+        if key[0] == mesh_id and key[1] == parent_id:
+            keys.add(key)
+    return keys
+
+
 def apply_structure_delta(scene: Scene, cache: DrawCache) -> None:
     """apply pending add/remove without touching unrelated groups"""
     if not scene.added_ids and not scene.removed:
@@ -157,7 +173,10 @@ def apply_structure_delta(scene: Scene, cache: DrawCache) -> None:
         if siblings is not None:
             siblings.discard(removed.id)
         if removed.mesh_id is not None:
-            affected_keys.add((removed.mesh_id, removed.parent_id))
+            # removed node color is unknown; invalidate every color slot
+            affected_keys |= existing_mesh_parent_batch_keys(
+                cache, removed.mesh_id, removed.parent_id
+            )
         if removed.id in cache.batch_parent_ids:
             key: BatchKey
             for key in list(cache.batches):
@@ -172,7 +191,12 @@ def apply_structure_delta(scene: Scene, cache: DrawCache) -> None:
         cache.local[node_id] = transform_matrix(node.transform)
         cache.children[node.parent_id].add(node_id)
         if node.mesh_id is not None:
-            affected_keys.add((node.mesh_id, node.parent_id))
+            affected_keys.add(
+                (node.mesh_id, node.parent_id, node.color_index)
+            )
+            affected_keys |= existing_mesh_parent_batch_keys(
+                cache, node.mesh_id, node.parent_id
+            )
 
     rebuild_batches(scene, cache, affected_keys)
     refresh_batch_parent_ids(cache)
@@ -192,13 +216,19 @@ def rebuild_batches(
     for key in keys:
         mesh_id: MeshId
         parent_id: str | None
-        mesh_id, parent_id = key
+        color_index: int | None
+        mesh_id, parent_id, color_index = key
         member_ids: set[str] = cache.children.get(parent_id, set())
         members: list[Node] = []
         child_id: str
         for child_id in member_ids:
             node: Node | None = scene.nodes.get(child_id)
-            if node is not None and node.mesh_id == mesh_id:
+            if (
+                node is not None
+                and node.mesh_id == mesh_id
+                and node.color_index == color_index
+                and node_effectively_visible(scene.nodes, child_id)
+            ):
                 members.append(node)
         if not members:
             cache.batches.pop(key, None)
@@ -226,6 +256,7 @@ def fill_batch(cache: DrawCache, key: BatchKey, members: list[Node]) -> None:
         count=count,
         mesh_id=key[0],
         parent_id=key[1],
+        color_index=key[2],
         index_by_id=index_by_id,
     )
 
@@ -263,7 +294,11 @@ def write_local_instance_slot(scene: Scene, cache: DrawCache, node_id: str) -> N
     node: Node | None = scene.nodes.get(node_id)
     if node is None or node.mesh_id is None:
         return
-    batch: MeshInstanceBatch | None = cache.batches.get((node.mesh_id, node.parent_id))
+    if not node_effectively_visible(scene.nodes, node_id):
+        return
+    batch: MeshInstanceBatch | None = cache.batches.get(
+        (node.mesh_id, node.parent_id, node.color_index)
+    )
     if batch is None:
         return
     index: int | None = batch.index_by_id.get(node_id)
@@ -281,7 +316,11 @@ def rebuild_instance_batches(scene: Scene, cache: DrawCache) -> None:
         child_id: str
         for child_id in child_ids:
             node: Node | None = scene.nodes.get(child_id)
-            if node is not None and node.mesh_id is not None:
-                keys.add((node.mesh_id, parent_id))
+            if (
+                node is not None
+                and node.mesh_id is not None
+                and node_effectively_visible(scene.nodes, child_id)
+            ):
+                keys.add((node.mesh_id, parent_id, node.color_index))
     cache.batches.clear()
     rebuild_batches(scene, cache, keys)

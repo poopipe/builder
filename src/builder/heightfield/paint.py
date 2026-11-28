@@ -38,6 +38,31 @@ def bump_paint_revision(catalog: HeightmapCatalog, heightmap_id: HeightmapId) ->
     return next_rev
 
 
+def record_paint_dirty(
+    catalog: HeightmapCatalog,
+    heightmap_id: HeightmapId,
+    dirty_texels: tuple[int, int, int, int] | None,
+) -> None:
+    """union a pending gpu upload rect; None means the full buffer"""
+    if dirty_texels is None:
+        catalog.paint_dirty_rects[heightmap_id] = None
+        return
+    if heightmap_id not in catalog.paint_dirty_rects:
+        catalog.paint_dirty_rects[heightmap_id] = dirty_texels
+        return
+    existing: tuple[int, int, int, int] | None = catalog.paint_dirty_rects[
+        heightmap_id
+    ]
+    if existing is None:
+        return
+    catalog.paint_dirty_rects[heightmap_id] = (
+        min(existing[0], dirty_texels[0]),
+        max(existing[1], dirty_texels[1]),
+        min(existing[2], dirty_texels[2]),
+        max(existing[3], dirty_texels[3]),
+    )
+
+
 def replace_heightmap_buffer(
     catalog: HeightmapCatalog,
     heightmap_id: HeightmapId,
@@ -49,6 +74,7 @@ def replace_heightmap_buffer(
     buffer: HeightmapBuffer = heightmap_buffer_from_samples(width, height, samples)
     catalog.buffers[heightmap_id] = buffer
     bump_paint_revision(catalog, heightmap_id)
+    record_paint_dirty(catalog, heightmap_id, None)
     asset: HeightmapAsset | None = catalog.entries.get(heightmap_id)
     if asset is not None and (
         asset.width != width
@@ -67,10 +93,56 @@ def replace_heightmap_buffer(
     return buffer
 
 
+def arm_deferred_gpu_flush(
+    catalog: HeightmapCatalog, hold_frames: int = 1
+) -> None:
+    """schedule deferred paint bumps after hold_frames draws"""
+    catalog.gpu_flush_hold_frames = max(
+        catalog.gpu_flush_hold_frames, max(0, hold_frames)
+    )
+
+
+def flush_deferred_paint_touches(catalog: HeightmapCatalog) -> bool:
+    """bump revisions for deferred cpu edits; return true if any flushed"""
+    if not catalog.deferred_paint_bumps:
+        return False
+    heightmap_id: HeightmapId
+    for heightmap_id in list(catalog.deferred_paint_bumps):
+        bump_paint_revision(catalog, heightmap_id)
+    catalog.deferred_paint_bumps.clear()
+    catalog.gpu_flush_hold_frames = 0
+    return True
+
+
+def tick_deferred_gpu_flush(catalog: HeightmapCatalog) -> bool:
+    """once per draw: hold then flush deferred paint bumps"""
+    if not catalog.deferred_paint_bumps:
+        catalog.gpu_flush_hold_frames = 0
+        return False
+    if catalog.gpu_flush_hold_frames > 0:
+        catalog.gpu_flush_hold_frames -= 1
+        return False
+    return flush_deferred_paint_touches(catalog)
+
+
 def touch_heightmap_buffer(
-    catalog: HeightmapCatalog, heightmap_id: HeightmapId
+    catalog: HeightmapCatalog,
+    heightmap_id: HeightmapId,
+    *,
+    dirty_texels: tuple[int, int, int, int] | None = None,
+    defer_gpu: bool = False,
 ) -> int:
-    """bump content revision after in-place sample edits (no buffer rebuild)"""
+    """bump content revision after in-place sample edits (no buffer rebuild)
+
+    dirty_texels: inclusive-exclusive upload rect; None means the full buffer
+    defer_gpu: record dirty now; bump revision on a later tick_deferred_gpu_flush
+    """
+    record_paint_dirty(catalog, heightmap_id, dirty_texels)
+    if defer_gpu:
+        catalog.deferred_paint_bumps.add(heightmap_id)
+        arm_deferred_gpu_flush(catalog, 1)
+        return paint_revision(catalog, heightmap_id)
+    catalog.deferred_paint_bumps.discard(heightmap_id)
     return bump_paint_revision(catalog, heightmap_id)
 
 

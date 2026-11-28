@@ -368,6 +368,52 @@ def apply_export_heightmap_path(context: CommandContext, path: Path) -> None:
     )
 
 
+def apply_export_tb_roads_path(context: CommandContext, path: Path) -> None:
+    """write import_<kit>.txt object imports into the chosen folder"""
+    from builder.heightfield.road_sections.tb_export import export_tb_road_imports
+
+    layer_id: str | None = context.ui.road_sections_import_target
+    context.ui.road_sections_import_target = None
+    context.application.journal.record(
+        "export_tb_roads", path=path, layer_id=layer_id
+    )
+    if layer_id is None:
+        context.ui.status = "No road sections layer selected for export"
+        return
+    layer: Node | None = context.scene.nodes.nodes.get(layer_id)
+    if layer is None or layer.road_sections_layer is None:
+        context.ui.status = "Road sections layer no longer available"
+        return
+    if layer.parent_id is None:
+        context.ui.status = "Road sections layer has no heightfield parent"
+        return
+    parent: Node | None = context.scene.nodes.nodes.get(layer.parent_id)
+    if parent is None or parent.heightfield is None:
+        context.ui.status = "Heightfield parent no longer available"
+        return
+    out_dir: Path = path.resolve().parent
+    try:
+        result = export_tb_road_imports(
+            context.scene.nodes.nodes,
+            layer_id,
+            parent.heightfield,
+            out_dir,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        log_exception("export tb roads failed", exc)
+        context.ui.status = f"Export failed: {exc}"
+        return
+    context.ui.browser_directories[FileBrowserPurpose.export_tb_roads] = out_dir
+    if result.objects_written == 0:
+        context.ui.status = "No road placements to export"
+        return
+    file_names: str = ", ".join(p.name for p in result.files)
+    context.ui.status = (
+        f"Exported {result.objects_written} objects "
+        f"({file_names}) → {out_dir}"
+    )
+
+
 def apply_import_road_shp_path(context: CommandContext, path: Path) -> None:
     """import a shapefile under the pending road sections layer"""
     from builder.heightfield.road_sections.edit import import_road_shp
@@ -415,6 +461,62 @@ def apply_import_road_shp_path(context: CommandContext, path: Path) -> None:
     context.ui.status = (
         f"Imported {shp_path.name} ({polyline_count} polylines)"
     )
+
+
+def apply_import_tb_objects_path(context: CommandContext, path: Path) -> None:
+    """set source_path on the pending tb_import generator and regenerate"""
+    from dataclasses import replace
+
+    from builder.generators.param_types import NameParam
+    from builder.generators.regenerate import regenerate_group
+    from builder.generators.tb_import import TbImportParams
+
+    group_id: str | None = context.ui.tb_import_target
+    context.ui.tb_import_target = None
+    context.application.journal.record(
+        "import_tb_objects", path=path, group_id=group_id
+    )
+    if group_id is None:
+        context.ui.status = "No TB Import group selected"
+        return
+    group: Node | None = context.scene.nodes.nodes.get(group_id)
+    if group is None or group.generator is None:
+        context.ui.status = "TB Import group no longer available"
+        return
+    if group.generator.kind != "tb_import":
+        context.ui.status = "Selected group is not a TB Import generator"
+        return
+    params: TbImportParams = group.generator.params
+    updated: Node = replace(
+        group,
+        generator=replace(
+            group.generator,
+            params=replace(
+                params,
+                source_path=NameParam(
+                    str(path.resolve()), label="Source"
+                ),
+            ),
+        ),
+        name=path.stem,
+    )
+    context.scene.add_nodes([updated])
+    regenerate_group(
+        context.scene.nodes,
+        group_id,
+        heightmap_catalog=context.application.heightmap_catalog,
+    )
+    context.ui.browser_directories[
+        FileBrowserPurpose.import_tb_objects
+    ] = path.parent
+    meshed: int = len(
+        [
+            child
+            for child in context.scene.nodes.nodes.values()
+            if child.parent_id == group_id and child.mesh_id is not None
+        ]
+    )
+    context.ui.status = f"TB Import {path.name} ({meshed} instances)"
 
 
 cmd_quit: Command[None] = Command("Quit", quit_app)

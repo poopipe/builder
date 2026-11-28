@@ -38,7 +38,9 @@ from builder.heightfield.road_sections.part_catalog import (
     build_kits,
     kit_for_usage,
     parse_stem,
+    require_kit_for_usage,
 )
+from builder.heightfield.road_sections.kit_widths import PieceSnapPoints
 from builder.heightfield.road_sections.proxies import (
     build_corner_proxy_geometry,
     corner_segment_count,
@@ -104,7 +106,10 @@ class TestRoadPartCatalog(unittest.TestCase):
     def test_kit_for_usage(self) -> None:
         self.assertEqual(kit_for_usage("primary"), "asf1")
         self.assertEqual(kit_for_usage("secondary"), "asf2")
+        self.assertEqual(kit_for_usage("motorway"), "asf1")
         self.assertIsNone(kit_for_usage("raceway"))
+        self.assertEqual(require_kit_for_usage("raceway"), "asf3")
+        self.assertEqual(require_kit_for_usage("motorway"), "asf1")
 
     def test_proxy_mesh_id_includes_width(self) -> None:
         a = road_proxy_mesh_id("asf1_25", 12.0)
@@ -154,6 +159,57 @@ class TestRoadCornerProxy(unittest.TestCase):
         self.assertGreater(ay, 0.0)
         self.assertGreater(by, 0.0)
         self.assertGreater(cy, 0.0)
+
+    def test_snap_proxy_pins_begin_and_end(self) -> None:
+        corner = CornerPiece(angle_deg=10.0, radius_m=100.0, stem="asf1_10 100")
+        snaps = PieceSnapPoints(
+            lb=(-6.714035511016846, 0.0, -9.203353881835938),
+            le=(-5.103657245635986, 0.0, 9.203353881835938),
+            pb=(5.285964488983154, 0.0, -9.203353881835938),
+            pe=(6.714035511016846, 0.0, 7.119575500488281),
+        )
+        geo = build_corner_proxy_geometry(corner, 12.0, snaps=snaps)
+        begin: tuple[float, float] = snaps.begin_mid_xz()
+        end: tuple[float, float] = snaps.end_mid_xz()
+        # ring 0 left/right bottom → begin mid
+        lx0: float = geo.positions[0]
+        lz0: float = geo.positions[2]
+        rx0: float = geo.positions[3]
+        rz0: float = geo.positions[5]
+        self.assertAlmostEqual(0.5 * (lx0 + rx0), begin[0], places=5)
+        self.assertAlmostEqual(0.5 * (lz0 + rz0), begin[1], places=5)
+        last: int = geo.segments * 4
+        lx1: float = geo.positions[last * 3]
+        lz1: float = geo.positions[last * 3 + 2]
+        rx1: float = geo.positions[(last + 1) * 3]
+        rz1: float = geo.positions[(last + 1) * 3 + 2]
+        self.assertAlmostEqual(0.5 * (lx1 + rx1), end[0], places=5)
+        self.assertAlmostEqual(0.5 * (lz1 + rz1), end[1], places=5)
+
+    def test_snap_proxy_top_face_winds_for_plus_y(self) -> None:
+        corner = CornerPiece(angle_deg=10.0, radius_m=100.0, stem="asf1_10 100")
+        snaps = PieceSnapPoints(
+            lb=(-6.714035511016846, 0.0, -9.203353881835938),
+            le=(-5.103657245635986, 0.0, 9.203353881835938),
+            pb=(5.285964488983154, 0.0, -9.203353881835938),
+            pe=(6.714035511016846, 0.0, 7.119575500488281),
+        )
+        geo = build_corner_proxy_geometry(corner, 12.0, snaps=snaps)
+        i0: int = geo.indices[6]
+        i1: int = geo.indices[7]
+        i2: int = geo.indices[8]
+        ax: float = geo.positions[i0 * 3]
+        ay: float = geo.positions[i0 * 3 + 1]
+        az: float = geo.positions[i0 * 3 + 2]
+        bx: float = geo.positions[i1 * 3]
+        by: float = geo.positions[i1 * 3 + 1]
+        bz: float = geo.positions[i1 * 3 + 2]
+        cx: float = geo.positions[i2 * 3]
+        cy: float = geo.positions[i2 * 3 + 1]
+        cz: float = geo.positions[i2 * 3 + 2]
+        ny: float = (bz - az) * (cx - ax) - (bx - ax) * (cz - az)
+        self.assertGreater(ny, 0.0)
+        self.assertGreater(ay, 0.0)
 
 
 class TestRoadFit(unittest.TestCase):
@@ -259,7 +315,7 @@ class TestRoadFit(unittest.TestCase):
         )
         self.assertEqual(len(placed), 1)
         piece = placed[0]
-        self.assertAlmostEqual(piece.roll_deg, 0.0, places=5)
+        self.assertAlmostEqual(piece.roll_deg, 180.0, places=5)
         self.assertAlmostEqual(
             piece.yaw_deg,
             corner_placement_yaw_deg(0.0, 90.0, clockwise=False),
@@ -534,8 +590,8 @@ class TestRoadPlacementRoundTrip(unittest.TestCase):
         decoded = road_usage_group_from_json(payload)
         self.assertEqual(decoded, group)
 
-    def test_document_version_is_39(self) -> None:
-        self.assertEqual(scene_format_version, 39)
+    def test_document_version_is_40(self) -> None:
+        self.assertEqual(scene_format_version, 41)
         document = SceneDocument(
             version=scene_format_version,
             active_mesh_id=builtin_cube,
@@ -587,10 +643,10 @@ class TestRoadPlacementRoundTrip(unittest.TestCase):
             ),
         )
         payload = document_to_json(document, {}, {}, {})
-        self.assertEqual(payload["version"], 39)
+        self.assertEqual(payload["version"], 40)
         decoded, warnings = document_from_json(payload)
         self.assertEqual(warnings, [])
-        self.assertEqual(decoded.version, 39)
+        self.assertEqual(decoded.version, 40)
         node = decoded.nodes[0]
         assert node.road_usage_group is not None
         self.assertEqual(node.road_usage_group.kit, "asf1")

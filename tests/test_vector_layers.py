@@ -7,7 +7,14 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from pyray import Camera3D, CameraProjection, Ray, Vector3
+from pyray import (
+    Camera3D,
+    CameraProjection,
+    Ray,
+    Transform,
+    Vector3,
+    quaternion_from_axis_angle,
+)
 
 from builder.generators.param_types import BoolParam, FloatParam
 from builder.heightfield.heightfield_types import (
@@ -61,18 +68,33 @@ from builder.heightfield.vector.stamp import (
 )
 from builder.scene.selection import subtree_ids
 from builder.heightfield.vector.polyline import PolylineShapeParams, polyline_rasterize
-from builder.heightfield.vector.rasterize import regenerate_vector_sources
+from builder.heightfield.vector.rasterize import (
+    dirty_aabb_for_vector_nodes,
+    regenerate_vector_sources,
+    regenerate_vectors_touching,
+    union_aabb,
+)
 from builder.heightfield.vector.rectangle import (
     RectangleShapeParams,
+    oriented_rectangle_hf_corners,
     rectangle_rasterize,
 )
+from builder.scene.transform_ops import rotate_transform_local
+from builder.scene.transforms import rotate_nested_about_world_pivot
+from builder.view.gizmo import (
+    filter_gizmo_axes_for_selection,
+    snap_vector_point_translation,
+    translate_plane_normal,
+    vector_shape_ids_for_selection,
+)
+from builder.view.gizmo_types import GizmoAxis, GizmoMode
 from builder.heightfield.vector.registry import get_vector_shape_spec, vector_shape_specs
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
     VectorLayerRecipe,
     VectorRasterContext,
+    VectorShapeRecipe,
 )
-from builder.view.gizmo import snap_vector_point_translation
 from builder.io.scene_format import (
     dumps_document,
     loads_document,
@@ -386,9 +408,9 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
             )
             self.assertIsNotNone(layer_decoded.vector_layer)
             self.assertIsNotNone(shape_decoded.vector_shape)
-            self.assertEqual(scene_format_version, 39)
+            self.assertEqual(scene_format_version, 41)
 
-    def test_document_version_is_39(self) -> None:
+    def test_document_version_is_40(self) -> None:
         document: SceneDocument = SceneDocument(
             version=scene_format_version,
             active_mesh_id=builtin_cube,
@@ -414,7 +436,7 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
         )
         text: str = dumps_document(document, {}, {}, {})
         loaded, _warnings = loads_document(text)
-        self.assertEqual(loaded.version, 39)
+        self.assertEqual(loaded.version, 40)
 
 
 class TestVectorSculpt(unittest.TestCase):
@@ -1240,6 +1262,327 @@ class TestVectorRoad(unittest.TestCase):
                 float(decoded.vector_shape.grade.value), 0.25
             )
             self.assertIsNotNone(updated.edit_layers)
+
+
+class TestOrientedRectangle(unittest.TestCase):
+    def test_shape_yaw_rotates_corners(self) -> None:
+        shape = Node(
+            id="shape",
+            parent_id="hf",
+            transform=Transform(
+                Vector3(0.0, 0.0, 0.0),
+                quaternion_from_axis_angle(Vector3(0.0, 1.0, 0.0), 0.25 * 3.14159265),
+                Vector3(1.0, 1.0, 1.0),
+            ),
+            mesh_id=None,
+            vector_shape=None,
+        )
+        a = Node(
+            id="a",
+            parent_id="shape",
+            transform=transform_at(Vector3(-4.0, 0.0, -2.0)),
+            mesh_id=None,
+            role=NodeRole.path_point,
+            path_point=default_path_point_recipe(),
+        )
+        b = Node(
+            id="b",
+            parent_id="shape",
+            transform=transform_at(Vector3(4.0, 0.0, 2.0)),
+            mesh_id=None,
+            role=NodeRole.path_point,
+            path_point=default_path_point_recipe(),
+        )
+        hf = Node(
+            id="hf",
+            parent_id=None,
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+        )
+        nodes: dict[str, Node] = {
+            hf.id: hf,
+            shape.id: shape,
+            a.id: a,
+            b.id: b,
+        }
+        corners = oriented_rectangle_hf_corners(nodes, shape.id, hf.id)
+        assert corners is not None
+        self.assertEqual(len(corners), 4)
+        # rotated rectangle is not axis-aligned: xs of "left" edge differ in z
+        xs: list[float] = sorted({round(c[0], 5) for c in corners})
+        zs: list[float] = sorted({round(c[1], 5) for c in corners})
+        self.assertGreater(len(xs), 2)
+        self.assertGreater(len(zs), 2)
+
+    def test_fill_accepts_four_oriented_corners(self) -> None:
+        width: int = 64
+        height: int = 64
+        samples: list[float] = [0.0] * (width * height)
+        context: VectorRasterContext = VectorRasterContext(
+            samples=samples,
+            width=width,
+            height=height,
+            size_x=64.0,
+            size_z=64.0,
+            radius_metres=1.0,
+            offset=1.0,
+            intensity=1.0,
+            apply_mode=VectorApplyMode.fill,
+            brush_kind="add",
+        )
+        # diamond (square rotated 45°) around origin
+        rectangle_rasterize(
+            context,
+            [(0.0, -8.0), (8.0, 0.0), (0.0, 8.0), (-8.0, 0.0)],
+            RectangleShapeParams(),
+        )
+        center = (height // 2) * width + (width // 2)
+        self.assertGreater(samples[center], 0.5)
+        # outside the diamond but inside its aabb should stay empty
+        outside = (height // 2) * width + (width // 2 + 10)
+        self.assertEqual(samples[outside], 0.0)
+
+
+class TestVectorRotateGizmo(unittest.TestCase):
+    def test_rotate_mode_keeps_only_y(self) -> None:
+        from builder.scene.scene import Scene
+
+        layer = Node(
+            id="layer",
+            parent_id="hf",
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+            vector_layer=VectorLayerRecipe(),
+        )
+        shape = Node(
+            id="shape",
+            parent_id="layer",
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+            vector_shape=VectorShapeRecipe(
+                kind="polyline",
+                apply_mode=VectorApplyMode.stroke,
+                brush_kind="add",
+                offset=FloatParam(0.0),
+                intensity=FloatParam(1.0),
+                radius=FloatParam(1.0),
+                grade=FloatParam(0.0),
+                params=PolylineShapeParams(closed=BoolParam(False)),
+            ),
+        )
+        point = Node(
+            id="p0",
+            parent_id="shape",
+            transform=transform_at(Vector3(1.0, 0.0, 0.0)),
+            mesh_id=None,
+            role=NodeRole.path_point,
+            path_point=default_path_point_recipe(),
+        )
+        hf = Node(
+            id="hf",
+            parent_id=None,
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+        )
+        scene = Scene()
+        scene.add_nodes([hf, layer, shape, point])
+        scene.set_selection([point.id])
+        axes = {
+            GizmoAxis.x: Vector3(1.0, 0.0, 0.0),
+            GizmoAxis.y: Vector3(0.0, 1.0, 0.0),
+            GizmoAxis.z: Vector3(0.0, 0.0, 1.0),
+        }
+        filtered = filter_gizmo_axes_for_selection(
+            axes, scene, [point.id], GizmoMode.rotate
+        )
+        self.assertEqual(set(filtered.keys()), {GizmoAxis.y})
+        filtered_shape = filter_gizmo_axes_for_selection(
+            axes, scene, [shape.id], GizmoMode.rotate
+        )
+        self.assertEqual(set(filtered_shape.keys()), {GizmoAxis.y})
+        self.assertEqual(
+            vector_shape_ids_for_selection(scene, [point.id]),
+            [shape.id],
+        )
+        move_axes = filter_gizmo_axes_for_selection(
+            axes, scene, [shape.id], GizmoMode.translate
+        )
+        self.assertEqual(set(move_axes.keys()), {GizmoAxis.x, GizmoAxis.z})
+        normal = translate_plane_normal(move_axes)
+        self.assertAlmostEqual(abs(float(normal.y)), 1.0, places=5)
+
+    def test_shape_local_yaw_keeps_point_offsets(self) -> None:
+        hf = Node(
+            id="hf",
+            parent_id=None,
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+        )
+        layer = Node(
+            id="layer",
+            parent_id="hf",
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+            vector_layer=VectorLayerRecipe(),
+        )
+        shape = Node(
+            id="shape",
+            parent_id="layer",
+            transform=transform_at(Vector3(10.0, 0.0, 0.0)),
+            mesh_id=None,
+            vector_shape=VectorShapeRecipe(
+                kind="polyline",
+                apply_mode=VectorApplyMode.stroke,
+                brush_kind="add",
+                offset=FloatParam(0.0),
+                intensity=FloatParam(1.0),
+                radius=FloatParam(1.0),
+                grade=FloatParam(0.0),
+                params=PolylineShapeParams(closed=BoolParam(False)),
+            ),
+        )
+        point = Node(
+            id="p0",
+            parent_id="shape",
+            transform=transform_at(Vector3(4.0, 0.0, 0.0)),
+            mesh_id=None,
+            role=NodeRole.path_point,
+            path_point=default_path_point_recipe(),
+        )
+        nodes: dict[str, Node] = {
+            hf.id: hf,
+            layer.id: layer,
+            shape.id: shape,
+            point.id: point,
+        }
+        before_local = point.transform.translation
+        before_hf = vector_point_xz(nodes, shape.id, hf.id)[0]
+        yaw = quaternion_from_axis_angle(Vector3(0.0, 1.0, 0.0), 0.5 * 3.14159265)
+        nodes[shape.id] = replace(
+            shape,
+            transform=rotate_transform_local(shape.transform, yaw),
+        )
+        after_local = nodes[point.id].transform.translation
+        after_hf = vector_point_xz(nodes, shape.id, hf.id)[0]
+        self.assertAlmostEqual(float(after_local.x), float(before_local.x))
+        self.assertAlmostEqual(float(after_local.z), float(before_local.z))
+        self.assertNotAlmostEqual(after_hf[0], before_hf[0], places=3)
+        self.assertAlmostEqual(after_hf[0], 10.0, places=3)
+        self.assertAlmostEqual(after_hf[1], -4.0, places=3)
+
+    def test_nested_rotate_orbits_parent_local_translation(self) -> None:
+        parent = Node(
+            id="parent",
+            parent_id=None,
+            transform=transform_at(Vector3(10.0, 0.0, 0.0)),
+            mesh_id=None,
+        )
+        child = Node(
+            id="child",
+            parent_id="parent",
+            transform=transform_at(Vector3(5.0, 0.0, 0.0)),
+            mesh_id=None,
+        )
+        nodes: dict[str, Node] = {parent.id: parent, child.id: child}
+        # 180° about world origin: world (15,0,0) → (-15,0,0) → local (-25,0,0)
+        rotated = rotate_nested_about_world_pivot(
+            nodes,
+            child.id,
+            child.transform,
+            quaternion_from_axis_angle(Vector3(0.0, 1.0, 0.0), 3.14159265),
+            Vector3(0.0, 0.0, 0.0),
+        )
+        self.assertAlmostEqual(float(rotated.translation.x), -25.0, places=4)
+        self.assertAlmostEqual(float(rotated.translation.z), 0.0, places=4)
+
+
+class TestVectorDirtyRestamp(unittest.TestCase):
+    def test_dirty_move_clears_old_and_keeps_distant_shape(self) -> None:
+        catalog: HeightmapCatalog = HeightmapCatalog()
+        with tempfile.TemporaryDirectory() as tmp:
+            heightfield = default_heightfield()
+            hf_id = "hf1"
+            updated, new_nodes = append_vector_sculpt_edit_layer(
+                catalog,
+                heightfield,
+                hf_id,
+                cache_dir=Path(tmp),
+                default_shape_kind="circle",
+            )
+            nodes: dict[str, Node] = {
+                hf_id: Node(
+                    id=hf_id,
+                    parent_id=None,
+                    transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                    mesh_id=None,
+                    heightfield=updated,
+                )
+            }
+            for node in new_nodes:
+                nodes[node.id] = node
+            layer = next(
+                n for n in new_nodes if n.vector_layer is not None
+            )
+            shape_a = next(
+                n for n in new_nodes if n.vector_shape is not None
+            )
+            # second circle far from the first
+            shape_b_id = "shape_b"
+            point_b_id = "point_b"
+            assert shape_a.vector_shape is not None
+            shape_b = Node(
+                id=shape_b_id,
+                parent_id=layer.id,
+                transform=transform_at(Vector3(80.0, 0.0, 80.0)),
+                mesh_id=None,
+                vector_shape=shape_a.vector_shape,
+                name="Circle B",
+            )
+            point_b = Node(
+                id=point_b_id,
+                parent_id=shape_b_id,
+                transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+                mesh_id=None,
+                role=NodeRole.path_point,
+                path_point=default_path_point_recipe(),
+            )
+            nodes[shape_b_id] = shape_b
+            nodes[point_b_id] = point_b
+            regenerate_vector_sources(catalog, updated, nodes)
+            source = updated.edit_layers[0].height
+            assert isinstance(source, VectorSculptHeightSource)
+            buffer = catalog.buffers[source.heightmap_id]
+            # sample near B's center in uv
+            mid_b = sample_height(catalog, updated, 0.5 + 80.0 / 256.0, 0.5 + 80.0 / 256.0)
+            self.assertNotAlmostEqual(mid_b, 0.0, places=3)
+            # move shape A far away; dirty regen should not wipe B
+            point_a = next(
+                n
+                for n in new_nodes
+                if n.role is NodeRole.path_point and n.parent_id == shape_a.id
+            )
+            prior = dirty_aabb_for_vector_nodes(nodes, [point_a.id])
+            nodes[point_a.id] = replace(
+                point_a,
+                transform=transform_at(Vector3(-90.0, 0.0, -90.0)),
+            )
+            regenerate_vectors_touching(
+                catalog,
+                nodes,
+                [point_a.id],
+                prior_dirty_aabb=prior,
+            )
+            mid_b_after = sample_height(
+                catalog, updated, 0.5 + 80.0 / 256.0, 0.5 + 80.0 / 256.0
+            )
+            self.assertAlmostEqual(mid_b_after, mid_b, places=3)
+
+    def test_union_aabb_combines_extents(self) -> None:
+        a = (-1.0, 1.0, -2.0, 2.0)
+        b = (0.0, 3.0, -4.0, 0.0)
+        u = union_aabb(a, b)
+        assert u is not None
+        self.assertEqual(u, (-1.0, 3.0, -4.0, 2.0))
 
 
 if __name__ == "__main__":

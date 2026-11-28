@@ -52,7 +52,15 @@ class Scene:
             self.added_ids.add(node.id)
             self.bump_revision()
             return
-        if old.parent_id != node.parent_id or old.mesh_id != node.mesh_id:
+        if old.visible != node.visible:
+            # ancestor visibility can change batch membership for descendants
+            self.mark_structure_changed()
+            return
+        if (
+            old.parent_id != node.parent_id
+            or old.mesh_id != node.mesh_id
+            or old.color_index != node.color_index
+        ):
             self.removed.append(
                 RemovedNode(id=old.id, parent_id=old.parent_id, mesh_id=old.mesh_id)
             )
@@ -66,6 +74,7 @@ class Scene:
         """insert or replace nodes by id"""
         if not nodes:
             return
+        visibility_changed: bool = False
         node: Node
         for node in nodes:
             old: Node | None = self.nodes.get(node.id)
@@ -73,7 +82,14 @@ class Scene:
             if old is None:
                 self.added_ids.add(node.id)
                 continue
-            if old.parent_id != node.parent_id or old.mesh_id != node.mesh_id:
+            if old.visible != node.visible:
+                visibility_changed = True
+                continue
+            if (
+                old.parent_id != node.parent_id
+                or old.mesh_id != node.mesh_id
+                or old.color_index != node.color_index
+            ):
                 self.removed.append(
                     RemovedNode(
                         id=old.id, parent_id=old.parent_id, mesh_id=old.mesh_id
@@ -82,6 +98,9 @@ class Scene:
                 self.added_ids.add(node.id)
             else:
                 self.dirty_ids.add(node.id)
+        if visibility_changed:
+            self.mark_structure_changed()
+            return
         self.bump_revision()
 
     def remove_nodes(self, node_ids: Iterable[str]) -> None:

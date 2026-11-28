@@ -16,6 +16,7 @@ from builder.heightfield.sample import layer_height_bounds
 from builder.scene.bounds import transform_bounding_box
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
+from builder.scene.visibility import node_effectively_visible
 from builder.view.draw_cache import DrawCache, fill_world_matrix, sync_draw_cache
 
 
@@ -57,6 +58,8 @@ def pick_nearest_heightfield(
     for node_id, node in scene.nodes.items():
         heightfield: Heightfield | None = node.heightfield
         if heightfield is None:
+            continue
+        if not node_effectively_visible(scene.nodes, node_id):
             continue
         local_bounds: BoundingBox = heightfield_local_bounds(catalog, heightfield)
         world_bounds: BoundingBox = transform_bounding_box(

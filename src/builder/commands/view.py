@@ -18,6 +18,12 @@ def toggle_heightfield_wireframe(context: CommandContext, _: None) -> None:
     context.ui.status = f"Heightfield wireframe {state}"
 
 
+def toggle_sea_plane(context: CommandContext, _: None) -> None:
+    context.scene.toggle_sea_plane()
+    state: str = "on" if context.scene.show_sea_plane else "off"
+    context.ui.status = f"Sea plane {state}"
+
+
 def focus_camera(context: CommandContext, _: None) -> None:
     context.scene.focus_origin()
     context.ui.status = "Camera focused on origin"
@@ -74,6 +80,7 @@ cmd_toggle_grid: Command[None] = Command("Toggle Grid", toggle_grid)
 cmd_toggle_heightfield_wireframe: Command[None] = Command(
     "Terrain Wireframe", toggle_heightfield_wireframe
 )
+cmd_toggle_sea_plane: Command[None] = Command("Sea Plane", toggle_sea_plane)
 cmd_focus_camera: Command[None] = Command("Focus camera", focus_camera)
 cmd_toggle_side_panel: Command[None] = Command("Panel", toggle_side_panel)
 cmd_toggle_meshes_panel: Command[None] = Command("Meshes", toggle_meshes_panel)

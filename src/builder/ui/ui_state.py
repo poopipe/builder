@@ -12,7 +12,9 @@ from builder.ui.dock import (
     default_left_dock_width,
     default_right_dock_width,
 )
+from builder.ui.color_palette_popup import ColorPaletteState
 from builder.ui.file_browser import FileBrowserPurpose, FileBrowserState
+from builder.ui.list_picker import ListPickerState
 from builder.ui.text_field import FieldId, TextEdit
 
 
@@ -69,6 +71,8 @@ class UiState:
     focus: FieldId | None = None
     edit: TextEdit | None = None
     file_browser: FileBrowserState | None = None
+    list_picker: ListPickerState | None = None
+    color_palette: ColorPaletteState | None = None
     # last folder opened per file-browser purpose; persisted with the scene
     browser_directories: dict[FileBrowserPurpose, Path] = field(default_factory=dict)
     # group id waiting for a heightmap pick from the file browser
@@ -77,11 +81,15 @@ class UiState:
     heightfield_layer_replace_index: int | None = None
     # road sections layer id waiting for a shapefile pick
     road_sections_import_target: str | None = None
+    # tb_import generator group id waiting for an object-import .txt
+    tb_import_target: str | None = None
     # selected compact road polylines (session-only)
     road_polyline_usage_group_id: str | None = None
     road_polyline_ids: list[str] = field(default_factory=list)
     # up to two selected endpoints for connect/bridge
     road_endpoints: list[RoadEndpointRef] = field(default_factory=list)
+    # source usage group id while naming a new move destination
+    road_move_name_source_id: str | None = None
     # threshold for select-shorter-than (metres)
     road_select_shorter_than_m: float = 2.0
     # staged heightfield size until Apply size is pressed
@@ -127,6 +135,7 @@ class UiState:
         self.road_polyline_usage_group_id = None
         self.road_polyline_ids.clear()
         self.road_endpoints.clear()
+        self.road_move_name_source_id = None
 
     def set_road_polyline_selection(
         self,

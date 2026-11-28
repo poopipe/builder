@@ -4,41 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# gtt/osm usage class keys (not dayz kit ids)
-KNOWN_USAGE_CLASSES: frozenset[str] = frozenset(
-    {
-        "provincial",
-        "primary",
-        "trunk",
-        "secondary",
-        "tertiary",
-        "residential",
-        "living_street",
-        "unclassified",
-        "service",
-        "track",
-        "trackunclassified",
-        "softtrack",
-        "dirtroad",
-        "footway",
-        "path",
-        "pedestrian",
-        "cycleway",
-        "bridleway",
-        "steps",
-    }
-)
-
-SKIP_USAGE_CLASSES: frozenset[str] = frozenset(
-    {
-        "",
-        "raceway",
-        "unfiltered",
-    }
-)
-
 # metres: merge/connect ends within this distance
 road_endpoint_snap_m: float = 2.0
+# usage label when layer/highway attributes are empty
+unknown_road_usage: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -83,6 +52,8 @@ class RoadUsageGroupRecipe:
 
 # fallback ribbon stamp radius (= full kit width) when catalogue has no entry
 road_sections_ribbon_radius_m: float = 6.0
+# paint buffer edge cap (base can be 4k; ribbon does not need that density)
+road_sections_raster_max: int = 2048
 
 
 @dataclass(frozen=True)
@@ -100,21 +71,21 @@ class RoadEndpointRef:
     vertex_index: int
 
 
-def classify_road_usage(layer: str, highway: str) -> str | None:
-    """map gtt layer / osm highway to a usage class, or none to skip
+def classify_road_usage(layer: str, highway: str) -> str:
+    """map gtt layer / osm highway to a usage class label
 
-    prefers the gtt layer when it is a known road class; falls back to highway
-    when the layer is empty, unfiltered, or otherwise unknown
+    prefers a concrete gtt layer; ``unfiltered`` / empty falls through to highway.
+    always returns a label so every polyline feature can import
     """
     layer_key: str = (layer or "").strip().lower()
     highway_key: str = (highway or "").strip().lower()
-    if layer_key and layer_key not in SKIP_USAGE_CLASSES:
-        if layer_key in KNOWN_USAGE_CLASSES:
-            return layer_key
-    if highway_key and highway_key not in SKIP_USAGE_CLASSES:
-        if highway_key in KNOWN_USAGE_CLASSES:
-            return highway_key
-    return None
+    if layer_key and layer_key != "unfiltered":
+        return layer_key
+    if highway_key:
+        return highway_key
+    if layer_key:
+        return layer_key
+    return unknown_road_usage
 
 
 def road_usage_polyline_count(group: RoadUsageGroupRecipe) -> int:

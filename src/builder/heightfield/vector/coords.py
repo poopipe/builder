@@ -211,6 +211,21 @@ def path_point_vector_layer_id(
     return None
 
 
+def find_vector_shape_ancestor(
+    nodes: dict[str, Node], node_id: str
+) -> str | None:
+    """walk parents to the nearest vector shape node id"""
+    current_id: str | None = node_id
+    while current_id is not None:
+        node: Node | None = nodes.get(current_id)
+        if node is None:
+            return None
+        if node.vector_shape is not None:
+            return current_id
+        current_id = node.parent_id
+    return None
+
+
 def path_point_belongs_to_vector_layer(
     nodes: dict[str, Node], point_id: str
 ) -> bool:

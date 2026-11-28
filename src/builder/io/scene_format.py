@@ -73,7 +73,7 @@ from builder.meshes.mesh_catalog import MeshAsset, MeshAssetKind
 from builder.path.path_types import PathPointRecipe
 from builder.scene.scene_types import MeshId, Node, NodeRole
 
-scene_format_version: int = 39
+scene_format_version: int = 41
 scene_file_suffix: str = ".scene"
 
 
@@ -748,6 +748,10 @@ def node_to_json(node: Node) -> dict[str, Any]:
             pass
         case _:
             payload["role"] = node.role.name
+    if not node.visible:
+        payload["visible"] = False
+    if node.color_index is not None:
+        payload["color_index"] = int(node.color_index)
     if node.generator is not None:
         payload["generator"] = generator_to_json(node.generator)
     if node.heightfield is not None:
@@ -856,6 +860,21 @@ def node_from_json(data: Any) -> Node:
         raise ValueError(
             "path_point cannot combine with generator/heightfield/vector_*/road_sections_*"
         )
+    visible_raw: Any = data.get("visible", True)
+    if not isinstance(visible_raw, bool):
+        raise ValueError("node.visible must be a boolean")
+    color_index_raw: Any = data.get("color_index")
+    color_index: int | None
+    if color_index_raw is None:
+        color_index = None
+    elif isinstance(color_index_raw, int) and not isinstance(
+        color_index_raw, bool
+    ):
+        if color_index_raw < 0:
+            raise ValueError("node.color_index must be >= 0")
+        color_index = color_index_raw
+    else:
+        raise ValueError("node.color_index must be an int or null")
     return Node(
         id=node_id,
         parent_id=parent_id,
@@ -871,6 +890,8 @@ def node_from_json(data: Any) -> Node:
         path_point=path_point,
         name=name_raw,
         role=role,
+        visible=visible_raw,
+        color_index=color_index,
     )
 
 

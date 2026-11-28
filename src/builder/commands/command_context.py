@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from builder.io.mesh_import import ImportedMesh, MeshImporter
+from builder.heightfield.gpu.heightfield_gpu import HeightfieldGpuState
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
 from builder.heightfield.road_sections.road_sections_types import RoadEndpointRef
@@ -27,9 +28,11 @@ class SceneContext(Protocol):
 
     show_grid: bool
     show_heightfield_wireframe: bool
+    show_sea_plane: bool
     nodes: Scene
     gizmo: GizmoState
     orbit: OrbitState
+    heightfield_gpu: HeightfieldGpuState | None
 
     def toggle_grid(self) -> None:
         """show or hide the ground grid"""
@@ -37,6 +40,10 @@ class SceneContext(Protocol):
 
     def toggle_heightfield_wireframe(self) -> None:
         """show or hide heightfield wireframe"""
+        ...
+
+    def toggle_sea_plane(self) -> None:
+        """show or hide the heightfield sea plane"""
         ...
 
     def focus_origin(self) -> None:
@@ -111,6 +118,7 @@ class UiContext(Protocol):
     heightfield_layer_target: str | None
     heightfield_layer_replace_index: int | None
     road_sections_import_target: str | None
+    tb_import_target: str | None
     road_polyline_usage_group_id: str | None
     road_polyline_ids: list[str]
     road_endpoints: list[RoadEndpointRef]

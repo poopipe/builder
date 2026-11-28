@@ -11,12 +11,13 @@ from pyray import (
     draw_text_ex,
 )
 
+from builder.heightfield.gpu.heightfield_gpu import HeightfieldGpuState
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.heightfield.vector.coords import vector_layer_is_road
 from builder.heightfield.vector.edit import add_vector_shape
 from builder.heightfield.vector.rasterize import (
     find_heightfield_group_for_descendant,
-    regenerate_vector_layer_for_node,
+    regenerate_vectors_touching,
 )
 from builder.heightfield.vector.registry import vector_shape_specs
 from builder.heightfield.vector.vector_types import VectorShapeSpec
@@ -51,6 +52,8 @@ def update_vector_layer_inspector(
     ui: UiState,
     area: Rectangle,
     layer_node: Node,
+    *,
+    heightfield_gpu: HeightfieldGpuState | None = None,
 ) -> list[Button]:
     """layout/input: one add button per registered shape kind"""
     if layer_node.vector_layer is None:
@@ -83,14 +86,14 @@ def update_vector_layer_inspector(
                 layer_id, kind, road=as_road
             )
             scene.add_nodes(new_nodes)
-            hf_id: str | None = find_heightfield_group_for_descendant(
-                scene.nodes, layer_id
-            )
-            if hf_id is not None:
-                regenerate_vector_layer_for_node(
-                    catalog, scene.nodes, hf_id, layer_id
-                )
             shape_id: str = new_nodes[0].id
+            regenerate_vectors_touching(
+                catalog,
+                scene.nodes,
+                [shape_id],
+                defer_gpu=False,
+                heightfield_gpu=heightfield_gpu,
+            )
             scene.set_selection([shape_id])
             ui.status = f"Added {label}"
 

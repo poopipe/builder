@@ -30,6 +30,7 @@ from pyray import (
 )
 
 from builder.heightfield.vector.coords import (
+    find_vector_shape_ancestor,
     path_point_belongs_to_vector_layer,
     vector_point_belongs_to_road,
 )
@@ -37,12 +38,12 @@ from builder.scene.scene import Scene
 from builder.scene.scene_types import Node, NodeRole, Quaternion
 from builder.scene.transform_ops import (
     rotate_transform_local,
-    rotate_transform_world,
     scale_transform_uniform,
     translate_transform,
 )
 from builder.scene.transforms import (
     matrix_translation,
+    rotate_nested_about_world_pivot,
     world_delta_to_local,
     world_matrix,
     world_rotation,
@@ -73,6 +74,8 @@ class GizmoDrag:
     start_point: Vector3
     start_angle: float = 0.0
     start_scale_distance: float = 1.0
+    # set for translate plane (xz) drags
+    plane_normal: Vector3 | None = None
 
 
 def default_snap_steps() -> dict[GizmoMode, float]:
@@ -171,6 +174,69 @@ def selection_is_vector_layer_path_points(
     return True
 
 
+def selection_is_vector_workplane_nodes(
+    scene: Scene, selected_ids: Sequence[str]
+) -> bool:
+    """true when selection is vector shapes and/or path points under a layer"""
+    if not selected_ids:
+        return False
+    group_id: str
+    for group_id in selected_ids:
+        node: Node | None = scene.nodes.get(group_id)
+        if node is None:
+            return False
+        if node.vector_shape is not None:
+            if not path_point_belongs_to_vector_layer(scene.nodes, group_id):
+                return False
+            continue
+        if node.role is NodeRole.path_point:
+            if not path_point_belongs_to_vector_layer(scene.nodes, group_id):
+                return False
+            continue
+        return False
+    return True
+
+
+def vector_shape_ids_for_selection(
+    scene: Scene, selected_ids: Sequence[str]
+) -> list[str]:
+    """unique vector shape ids owning the selection (shape itself or point parent)"""
+    shape_ids: list[str] = []
+    seen: set[str] = set()
+    group_id: str
+    for group_id in selected_ids:
+        node: Node | None = scene.nodes.get(group_id)
+        if node is None:
+            continue
+        shape_id: str | None
+        if node.vector_shape is not None:
+            shape_id = group_id
+        else:
+            shape_id = find_vector_shape_ancestor(scene.nodes, group_id)
+        if shape_id is None or shape_id in seen:
+            continue
+        seen.add(shape_id)
+        shape_ids.append(shape_id)
+    return shape_ids
+
+
+def vector_shape_rotate_pivot_and_axes(
+    scene: Scene, selected_ids: Sequence[str]
+) -> tuple[Vector3, dict[GizmoAxis, Vector3]] | None:
+    """shape-origin pivot and shape-local Y axis for vector rotate"""
+    shape_ids: list[str] = vector_shape_ids_for_selection(scene, selected_ids)
+    if not shape_ids:
+        return None
+    pivot: Vector3 | None = selection_pivot(scene, shape_ids)
+    if pivot is None:
+        return None
+    shape_rot: Quaternion = world_rotation(scene.nodes, shape_ids[0])
+    axis_y: Vector3 = vector3_normalize(
+        vector3_rotate_by_quaternion(Vector3(0.0, 1.0, 0.0), shape_rot)
+    )
+    return pivot, {GizmoAxis.y: axis_y}
+
+
 def selection_is_road_vector_points(
     scene: Scene, selected_ids: Sequence[str]
 ) -> bool:
@@ -191,9 +257,20 @@ def filter_gizmo_axes_for_selection(
     axes: dict[GizmoAxis, Vector3],
     scene: Scene,
     selected_ids: Sequence[str],
+    mode: GizmoMode,
 ) -> dict[GizmoAxis, Vector3]:
-    """omit Y when editing non-road vector-layer path points"""
-    if not selection_is_vector_layer_path_points(scene, selected_ids):
+    """constrain axes for vector work-plane edits
+
+    rotate: Y only (spin in the work plane)
+    translate/scale: omit Y except for road path points (height)
+    """
+    if mode is GizmoMode.rotate:
+        if not selection_is_vector_workplane_nodes(scene, selected_ids):
+            return axes
+        if GizmoAxis.y not in axes:
+            return {}
+        return {GizmoAxis.y: axes[GizmoAxis.y]}
+    if not selection_is_vector_workplane_nodes(scene, selected_ids):
         return axes
     if selection_is_road_vector_points(scene, selected_ids):
         return axes
@@ -202,6 +279,29 @@ def filter_gizmo_axes_for_selection(
         for axis, direction in axes.items()
         if axis is not GizmoAxis.y
     }
+
+
+def translate_plane_normal(
+    axes: dict[GizmoAxis, Vector3],
+) -> Vector3:
+    """work-plane normal from gizmo x/z (fallback world y)"""
+    if GizmoAxis.x in axes and GizmoAxis.z in axes:
+        return vector3_normalize(
+            vector3_cross_product(axes[GizmoAxis.x], axes[GizmoAxis.z])
+        )
+    if GizmoAxis.y in axes:
+        return vector3_normalize(axes[GizmoAxis.y])
+    return Vector3(0.0, 1.0, 0.0)
+
+
+def translate_plane_handle_radius(size: float) -> float:
+    """pick radius for the center xz-plane handle"""
+    return max(0.08, size * 0.14)
+
+
+def translate_plane_handle_size(size: float) -> float:
+    """cube edge length for the center xz-plane handle"""
+    return size * 0.22
 
 
 def snap_vector_point_translation(
@@ -393,6 +493,8 @@ def hit_test_gizmo(
     pivot: Vector3,
     axes: dict[GizmoAxis, Vector3],
     size: float,
+    *,
+    plane_handle: bool = False,
 ) -> GizmoAxis | None:
     """return the nearest gizmo handle under the ray in world space"""
     pick_radius: float = max(0.05, size * gizmo_pick_radius_factor)
@@ -404,6 +506,12 @@ def hit_test_gizmo(
     if state.mode is GizmoMode.scale:
         center_hit: RayCollision = get_ray_collision_sphere(ray, pivot, tip_radius)
         if center_hit.hit:
+            return GizmoAxis.uniform
+    if state.mode is GizmoMode.translate and plane_handle:
+        plane_hit: RayCollision = get_ray_collision_sphere(
+            ray, pivot, translate_plane_handle_radius(size)
+        )
+        if plane_hit.hit:
             return GizmoAxis.uniform
 
     axis: GizmoAxis
@@ -474,15 +582,23 @@ def begin_gizmo_drag(
     """start a gizmo drag for the given handle"""
     axis_dir: Vector3
     if axis is GizmoAxis.uniform:
-        axis_dir = Vector3(1.0, 0.0, 0.0)
+        axis_dir = axes.get(GizmoAxis.x, Vector3(1.0, 0.0, 0.0))
     else:
         axis_dir = axes[axis]
 
     start_point: Vector3 = pivot
     start_angle: float = 0.0
     start_scale_distance: float = 1.0
+    drag_plane_normal: Vector3 | None = None
 
-    if state.mode is GizmoMode.translate and axis is not GizmoAxis.uniform:
+    if state.mode is GizmoMode.translate and axis is GizmoAxis.uniform:
+        drag_plane_normal = translate_plane_normal(axes)
+        plane_hit: Vector3 | None = plane_intersect(
+            ray, pivot, drag_plane_normal
+        )
+        if plane_hit is not None:
+            start_point = plane_hit
+    elif state.mode is GizmoMode.translate and axis is not GizmoAxis.uniform:
         projected: Vector3 | None = project_ray_onto_axis(
             ray, pivot, axis_dir, camera_position
         )
@@ -501,14 +617,25 @@ def begin_gizmo_drag(
         start_point = point
         start_scale_distance = max(1e-3, vector3_distance(point, pivot))
 
+    capture_ids: Sequence[str] = selected_ids
+    if state.mode is GizmoMode.rotate and selection_is_vector_workplane_nodes(
+        scene, selected_ids
+    ):
+        shape_ids: list[str] = vector_shape_ids_for_selection(
+            scene, selected_ids
+        )
+        if shape_ids:
+            capture_ids = shape_ids
+
     state.drag = GizmoDrag(
         axis=axis,
-        start_transforms=capture_transforms(scene, selected_ids),
+        start_transforms=capture_transforms(scene, capture_ids),
         pivot=pivot,
         axis_dir=axis_dir,
         start_point=start_point,
         start_angle=start_angle,
         start_scale_distance=start_scale_distance,
+        plane_normal=drag_plane_normal,
     )
 
 
@@ -526,19 +653,45 @@ def apply_drag_to_scene(
     group_id: str
     start_transform: Transform
 
-    if state.mode is GizmoMode.translate and drag.axis is not GizmoAxis.uniform:
-        current: Vector3 | None = project_ray_onto_axis(
-            ray, drag.pivot, drag.axis_dir, camera_position
-        )
-        if current is None:
-            return
-        delta: Vector3 = vector3_subtract(current, drag.start_point)
-        # keep motion exactly on the axis
-        axis: Vector3 = vector3_normalize(drag.axis_dir)
-        distance: float = vector3_dot_product(delta, axis)
-        if state.snap_enabled:
-            distance = snap_scalar(distance, state.snap_step[GizmoMode.translate])
-        delta = vector3_scale(axis, distance)
+    if state.mode is GizmoMode.translate:
+        current: Vector3 | None
+        delta: Vector3
+        if drag.axis is GizmoAxis.uniform:
+            assert drag.plane_normal is not None
+            current = plane_intersect(ray, drag.pivot, drag.plane_normal)
+            if current is None:
+                return
+            delta = vector3_subtract(current, drag.start_point)
+            if state.snap_enabled:
+                step: float = state.snap_step[GizmoMode.translate]
+                delta = Vector3(
+                    snap_scalar(float(delta.x), step),
+                    snap_scalar(float(delta.y), step),
+                    snap_scalar(float(delta.z), step),
+                )
+                # keep snapped delta on the work plane
+                plane_n: Vector3 = vector3_normalize(drag.plane_normal)
+                delta = vector3_subtract(
+                    delta,
+                    vector3_scale(
+                        plane_n, vector3_dot_product(delta, plane_n)
+                    ),
+                )
+        else:
+            current = project_ray_onto_axis(
+                ray, drag.pivot, drag.axis_dir, camera_position
+            )
+            if current is None:
+                return
+            delta = vector3_subtract(current, drag.start_point)
+            # keep motion exactly on the axis
+            axis: Vector3 = vector3_normalize(drag.axis_dir)
+            distance: float = vector3_dot_product(delta, axis)
+            if state.snap_enabled:
+                distance = snap_scalar(
+                    distance, state.snap_step[GizmoMode.translate]
+                )
+            delta = vector3_scale(axis, distance)
         for group_id, start_transform in drag.start_transforms.items():
             # drag delta is always world-space; nested nodes store parent-local
             local_delta: Vector3 = world_delta_to_local(
@@ -573,11 +726,34 @@ def apply_drag_to_scene(
             delta_angle = radians(
                 snap_scalar(degrees(delta_angle), state.snap_step[GizmoMode.rotate])
             )
+        # vector shapes: yaw about shape-local Y; path points stay shape-local
+        shape_local_rotate: bool = bool(drag.start_transforms)
+        for group_id in drag.start_transforms:
+            dragged: Node | None = scene.nodes.get(group_id)
+            if dragged is None or dragged.vector_shape is None:
+                shape_local_rotate = False
+                break
+        if shape_local_rotate:
+            local_yaw: Quaternion = quaternion_from_axis_angle(
+                Vector3(0.0, 1.0, 0.0), delta_angle
+            )
+            for group_id, start_transform in drag.start_transforms.items():
+                scene.set_node(
+                    replace(
+                        scene.nodes[group_id],
+                        transform=rotate_transform_local(
+                            start_transform, local_yaw
+                        ),
+                    )
+                )
+            return
         rotation: Quaternion = quaternion_from_axis_angle(drag.axis_dir, delta_angle)
         for group_id, start_transform in drag.start_transforms.items():
             new_transform: Transform
             if state.space is GizmoSpace.world:
-                new_transform = rotate_transform_world(
+                new_transform = rotate_nested_about_world_pivot(
+                    scene.nodes,
+                    group_id,
                     start_transform,
                     rotation,
                     drag.pivot,
@@ -592,10 +768,19 @@ def apply_drag_to_scene(
                     start_transform,
                     quaternion_from_axis_angle(local_axis, delta_angle),
                 )
+            under_vector: bool = path_point_belongs_to_vector_layer(
+                scene.nodes, group_id
+            )
+            allow_y: bool = (not under_vector) or vector_point_belongs_to_road(
+                scene.nodes, group_id
+            )
             scene.set_node(
-                replace(
-                    scene.nodes[group_id],
-                    transform=new_transform,
+                snap_vector_point_translation(
+                    replace(
+                        scene.nodes[group_id],
+                        transform=new_transform,
+                    ),
+                    allow_y=allow_y,
                 )
             )
         return
@@ -669,6 +854,8 @@ def draw_gizmo(
     pivot: Vector3,
     axes: dict[GizmoAxis, Vector3],
     size: float,
+    *,
+    plane_handle: bool = False,
 ) -> None:
     """draw the active gizmo at pivot"""
     radius: float = max(0.025, size * gizmo_axis_radius_factor)
@@ -693,5 +880,14 @@ def draw_gizmo(
             center_size,
             center_size,
             center_size,
+            gizmo_axis_color[GizmoAxis.uniform],
+        )
+    elif state.mode is GizmoMode.translate and plane_handle:
+        center: float = translate_plane_handle_size(size)
+        draw_cube(
+            pivot,
+            center,
+            center,
+            center,
             gizmo_axis_color[GizmoAxis.uniform],
         )

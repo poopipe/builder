@@ -144,8 +144,12 @@ def densify_path_positions(
     *,
     closed: bool,
     step_metres: float = default_densify_step_metres,
+    only_segments: set[int] | None = None,
 ) -> list[Vector3]:
-    """densify cubic path to positions in frame-local space"""
+    """densify cubic path to positions in frame-local space
+
+    only_segments: when set, densify only those segment indices
+    """
     points: list[Node] = ordered_path_points(nodes, parent_id)
     if len(points) == 0:
         return []
@@ -171,8 +175,19 @@ def densify_path_positions(
         )
     samples: list[Vector3] = []
     segment_count: int = len(points) if closed else len(points) - 1
+    selected: list[int]
+    if only_segments is None:
+        selected = list(range(segment_count))
+    else:
+        selected = sorted(
+            index for index in only_segments if 0 <= index < segment_count
+        )
+    if len(selected) == 0:
+        return []
+    first_selected: int = selected[0]
+    last_selected: int = selected[-1]
     segment: int
-    for segment in range(segment_count):
+    for segment in selected:
         i0: int = segment % len(points)
         i1: int = (segment + 1) % len(points)
         samples.extend(
@@ -182,11 +197,39 @@ def densify_path_positions(
                 ins[i1],
                 locals_points[i1],
                 step_metres,
-                include_start=(segment == 0),
-                include_end=(segment == segment_count - 1),
+                include_start=(segment == first_selected),
+                include_end=(segment == last_selected),
             )
         )
     return samples
+
+
+def path_segments_near_point_ids(
+    nodes: dict[str, Node],
+    parent_id: str,
+    point_ids: set[str],
+    *,
+    closed: bool,
+) -> set[int]:
+    """segment indices adjacent to the given path-point ids"""
+    points: list[Node] = ordered_path_points(nodes, parent_id)
+    if len(points) < 2 or len(point_ids) == 0:
+        return set()
+    segment_count: int = len(points) if closed else len(points) - 1
+    near: set[int] = set()
+    index: int
+    for index, point in enumerate(points):
+        if point.id not in point_ids:
+            continue
+        if closed:
+            near.add((index - 1) % segment_count)
+            near.add(index % segment_count)
+        else:
+            if index > 0:
+                near.add(index - 1)
+            if index < segment_count:
+                near.add(index)
+    return near
 
 
 def densify_path_xzyw(

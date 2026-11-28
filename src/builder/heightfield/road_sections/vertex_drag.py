@@ -25,10 +25,10 @@ from builder.heightfield.road_sections.road_sections_types import (
     polyline_by_id,
 )
 from builder.heightfield.vector.circle_handle import ray_hit_hf_plane_xz
+from builder.heightfield.road_sections.vertex_handle import vertex_pick_radius
 from builder.heightfield.vector.overlay_scale import (
     overlay_line_pixels,
     overlay_radius_for_camera,
-    point_cube_size_for_line_radius,
 )
 from builder.heightfield.vector.work_plane_point import (
     WorkPlanePointDrag,
@@ -90,11 +90,7 @@ def pick_road_vertex_drag(
     line_radius: float = overlay_radius_for_camera(
         camera, distance_to_hf, viewport_height_px, overlay_line_pixels
     )
-    vertex_radius: float = max(
-        0.75,
-        point_cube_size_for_line_radius(line_radius),
-        max(line_radius * 3.0, 1.0),
-    )
+    vertex_radius: float = vertex_pick_radius(line_radius)
     selected: set[str] = set(polyline_ids)
     best: RoadEndpointRef | None = None
     best_dist: float = vertex_radius

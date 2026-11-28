@@ -14,7 +14,6 @@ from builder.heightfield.road_sections.overlay import (
     road_sections_layer_is_linked,
     road_sections_plane_y,
     selected_road_sections_layer_id,
-    selected_usage_group_ids,
 )
 from builder.heightfield.road_sections.road_sections_types import (
     RoadEndpointRef,
@@ -23,13 +22,14 @@ from builder.heightfield.road_sections.road_sections_types import (
 )
 from builder.heightfield.vector.circle_handle import ray_hit_hf_plane_xz
 from builder.heightfield.vector.coords import ordered_child_nodes
+from builder.heightfield.road_sections.vertex_handle import vertex_pick_radius
 from builder.heightfield.vector.overlay_scale import (
     overlay_line_pixels,
     overlay_radius_for_camera,
-    point_cube_size_for_line_radius,
 )
 from builder.scene.scene_types import Node
 from builder.scene.transforms import matrix_translation, world_matrix
+from builder.scene.visibility import node_effectively_visible
 
 
 @dataclass(frozen=True)
@@ -157,8 +157,6 @@ def iter_linked_usage_groups(
     return rows
 
 
-# match overlay vertex cube; half-extent so clicks on the cube register
-_vertex_pick_half_extent: float = 0.75
 # shared split verts sit at the same xz; break ties with body distance
 _vertex_tie_eps: float = 1e-4
 
@@ -187,7 +185,7 @@ def pick_nearest_road_polyline(
     viewport_height_px: float,
     selected_ids: Sequence[str],
 ) -> RoadPolylinePickHit | None:
-    """pick nearest visible road polyline (same filter as overlay draw)
+    """pick nearest effectively-visible road polyline under the active layer
 
     vertex hits win over bare segments so cubes are selectable
     """
@@ -195,42 +193,33 @@ def pick_nearest_road_polyline(
     best_vertex_xz: float = float("inf")
     best_vertex_body_xz: float = float("inf")
     best_segment: RoadPolylinePickHit | None = None
-    # cache visible layer + usage filter per heightfield
-    visible_layers: dict[str, tuple[str, set[str] | None]] = {}
+    # cache active road-sections layer id per heightfield ("" = none)
+    active_layers: dict[str, str] = {}
     hf_node: Node
     usage: Node
     group: RoadUsageGroupRecipe
     plane_y: float
     for hf_node, usage, group, plane_y in iter_linked_usage_groups(nodes):
-        cached: tuple[str, set[str] | None] | None = visible_layers.get(
-            hf_node.id
-        )
-        if cached is None:
+        if not node_effectively_visible(nodes, hf_node.id):
+            continue
+        if not node_effectively_visible(nodes, usage.id):
+            continue
+        cached_layer: str | None = active_layers.get(hf_node.id)
+        if cached_layer is None:
             layer_id: str | None = selected_road_sections_layer_id(
                 nodes, hf_node.id, selected_ids
             )
             if layer_id is None:
-                visible_layers[hf_node.id] = ("", None)
+                active_layers[hf_node.id] = ""
                 continue
-            usage_filter: set[str] | None = selected_usage_group_ids(
-                nodes, layer_id, selected_ids
-            )
-            visible_layers[hf_node.id] = (layer_id, usage_filter)
-            cached = visible_layers[hf_node.id]
-        visible_layer_id: str
-        usage_filter_cached: set[str] | None
-        visible_layer_id, usage_filter_cached = cached
-        if visible_layer_id == "":
+            active_layers[hf_node.id] = layer_id
+            cached_layer = layer_id
+        if cached_layer == "":
             continue
         usage_layer_id: str | None = find_road_sections_layer_ancestor(
             nodes, usage.id
         )
-        if usage_layer_id != visible_layer_id:
-            continue
-        if (
-            usage_filter_cached is not None
-            and usage.id not in usage_filter_cached
-        ):
+        if usage_layer_id != cached_layer:
             continue
         hf_world: Matrix = world_matrix(nodes, hf_node.id)
         hit_xz: tuple[float, float] | None = ray_hit_hf_plane_xz(
@@ -248,12 +237,7 @@ def pick_nearest_road_polyline(
             camera, distance_to_hf, viewport_height_px, overlay_line_pixels
         )
         pick_radius: float = max(line_radius * 3.0, 1.0)
-        # at least the drawn cube; also scale with camera like segment picks
-        vertex_radius: float = max(
-            _vertex_pick_half_extent,
-            point_cube_size_for_line_radius(line_radius),
-            pick_radius,
-        )
+        vertex_radius: float = vertex_pick_radius(line_radius)
         translation: Vector3 = matrix_translation(hf_world)
         ray_dist: float = vector3_distance(
             camera.position,

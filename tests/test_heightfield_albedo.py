@@ -15,7 +15,7 @@ from builder.io.scene_format import (
 
 class TestHeightfieldAlbedo(unittest.TestCase):
     def test_scene_format_is_37(self) -> None:
-        self.assertEqual(scene_format_version, 39)
+        self.assertEqual(scene_format_version, 41)
 
     def test_json_round_trip_null(self) -> None:
         hf = default_heightfield()

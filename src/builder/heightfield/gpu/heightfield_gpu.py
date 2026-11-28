@@ -6,16 +6,21 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pyray import (
+    BlendMode,
     Color,
     Material,
     MaterialMapIndex,
     Matrix,
+    Mesh,
     Texture,
     Vector2,
     Vector3,
     Vector4,
+    begin_blend_mode,
     draw_mesh_instanced,
+    end_blend_mode,
     ffi,
+    get_mesh_bounding_box,
     is_texture_valid,
     load_material_default,
     load_texture,
@@ -34,6 +39,7 @@ from builder.heightfield.gpu.composite import (
     unload_height_composite_cache,
 )
 from builder.heightfield.gpu.grid_mesh import (
+    build_flat_grid_mesh,
     ensure_lod_grid,
     prewarm_lod_grids,
     release_all_lod_grids,
@@ -64,19 +70,40 @@ from builder.heightfield.gpu.terrain_shader import (
     unload_terrain_shader,
 )
 from builder.heightfield.heightfield_types import (
+    CatalogHeightSource,
+    HeightEditLayer,
+    HeightLayerSource,
     Heightfield,
     HeightfieldLayout,
+    PaintHeightSource,
+    RoadSectionsHeightSource,
+    SculptHeightSource,
+    VectorHeightSource,
+    VectorRoadHeightSource,
+    VectorSculptHeightSource,
     heightfield_layout,
 )
-from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.heightmap_catalog import (
+    HeightmapBuffer,
+    HeightmapCatalog,
+    HeightmapId,
+)
+from builder.heightfield.sea_plane import (
+    build_sea_visibility,
+    refresh_sea_visibility,
+)
+from builder.heightfield.vector.stamp import texel_range_to_world_aabb
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node
+from builder.scene.visibility import node_effectively_visible
+from builder.ui.color_palette import palette_color
 from builder.view.draw_cache import DrawCache, fill_world_matrix, sync_draw_cache
 from builder.view.lighting import Lighting, set_vec3
 from builder.view.line_shader import LineHeightDrape
-from builder.view.prepare_mesh import PreparedMesh
+from builder.view.prepare_mesh import PreparedMesh, release_prepared_mesh
 
 heightfield_albedo: Color = Color(210, 210, 210, 255)
+sea_albedo: Color = Color(40, 110, 180, 110)
 
 
 @dataclass
@@ -119,6 +146,11 @@ class HeightfieldGpuEntry:
     )
     # below_layer_index -> underlay composite for shadow draping
     below_textures: dict[int, BelowHeightTexture] = field(default_factory=dict)
+    sea_visibility: list[bool] | None = None
+    sea_visibility_key: HeightTextureKey | None = None
+    sea_transforms: Any | None = None
+    sea_count: int = 0
+    sea_matrix_key: tuple[int, int, int, float, float, float] | None = None
 
 
 @dataclass
@@ -132,6 +164,9 @@ class HeightfieldGpuState:
     grids: dict[tuple[float, int, int], PreparedMesh] = field(
         default_factory=dict
     )
+    # tile_world_size -> flat sea section mesh (lighting material)
+    sea_meshes: dict[float, PreparedMesh] = field(default_factory=dict)
+    sea_material: Material | None = None
     entries: dict[str, HeightfieldGpuEntry] = field(default_factory=dict)
     warmed_spacings: set[float] = field(default_factory=set)
 
@@ -148,6 +183,15 @@ def create_heightfield_gpu_state() -> HeightfieldGpuState:
     )
 
 
+def invalidate_sea_cache(entry: HeightfieldGpuEntry) -> None:
+    """drop sea visibility and instance buffer"""
+    entry.sea_visibility = None
+    entry.sea_visibility_key = None
+    entry.sea_transforms = None
+    entry.sea_count = 0
+    entry.sea_matrix_key = None
+
+
 def invalidate_tile_draw_cache(entry: HeightfieldGpuEntry) -> None:
     """drop cached tile matrices and instance batches"""
     entry.tile_matrices = None
@@ -155,6 +199,7 @@ def invalidate_tile_draw_cache(entry: HeightfieldGpuEntry) -> None:
     entry.cached_levels = None
     entry.cached_masks = None
     entry.instance_batches.clear()
+    invalidate_sea_cache(entry)
 
 
 def release_albedo_texture(entry: HeightfieldGpuEntry) -> None:
@@ -228,6 +273,114 @@ def layout_matrix_key(
     )
 
 
+def source_heightmap_ids(source: HeightLayerSource | None) -> list[HeightmapId]:
+    """catalog ids referenced by one height or mask source"""
+    match source:
+        case None:
+            return []
+        case (
+            CatalogHeightSource(heightmap_id=heightmap_id)
+            | PaintHeightSource(heightmap_id=heightmap_id)
+            | VectorHeightSource(heightmap_id=heightmap_id)
+            | VectorSculptHeightSource(heightmap_id=heightmap_id)
+        ):
+            return [heightmap_id]
+        case SculptHeightSource(heightmap_id=heightmap_id, coverage_id=coverage_id):
+            if coverage_id is None:
+                return [heightmap_id]
+            return [heightmap_id, coverage_id]
+        case VectorRoadHeightSource(
+            heightmap_id=heightmap_id, coverage_id=coverage_id
+        ) | RoadSectionsHeightSource(
+            heightmap_id=heightmap_id, coverage_id=coverage_id
+        ):
+            return [heightmap_id, coverage_id]
+        case _:
+            return []
+
+
+def heightfield_heightmap_ids(heightfield: Heightfield) -> list[HeightmapId]:
+    """all catalog heightmap ids that can dirty this heightfield stack"""
+    ids: list[HeightmapId] = []
+    if heightfield.base is not None:
+        ids.append(heightfield.base)
+    layer: HeightEditLayer
+    for layer in heightfield.edit_layers:
+        ids.extend(source_heightmap_ids(layer.height))
+        ids.extend(source_heightmap_ids(layer.mask))
+    return ids
+
+
+def pending_dirty_world_aabb(
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+    layout: HeightfieldLayout,
+) -> tuple[float, float, float, float] | None:
+    """union pending paint dirty rects; None means full-field / unknown"""
+    union: tuple[float, float, float, float] | None = None
+    saw_pending: bool = False
+    heightmap_id: HeightmapId
+    for heightmap_id in heightfield_heightmap_ids(heightfield):
+        if heightmap_id not in catalog.paint_dirty_rects:
+            continue
+        saw_pending = True
+        dirty_rect: tuple[int, int, int, int] | None = catalog.paint_dirty_rects[
+            heightmap_id
+        ]
+        if dirty_rect is None:
+            return None
+        buffer: HeightmapBuffer | None = catalog.buffers.get(heightmap_id)
+        if buffer is None:
+            return None
+        world: tuple[float, float, float, float] = texel_range_to_world_aabb(
+            dirty_rect[0],
+            dirty_rect[1],
+            dirty_rect[2],
+            dirty_rect[3],
+            layout.size_x,
+            layout.size_z,
+            buffer.width,
+            buffer.height,
+        )
+        if union is None:
+            union = world
+        else:
+            union = (
+                min(union[0], world[0]),
+                max(union[1], world[1]),
+                min(union[2], world[2]),
+                max(union[3], world[3]),
+            )
+    if not saw_pending:
+        return None
+    return union
+
+
+def refresh_entry_sea_visibility(
+    entry: HeightfieldGpuEntry,
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+    dirty_world_aabb: tuple[float, float, float, float] | None,
+) -> None:
+    """update sea tile flags after a height texture refresh"""
+    if entry.sea_visibility is None:
+        entry.sea_visibility = build_sea_visibility(
+            catalog, heightfield, entry.layout
+        )
+    else:
+        entry.sea_visibility = refresh_sea_visibility(
+            catalog,
+            heightfield,
+            entry.layout,
+            entry.sea_visibility,
+            dirty_world_aabb,
+        )
+    entry.sea_visibility_key = entry.texture.key
+    entry.sea_transforms = None
+    entry.sea_count = 0
+    entry.sea_matrix_key = None
+
+
 def ensure_heightfield_gpu(
     state: HeightfieldGpuState,
     catalog: HeightmapCatalog,
@@ -256,14 +409,39 @@ def ensure_heightfield_gpu(
         ensure_spacing_grids(state, spacing)
         return existing
     if existing is not None:
-        release_height_texture(existing.texture)
-        release_r32_target(existing.result_target)
-        existing.result_target = None
-        release_below_textures(existing)
-        release_albedo_texture(existing)
-        invalidate_tile_draw_cache(existing)
-    texture: HeightTexture
-    result_target: R32RenderTarget | None
+        layout_changed: bool = layout_matrix_key(existing.layout) != layout_matrix_key(
+            layout
+        )
+        dirty_world: tuple[float, float, float, float] | None = (
+            pending_dirty_world_aabb(catalog, heightfield, layout)
+        )
+        old_owned: bool = existing.texture.owns_texture
+        old_texture: HeightTexture = existing.texture
+        texture: HeightTexture
+        result_target: R32RenderTarget | None
+        texture, result_target = make_height_texture(
+            catalog,
+            heightfield,
+            state.composite,
+            reusable_result=existing.result_target,
+        )
+        if old_owned:
+            release_height_texture(old_texture)
+        existing.texture = texture
+        existing.result_target = result_target
+        existing.layout = layout
+        existing.spacing = spacing
+        existing.texture.height_scale = scale
+        existing.texture.height_bias = bias
+        if layout_changed:
+            invalidate_tile_draw_cache(existing)
+        else:
+            refresh_entry_sea_visibility(
+                existing, catalog, heightfield, dirty_world
+            )
+        ensure_albedo_texture(existing, heightfield)
+        ensure_spacing_grids(state, spacing)
+        return existing
     texture, result_target = make_height_texture(
         catalog, heightfield, state.composite
     )
@@ -273,6 +451,8 @@ def ensure_heightfield_gpu(
         spacing=spacing,
         result_target=result_target,
     )
+    entry.texture.height_scale = scale
+    entry.texture.height_bias = bias
     ensure_albedo_texture(entry, heightfield)
     state.entries[group_id] = entry
     ensure_spacing_grids(state, spacing)
@@ -305,9 +485,11 @@ def ensure_height_texture_below(
         cached.texture.height_scale = scale
         cached.texture.height_bias = bias
         return cached.texture
+    reusable_result: R32RenderTarget | None = None
     if cached is not None:
-        release_height_texture(cached.texture)
-        release_r32_target(cached.result_target)
+        if cached.texture.owns_texture:
+            release_height_texture(cached.texture)
+        reusable_result = cached.result_target
         del entry.below_textures[below_layer_index]
     texture: HeightTexture
     result_target: R32RenderTarget | None
@@ -316,6 +498,7 @@ def ensure_height_texture_below(
         heightfield,
         state.composite,
         below_layer_index=below_layer_index,
+        reusable_result=reusable_result,
     )
     scale, bias = height_texture_uniforms(
         catalog, heightfield, below_layer_index=below_layer_index
@@ -375,17 +558,23 @@ def prune_heightfield_gpu(state: HeightfieldGpuState, scene: Scene) -> None:
 def bind_heightfield_material(
     state: HeightfieldGpuState,
     entry: HeightfieldGpuEntry,
+    *,
+    albedo_tint: Color | None = None,
 ) -> None:
-    """push height texture and albedo onto the shared material / uniforms"""
+    """push height texture and albedo onto the shared material / uniforms
+
+    albedo_tint applies only when there is no albedo texture
+    """
     terrain: TerrainShader = state.terrain
     material: Material = state.material
     layout: HeightfieldLayout = entry.layout
     material.maps[MaterialMapIndex.MATERIAL_MAP_HEIGHT].texture = (
         entry.texture.texture
     )
-    material.maps[MaterialMapIndex.MATERIAL_MAP_ALBEDO].color = (
-        heightfield_albedo
-    )
+    tint: Color = heightfield_albedo
+    if entry.albedo_texture is None and albedo_tint is not None:
+        tint = albedo_tint
+    material.maps[MaterialMapIndex.MATERIAL_MAP_ALBEDO].color = tint
     if entry.albedo_texture is not None:
         material.maps[MaterialMapIndex.MATERIAL_MAP_ALBEDO].texture = (
             entry.albedo_texture
@@ -398,10 +587,10 @@ def bind_heightfield_material(
             terrain.shader,
             terrain.loc_col_diffuse,
             Vector4(
-                float(heightfield_albedo.r) / 255.0,
-                float(heightfield_albedo.g) / 255.0,
-                float(heightfield_albedo.b) / 255.0,
-                float(heightfield_albedo.a) / 255.0,
+                float(tint.r) / 255.0,
+                float(tint.g) / 255.0,
+                float(tint.b) / 255.0,
+                float(tint.a) / 255.0,
             ),
         )
     set_float(
@@ -470,6 +659,123 @@ def ensure_tile_matrices(entry: HeightfieldGpuEntry) -> None:
     entry.cached_levels = None
     entry.cached_masks = None
     entry.instance_batches.clear()
+    # layout change invalidates sea instance buffer; visibility may still match
+    entry.sea_transforms = None
+    entry.sea_count = 0
+    entry.sea_matrix_key = None
+
+
+def ensure_sea_material(state: HeightfieldGpuState, lighting: Lighting) -> Material:
+    """shared lighting material tinted for the sea plane"""
+    if state.sea_material is not None:
+        material: Material = state.sea_material
+        material.shader = lighting.shader
+        material.maps[MaterialMapIndex.MATERIAL_MAP_ALBEDO].color = sea_albedo
+        return material
+    material = load_material_default()
+    material.shader = lighting.shader
+    material.maps[MaterialMapIndex.MATERIAL_MAP_ALBEDO].color = sea_albedo
+    state.sea_material = material
+    return material
+
+
+def ensure_sea_section_mesh(
+    state: HeightfieldGpuState, lighting: Lighting, tile_world: float
+) -> PreparedMesh:
+    """flat 2x2 xz quad spanning one heightfield tile at y = 0"""
+    existing: PreparedMesh | None = state.sea_meshes.get(tile_world)
+    if existing is not None:
+        existing.material.shader = lighting.shader
+        return existing
+    material: Material = ensure_sea_material(state, lighting)
+    mesh: Mesh
+    keep_alive: tuple[Any, ...]
+    mesh, keep_alive = build_flat_grid_mesh(2, tile_world, 0)
+    prepared: PreparedMesh = PreparedMesh(
+        mesh=mesh,
+        material=material,
+        local_bounds=get_mesh_bounding_box(mesh),
+        keep_alive=keep_alive,
+    )
+    state.sea_meshes[tile_world] = prepared
+    return prepared
+
+
+def ensure_sea_instances(
+    entry: HeightfieldGpuEntry,
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+) -> None:
+    """rebuild sea visibility and instance matrices when heights or layout change"""
+    height_key: HeightTextureKey = entry.texture.key
+    if (
+        entry.sea_visibility is None
+        or entry.sea_visibility_key != height_key
+    ):
+        entry.sea_visibility = build_sea_visibility(
+            catalog, heightfield, entry.layout
+        )
+        entry.sea_visibility_key = height_key
+        entry.sea_transforms = None
+        entry.sea_count = 0
+        entry.sea_matrix_key = None
+    layout: HeightfieldLayout = entry.layout
+    matrix_key: tuple[int, int, int, float, float, float] = layout_matrix_key(
+        layout
+    )
+    if entry.sea_transforms is not None and entry.sea_matrix_key == matrix_key:
+        return
+    visibility: list[bool] = entry.sea_visibility or []
+    count: int = sum(1 for flag in visibility if flag)
+    if count == 0:
+        entry.sea_transforms = None
+        entry.sea_count = 0
+        entry.sea_matrix_key = matrix_key
+        return
+    tile_world: float = float(layout.tile_verts - 1) * layout.spacing
+    origin_x: float = -0.5 * layout.size_x
+    origin_z: float = -0.5 * layout.size_z
+    buffer: Any = ffi.new("Matrix[]", count)
+    slot: int = 0
+    tile_z: int
+    tile_x: int
+    for tile_z in range(layout.tiles_z):
+        for tile_x in range(layout.tiles_x):
+            index: int = tile_z * layout.tiles_x + tile_x
+            if index >= len(visibility) or not visibility[index]:
+                continue
+            local_x: float = origin_x + float(tile_x) * tile_world
+            local_z: float = origin_z + float(tile_z) * tile_world
+            buffer[slot] = matrix_translate(local_x, 0.0, local_z)
+            slot += 1
+    entry.sea_transforms = buffer
+    entry.sea_count = count
+    entry.sea_matrix_key = matrix_key
+
+
+def draw_sea_tiles(
+    state: HeightfieldGpuState,
+    entry: HeightfieldGpuEntry,
+    catalog: HeightmapCatalog,
+    heightfield: Heightfield,
+    group_world: Matrix,
+    lighting: Lighting,
+) -> None:
+    """draw visible sea sections as instanced flat quads at local y = 0"""
+    ensure_sea_instances(entry, catalog, heightfield)
+    if entry.sea_count <= 0 or entry.sea_transforms is None:
+        return
+    tile_world: float = float(entry.layout.tile_verts - 1) * entry.layout.spacing
+    section: PreparedMesh = ensure_sea_section_mesh(state, lighting, tile_world)
+    lighting.set_parent_transform(group_world)
+    begin_blend_mode(BlendMode.BLEND_ALPHA)
+    draw_mesh_instanced(
+        section.mesh,
+        section.material,
+        ffi.cast("Matrix *", entry.sea_transforms),
+        entry.sea_count,
+    )
+    end_blend_mode()
 
 
 def lod_maps_equal(
@@ -544,6 +850,8 @@ def draw_heightfield_tiles(
     entry: HeightfieldGpuEntry,
     group_world: Matrix,
     camera_world: Vector3,
+    *,
+    albedo_tint: Color | None = None,
 ) -> None:
     """draw tiles instanced by (lod, edge_mask) with edge stitching"""
     layout: HeightfieldLayout = entry.layout
@@ -571,7 +879,7 @@ def draw_heightfield_tiles(
     uv_scale_z: float = (
         0.0 if layout.res_z <= 1 else float(step) / float(layout.res_z - 1)
     )
-    bind_heightfield_material(state, entry)
+    bind_heightfield_material(state, entry, albedo_tint=albedo_tint)
     set_vec2(
         terrain.shader,
         terrain.loc_tile_uv_scale,
@@ -646,12 +954,15 @@ def draw_heightfields(
     view_pos: Vector3,
     *,
     wireframe: bool = False,
+    show_sea: bool = True,
 ) -> None:
     """draw every heightfield group with gpu displace"""
     sync_draw_cache(scene, cache)
     prune_heightfield_gpu(state, scene)
     bind_terrain_lights(state.terrain, lighting.lights)
     set_vec3(state.terrain.shader, state.terrain.loc_view, view_pos)
+    # opaque terrain first; sea after so alpha blends over submerged ground
+    sea_pass: list[tuple[HeightfieldGpuEntry, Heightfield, Matrix]] = []
     if wireframe:
         rl_enable_wire_mode()
     node_id: str
@@ -660,13 +971,44 @@ def draw_heightfields(
         heightfield: Heightfield | None = node.heightfield
         if heightfield is None:
             continue
+        if not node_effectively_visible(scene.nodes, node_id):
+            continue
         entry: HeightfieldGpuEntry = ensure_heightfield_gpu(
             state, catalog, node_id, heightfield
         )
         group_world: Matrix = fill_world_matrix(scene, cache, node_id)
-        draw_heightfield_tiles(state, entry, group_world, view_pos)
+        draw_heightfield_tiles(
+            state,
+            entry,
+            group_world,
+            view_pos,
+            albedo_tint=palette_color(node.color_index),
+        )
+        if show_sea:
+            sea_pass.append((entry, heightfield, group_world))
     if wireframe:
         rl_disable_wire_mode()
+    if show_sea:
+        entry_sea: HeightfieldGpuEntry
+        heightfield_sea: Heightfield
+        group_world_sea: Matrix
+        for entry_sea, heightfield_sea, group_world_sea in sea_pass:
+            draw_sea_tiles(
+                state,
+                entry_sea,
+                catalog,
+                heightfield_sea,
+                group_world_sea,
+                lighting,
+            )
+
+
+def release_sea_meshes(state: HeightfieldGpuState) -> None:
+    """unload shared sea section meshes; sea material is not unloaded"""
+    tile_world: float
+    for tile_world in list(state.sea_meshes):
+        release_prepared_mesh(state.sea_meshes.pop(tile_world))
+    state.sea_material = None
 
 
 def unload_heightfield_gpu(state: HeightfieldGpuState) -> None:
@@ -678,6 +1020,7 @@ def unload_heightfield_gpu(state: HeightfieldGpuState) -> None:
     for group_id in list(state.entries):
         drop_heightfield_entry(state, group_id)
     release_all_lod_grids(state.grids)
+    release_sea_meshes(state)
     state.warmed_spacings.clear()
     unload_height_composite_cache(state.composite)
     unload_terrain_shader(state.terrain)

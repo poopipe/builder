@@ -22,6 +22,7 @@ from builder.commands.scene import (
     cmd_place_ngon,
     cmd_place_radial,
     cmd_place_spline,
+    cmd_place_tb_import,
     cmd_unparent,
 )
 from builder.commands.view import (
@@ -32,6 +33,7 @@ from builder.commands.view import (
     cmd_toggle_gizmo_space,
     cmd_toggle_grid,
     cmd_toggle_heightfield_wireframe,
+    cmd_toggle_sea_plane,
     cmd_toggle_height_layers_panel,
     cmd_toggle_meshes_panel,
     cmd_toggle_outliner,
@@ -62,11 +64,13 @@ panel_commands: tuple[CommandItem, ...] = (
     CommandEntry(cmd_delete, None),
     CommandEntry(cmd_toggle_grid, None),
     CommandEntry(cmd_toggle_heightfield_wireframe, None),
+    CommandEntry(cmd_toggle_sea_plane, None),
     CommandEntry(cmd_focus_camera, None),
     CommandEntry(cmd_place_grid, None),
     CommandEntry(cmd_place_radial, None),
     CommandEntry(cmd_place_ngon, None),
     CommandEntry(cmd_place_spline, None),
+    CommandEntry(cmd_place_tb_import, None),
     CommandEntry(cmd_place_heightfield, None),
 )
 

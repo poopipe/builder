@@ -9,6 +9,7 @@ from pyray import (
     MouseButton,
     Rectangle,
     Vector2,
+    Vector3,
     draw_rectangle_lines_ex,
     draw_rectangle_rec,
     draw_text_ex,
@@ -23,6 +24,8 @@ from builder.heightfield.road_sections.edit import (
     delete_polylines,
     insert_vertex_between,
     merge_polylines,
+    move_polylines_between_groups,
+    normalize_usage_name,
     polyline_ids_shorter_than,
     set_usage_group_on_node,
     simplify_polylines,
@@ -35,7 +38,11 @@ from builder.heightfield.road_sections.fit_report import (
     report_usage_group_polylines,
     write_fit_report,
 )
-from builder.heightfield.road_sections.part_catalog import RoadPartsCatalog
+from builder.heightfield.road_sections.part_catalog import (
+    RoadPartsCatalog,
+    require_kit_for_usage,
+    usage_to_kit,
+)
 from builder.heightfield.road_sections.place import (
     drop_placements,
     place_polylines,
@@ -48,13 +55,21 @@ from builder.heightfield.road_sections.road_sections_types import (
     polyline_by_id,
 )
 from builder.heightfield.road_sections.shp_import import simplify_eps_m
+from builder.heightfield.vector.coords import ordered_child_nodes
+from builder.scene.ids import new_node_id
 from builder.scene.scene import Scene
-from builder.scene.scene_types import Node
+from builder.scene.scene_types import Node, transform_at
 from builder.session_journal import SessionJournal
 from builder.ui.file_browser import (
     FileBrowserPurpose,
     make_road_shp_browser,
+    make_tb_roads_export_browser,
     remembered_browser_directory,
+)
+from builder.ui.list_picker import (
+    ListPickerPurpose,
+    list_picker_new_item,
+    make_list_picker,
 )
 from builder.ui.text_field import (
     FieldId,
@@ -85,6 +100,7 @@ from builder.ui.widgets import (
 
 road_sections_panel: str = "road_sections"
 shorter_than_key: str = "shorter_than"
+move_usage_name_key: str = "move_usage_name"
 road_select_shorter_than_min_m: float = 0.1
 road_select_shorter_than_step_m: float = 0.1
 
@@ -106,6 +122,7 @@ class RoadSectionsInspectorLayout:
 
     buttons: list[Button] = field(default_factory=list)
     float_row: RoadFloatRow | None = None
+    move_name_rect: Rectangle | None = None
     project_checkbox: Rectangle | None = None
     project_onto_shadow: bool = False
     flatten_checkbox: Rectangle | None = None
@@ -173,6 +190,224 @@ def replace_polyline_selection(
     ui.road_endpoints.clear()
     count: int = len(polyline_ids)
     ui.status = f"Selected {count} polyline" + ("" if count == 1 else "s")
+
+
+def apply_road_kit_choice(
+    scene: Scene,
+    ui: UiState,
+    usage_node_id: str,
+    kit: str,
+    journal: SessionJournal | None,
+    *,
+    road_parts: RoadPartsCatalog | None = None,
+    scene_context: SceneContext | None = None,
+    heightmap_catalog: HeightmapCatalog | None = None,
+) -> None:
+    """set usage-group kit from list picker confirm; clears placements"""
+    usage_node: Node | None = scene.nodes.get(usage_node_id)
+    if usage_node is None or usage_node.road_usage_group is None:
+        ui.status = "Kit target missing"
+        return
+    apply_usage_group_edit(
+        scene,
+        ui,
+        usage_node,
+        replace(
+            usage_node.road_usage_group,
+            kit=kit,
+            placements=(),
+        ),
+        journal,
+        "kit",
+        road_parts=road_parts,
+        scene_context=scene_context,
+        heightmap_catalog=heightmap_catalog,
+    )
+
+
+def sibling_usage_names(scene: Scene, usage_node: Node) -> list[str]:
+    """usage labels under the same shapefile parent, excluding this node"""
+    if usage_node.parent_id is None:
+        return []
+    names: list[str] = []
+    sibling: Node
+    for sibling in ordered_child_nodes(scene.nodes, usage_node.parent_id):
+        if sibling.id == usage_node.id or sibling.road_usage_group is None:
+            continue
+        names.append(sibling.road_usage_group.usage)
+    return names
+
+
+def move_usage_picker_items(scene: Scene, usage_node: Node) -> list[str]:
+    """dest labels for Move to…: siblings, known classes, then New…"""
+    current: str = ""
+    if usage_node.road_usage_group is not None:
+        current = usage_node.road_usage_group.usage.strip().lower()
+    names: set[str] = set()
+    name: str
+    for name in sibling_usage_names(scene, usage_node):
+        key: str = name.strip().lower()
+        if key and key != current:
+            names.add(key)
+    for name in usage_to_kit.keys():
+        key = name.strip().lower()
+        if key and key != current:
+            names.add(key)
+    items: list[str] = sorted(names)
+    items.append(list_picker_new_item)
+    return items
+
+
+def begin_move_usage_name(ui: UiState, source_usage_id: str) -> None:
+    """enter custom usage-name typing after New…"""
+    ui.clear_focus()
+    ui.road_move_name_source_id = source_usage_id
+    ui.focus = FieldId(panel=road_sections_panel, key=move_usage_name_key)
+    ui.edit = begin_edit("")
+    ui.status = "Name new usage group…"
+
+
+def apply_move_polylines_to_usage(
+    scene: Scene,
+    ui: UiState,
+    source_usage_id: str,
+    dest_usage_name: str,
+    journal: SessionJournal | None,
+    *,
+    road_parts: RoadPartsCatalog | None = None,
+    scene_context: SceneContext | None = None,
+    heightmap_catalog: HeightmapCatalog | None = None,
+) -> None:
+    """move selected polylines into an existing or new sibling usage group"""
+    try:
+        dest_name: str = normalize_usage_name(dest_usage_name)
+    except ValueError as exc:
+        ui.status = str(exc)
+        return
+    source_node: Node | None = scene.nodes.get(source_usage_id)
+    if source_node is None or source_node.road_usage_group is None:
+        ui.status = "Move source missing"
+        return
+    if source_node.parent_id is None:
+        ui.status = "Usage group has no shapefile parent"
+        return
+    shp_id: str = source_node.parent_id
+    shp_node: Node | None = scene.nodes.get(shp_id)
+    if shp_node is None or shp_node.road_shp is None:
+        ui.status = "Shapefile parent missing"
+        return
+    polyline_ids: list[str] = list(ui.road_polyline_ids)
+    if not polyline_ids:
+        ui.status = "No polylines selected"
+        return
+    if (
+        ui.road_polyline_usage_group_id is not None
+        and ui.road_polyline_usage_group_id != source_usage_id
+    ):
+        ui.status = "Selection is not on the move source"
+        return
+
+    dest_node: Node | None = None
+    sibling: Node
+    for sibling in ordered_child_nodes(scene.nodes, shp_id):
+        group: RoadUsageGroupRecipe | None = sibling.road_usage_group
+        if group is None:
+            continue
+        if group.usage.strip().lower() == dest_name:
+            dest_node = sibling
+            break
+    if dest_node is not None and dest_node.id == source_usage_id:
+        ui.status = "Already in that usage group"
+        return
+    created: bool = False
+    if dest_node is None:
+        dest_node = Node(
+            id=new_node_id(),
+            parent_id=shp_id,
+            transform=transform_at(Vector3(0.0, 0.0, 0.0)),
+            mesh_id=None,
+            road_usage_group=RoadUsageGroupRecipe(
+                usage=dest_name,
+                kit=require_kit_for_usage(dest_name),
+            ),
+            name=dest_name,
+        )
+        created = True
+
+    assert dest_node.road_usage_group is not None
+    source_group: RoadUsageGroupRecipe
+    dest_group: RoadUsageGroupRecipe
+    source_group, dest_group = move_polylines_between_groups(
+        source_node.road_usage_group,
+        dest_node.road_usage_group,
+        polyline_ids,
+    )
+    moved_count: int = len(source_node.road_usage_group.polylines) - len(
+        source_group.polylines
+    )
+    if moved_count <= 0:
+        ui.status = "No matching polylines to move"
+        return
+
+    updated_source: Node = set_usage_group_on_node(source_node, source_group)
+    updated_dest: Node = (
+        replace(dest_node, road_usage_group=dest_group)
+        if created
+        else set_usage_group_on_node(dest_node, dest_group)
+    )
+    scene.add_nodes([updated_source, updated_dest])
+    if road_parts is not None and scene_context is not None:
+        regenerate_road_piece_children(
+            scene,
+            updated_source.id,
+            road_parts,
+            has_mesh=scene_context.has_mesh,
+            register_mesh=scene_context.register_mesh,
+            shader=scene_context.mesh_shader(),
+            heightmap_catalog=heightmap_catalog,
+        )
+        regenerate_road_piece_children(
+            scene,
+            updated_dest.id,
+            road_parts,
+            has_mesh=scene_context.has_mesh,
+            register_mesh=scene_context.register_mesh,
+            shader=scene_context.mesh_shader(),
+            heightmap_catalog=heightmap_catalog,
+        )
+    if heightmap_catalog is not None and (
+        source_group.ribbon_flatten
+        or dest_group.ribbon_flatten
+        or created
+    ):
+        from builder.heightfield.road_sections.rasterize import (
+            regenerate_road_sections_touching,
+        )
+
+        regenerate_road_sections_touching(
+            heightmap_catalog,
+            scene.nodes,
+            [updated_source.id, updated_dest.id],
+            road_parts=road_parts,
+        )
+    ui.road_move_name_source_id = None
+    replace_polyline_selection(
+        scene,
+        ui,
+        updated_dest,
+        polyline_ids,
+    )
+    if journal is not None:
+        journal.record(
+            "move_polylines",
+            source_usage_id=source_usage_id,
+            dest_usage_id=updated_dest.id,
+            dest_usage=dest_name,
+            count=moved_count,
+        )
+    ui.status = f"Moved {moved_count} line" + (
+        "" if moved_count == 1 else "s"
+    ) + f" → {dest_name}"
 
 
 def apply_usage_group_edit(
@@ -260,6 +495,7 @@ def update_road_sections_inspector(
 
     def open_import() -> None:
         ui.clear_focus()
+        ui.list_picker = None
         ui.road_sections_import_target = layer_node.id
         ui.file_browser = make_road_shp_browser(
             remembered_browser_directory(
@@ -270,11 +506,36 @@ def update_road_sections_inspector(
         )
         ui.status = "Import road shapefile…"
 
+    def open_export_tb() -> None:
+        ui.clear_focus()
+        ui.list_picker = None
+        ui.road_sections_import_target = layer_node.id
+        ui.file_browser = make_tb_roads_export_browser(
+            remembered_browser_directory(
+                ui.browser_directories,
+                FileBrowserPurpose.export_tb_roads,
+                None,
+            )
+        )
+        ui.status = "Export TB road objects…"
+
     buttons.append(
         Button(
             label="Import SHP…",
             on_click=open_import,
-            rect=Rectangle(x, y, inner_w, row_h),
+            rect=Rectangle(x, y, inner_w * 0.5 - ui_button_gap * 0.5, row_h),
+        )
+    )
+    buttons.append(
+        Button(
+            label="Export TB…",
+            on_click=open_export_tb,
+            rect=Rectangle(
+                x + inner_w * 0.5 + ui_button_gap * 0.5,
+                y,
+                inner_w * 0.5 - ui_button_gap * 0.5,
+                row_h,
+            ),
         )
     )
     y += row_h + ui_button_gap
@@ -287,22 +548,42 @@ def update_road_sections_inspector(
         and selected_count > 0
     )
     float_row: RoadFloatRow | None = None
+    move_name_rect: Rectangle | None = None
 
     if ui.focus is not None and ui.focus.panel == road_sections_panel:
         if ui.edit is not None:
             action: TextAction = handle_text_keys(ui.edit)
+            focus_key: str = ui.focus.key
             match action:
                 case TextAction.editing:
                     pass
                 case TextAction.cancel:
+                    if focus_key == move_usage_name_key:
+                        ui.road_move_name_source_id = None
                     ui.clear_focus()
                 case TextAction.commit | TextAction.focus_next | TextAction.focus_prev:
-                    parsed: float | None = parse_road_float(ui.edit.text)
-                    if parsed is not None:
-                        ui.road_select_shorter_than_m = clamp_shorter_than_m(
-                            parsed
-                        )
-                    ui.clear_focus()
+                    if focus_key == move_usage_name_key:
+                        source_id: str | None = ui.road_move_name_source_id
+                        typed_name: str = ui.edit.text
+                        ui.clear_focus()
+                        if source_id is not None:
+                            apply_move_polylines_to_usage(
+                                scene,
+                                ui,
+                                source_id,
+                                typed_name,
+                                journal,
+                                road_parts=road_parts,
+                                scene_context=scene_context,
+                                heightmap_catalog=heightmap_catalog,
+                            )
+                    else:
+                        parsed: float | None = parse_road_float(ui.edit.text)
+                        if parsed is not None:
+                            ui.road_select_shorter_than_m = clamp_shorter_than_m(
+                                parsed
+                            )
+                        ui.clear_focus()
 
     if usage_node is not None and usage_node.road_usage_group is not None:
         group: RoadUsageGroupRecipe = usage_node.road_usage_group
@@ -583,6 +864,32 @@ def update_road_sections_inspector(
             )
         )
         y += row_h + ui_button_gap
+
+        def open_move_picker() -> None:
+            if usage_node is None or usage_node.road_usage_group is None:
+                return
+            if ui.file_browser is not None:
+                return
+            items: list[str] = move_usage_picker_items(scene, usage_node)
+            ui.clear_focus()
+            ui.road_move_name_source_id = None
+            ui.list_picker = make_list_picker(
+                purpose=ListPickerPurpose.road_move_usage,
+                title="Move to usage",
+                items=items,
+                selected=0,
+                target_id=usage_node.id,
+            )
+            ui.status = "Move to usage…"
+
+        buttons.append(
+            Button(
+                label="Move to…",
+                on_click=open_move_picker,
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
         buttons.append(
             Button(
                 label="Simplify",
@@ -616,6 +923,49 @@ def update_road_sections_inspector(
                 )
             )
             y += row_h + ui_button_gap
+
+    if ui.road_move_name_source_id is not None:
+        move_name_rect = Rectangle(x, y, inner_w, row_h)
+
+        def confirm_named_move() -> None:
+            source_id_confirm: str | None = ui.road_move_name_source_id
+            if source_id_confirm is None:
+                return
+            typed: str = ui.edit.text if ui.edit is not None else ""
+            ui.clear_focus()
+            apply_move_polylines_to_usage(
+                scene,
+                ui,
+                source_id_confirm,
+                typed,
+                journal,
+                road_parts=road_parts,
+                scene_context=scene_context,
+                heightmap_catalog=heightmap_catalog,
+            )
+
+        if clicked and is_point_in_rect(mouse.x, mouse.y, move_name_rect):
+            already: bool = (
+                ui.focus is not None
+                and ui.focus.panel == road_sections_panel
+                and ui.focus.key == move_usage_name_key
+                and ui.edit is not None
+            )
+            if not already:
+                ui.focus = FieldId(
+                    panel=road_sections_panel, key=move_usage_name_key
+                )
+                ui.edit = begin_edit("")
+        y += row_h + ui_button_gap
+        buttons.append(
+            Button(
+                label="Confirm move",
+                on_click=confirm_named_move,
+                rect=Rectangle(x, y, inner_w, row_h),
+            )
+        )
+        y += row_h + ui_button_gap
+
     project_checkbox: Rectangle | None = None
     project_onto_shadow: bool = False
     flatten_checkbox: Rectangle | None = None
@@ -628,10 +978,12 @@ def update_road_sections_inspector(
         road_parts.ensure_loaded()
         kit_label: str = f"Kit: {usage_node.road_usage_group.kit}"
 
-        def cycle_kit() -> None:
+        def open_kit_picker() -> None:
             if usage_node is None or usage_node.road_usage_group is None:
                 return
             if road_parts is None:
+                return
+            if ui.file_browser is not None:
                 return
             names: list[str] = sorted(road_parts.kits.keys())
             if not names:
@@ -641,21 +993,21 @@ def update_road_sections_inspector(
             try:
                 index = names.index(current)
             except ValueError:
-                index = -1
-            next_kit: str = names[(index + 1) % len(names)]
-            apply_edit(
-                replace(
-                    usage_node.road_usage_group,
-                    kit=next_kit,
-                    placements=(),
-                ),
-                "kit",
+                index = 0
+            ui.clear_focus()
+            ui.list_picker = make_list_picker(
+                purpose=ListPickerPurpose.road_kit,
+                title="Select kit",
+                items=names,
+                selected=index,
+                target_id=usage_node.id,
             )
+            ui.status = "Select kit…"
 
         buttons.append(
             Button(
                 label=kit_label,
-                on_click=cycle_kit,
+                on_click=open_kit_picker,
                 rect=Rectangle(x, y, inner_w, row_h),
             )
         )
@@ -750,6 +1102,10 @@ def update_road_sections_inspector(
             float_row is not None
             and is_point_in_rect(mouse.x, mouse.y, float_row.value)
         )
+        on_move_name: bool = (
+            move_name_rect is not None
+            and is_point_in_rect(mouse.x, mouse.y, move_name_rect)
+        )
         if on_project and usage_node is not None and usage_node.road_usage_group is not None:
             ui.clear_focus()
             project_onto_shadow = (
@@ -772,9 +1128,11 @@ def update_road_sections_inspector(
                 ),
                 "ribbon_flatten",
             )
-        elif not on_control and not on_value:
+        elif not on_control and not on_value and not on_move_name:
             if ui.focus is not None and ui.focus.panel == road_sections_panel:
-                if ui.edit is not None:
+                if ui.focus.key == move_usage_name_key:
+                    ui.road_move_name_source_id = None
+                elif ui.edit is not None:
                     parsed_click: float | None = parse_road_float(ui.edit.text)
                     if parsed_click is not None:
                         ui.road_select_shorter_than_m = clamp_shorter_than_m(
@@ -783,6 +1141,7 @@ def update_road_sections_inspector(
                 ui.clear_focus()
     layout.buttons = buttons
     layout.float_row = float_row
+    layout.move_name_rect = move_name_rect
     layout.project_checkbox = project_checkbox
     layout.project_onto_shadow = project_onto_shadow
     layout.flatten_checkbox = flatten_checkbox
@@ -836,6 +1195,26 @@ def draw_road_sections_inspector(
                 font,
                 float_row.value,
                 format_road_float(ui.road_select_shorter_than_m),
+                focused=False,
+            )
+    if layout.move_name_rect is not None:
+        name_edit: TextEdit | None = ui.focused_edit(
+            road_sections_panel, move_usage_name_key
+        )
+        if name_edit is not None:
+            draw_text_field(
+                font,
+                layout.move_name_rect,
+                name_edit.text,
+                focused=True,
+                caret=name_edit.caret,
+                mark=name_edit.mark,
+            )
+        else:
+            draw_text_field(
+                font,
+                layout.move_name_rect,
+                "new usage name",
                 focused=False,
             )
     if layout.project_checkbox is not None:

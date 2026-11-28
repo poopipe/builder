@@ -30,6 +30,7 @@ from builder.heightfield.vector.overlay_scale import (
 from builder.scene.bounds import transform_bounding_box
 from builder.scene.scene_types import Node
 from builder.scene.transforms import matrix_translation, world_matrix
+from builder.scene.visibility import node_effectively_visible
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,8 @@ def pick_nearest_vector_point(
         heightfield: Heightfield | None = node.heightfield
         if heightfield is None:
             continue
+        if not node_effectively_visible(nodes, node.id):
+            continue
         hf_world: Matrix = world_matrix(nodes, node.id)
         distance_to_hf: float = vector3_distance(
             camera.position, matrix_translation(hf_world)
@@ -78,10 +81,14 @@ def pick_nearest_vector_point(
                 continue
             if not vector_layer_is_linked(heightfield, layer.id):
                 continue
+            if not node_effectively_visible(nodes, layer.id):
+                continue
             plane_y: float = vector_layer_plane_y(nodes, layer.id, node.id)
             shape: Node
             for shape in ordered_child_nodes(nodes, layer.id):
                 if shape.vector_shape is None:
+                    continue
+                if not node_effectively_visible(nodes, shape.id):
                     continue
                 entry: tuple[str, float, float]
                 for entry in vector_point_entries(nodes, shape.id, node.id):
@@ -89,6 +96,8 @@ def pick_nearest_vector_point(
                     px: float
                     pz: float
                     point_id, px, pz = entry
+                    if not node_effectively_visible(nodes, point_id):
+                        continue
                     local_bounds: BoundingBox = point_cube_local_bounds(
                         px, plane_y, pz, cube_size
                     )

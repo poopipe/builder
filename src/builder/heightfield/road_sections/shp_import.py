@@ -136,7 +136,9 @@ def read_road_shp(shp_path: Path) -> ShpImportResult:
     try:
         fields: list[Any] = list(reader.fields)
         layer_index: int | None = field_index(fields, "GTT_road", "__LAYER")
-        highway_index: int | None = field_index(fields, "HIGHWAY", "highway")
+        highway_index: int | None = field_index(
+            fields, "HIGHWAY", "highway", "fclass", "FCLASS"
+        )
         parts: list[ImportedRoadPart] = []
         features_read: int = 0
         features_used: int = 0
@@ -155,13 +157,10 @@ def read_road_shp(shp_path: Path) -> ShpImportResult:
             if record is None:
                 features_skipped += 1
                 continue
-            usage: str | None = classify_road_usage(
+            usage: str = classify_road_usage(
                 record_string(cast(Sequence[Any], record), layer_index),
                 record_string(cast(Sequence[Any], record), highway_index),
             )
-            if usage is None:
-                features_skipped += 1
-                continue
             used_part: bool = False
             part_starts: list[int] = [int(start) for start in shape.parts]
             point_count: int = len(shape.points)

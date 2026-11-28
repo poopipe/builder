@@ -210,6 +210,21 @@ def map_world_xz_to_hf_local(
     return (-local_x, local_z)
 
 
+def hf_local_xz_to_map_world(
+    local_x: float,
+    local_z: float,
+    *,
+    origin_x: float,
+    origin_z: float,
+    size_x: float,
+    size_z: float,
+) -> tuple[float, float]:
+    """inverse of map_world_xz_to_hf_local (mapframe easting / northing)"""
+    world_x: float = origin_x + 0.5 * size_x - local_x
+    world_z: float = origin_z + 0.5 * size_z + local_z
+    return (world_x, world_z)
+
+
 @dataclass(frozen=True)
 class HeightfieldLayout:
     """derived tile grid for a normalized heightfield"""

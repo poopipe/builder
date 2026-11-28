@@ -7,10 +7,14 @@ from dataclasses import dataclass
 from builder.generators.param_types import BoolParam
 from builder.heightfield.vector.stamp import (
     apply_weighted_sample,
-    distance_to_segments,
+    clip_texel_range,
+    distance_to_segment_list,
     path_stroke_weight,
     point_in_polygon,
+    polyline_segments,
+    segments_intersecting_aabb,
     soft_band_weight,
+    stamp_world_aabb_for_clip,
     world_aabb_to_texel_range,
 )
 from builder.heightfield.vector.vector_types import (
@@ -50,11 +54,31 @@ def polyline_stroke_sdf(
     )
     if ranges is None:
         return
+    clipped: tuple[int, int, int, int] | None = clip_texel_range(
+        ranges[0], ranges[1], ranges[2], ranges[3], context
+    )
+    if clipped is None:
+        return
     x0: int
     x1: int
     y0: int
     y1: int
-    x0, x1, y0, y1 = ranges
+    x0, x1, y0, y1 = clipped
+    query: tuple[float, float, float, float] = stamp_world_aabb_for_clip(
+        context, min_x, max_x, min_z, max_z
+    )
+    active_segments = segments_intersecting_aabb(
+        polyline_segments(points, closed),
+        query[0],
+        query[1],
+        query[2],
+        query[3],
+        pad,
+    )
+    if len(active_segments) == 0 and len(points) == 1:
+        active_segments = [((points[0][0], points[0][1]), (points[0][0], points[0][1]))]
+    if len(active_segments) == 0:
+        return
     inv_w: float = 1.0 / float(context.width)
     inv_h: float = 1.0 / float(context.height)
     y: int
@@ -65,7 +89,7 @@ def polyline_stroke_sdf(
         for x in range(x0, x1):
             u: float = (float(x) + 0.5) * inv_w
             wx: float = (u - 0.5) * context.size_x
-            dist: float = distance_to_segments(wx, wz, points, closed)
+            dist: float = distance_to_segment_list(wx, wz, active_segments)
             weight: float = path_stroke_weight(context, dist, x=wx, z=wz)
             if weight <= 0.0:
                 continue
@@ -112,11 +136,29 @@ def polyline_rasterize(
             )
             if ranges is None:
                 return
+            clipped: tuple[int, int, int, int] | None = clip_texel_range(
+                ranges[0], ranges[1], ranges[2], ranges[3], context
+            )
+            if clipped is None:
+                return
             x0: int
             x1: int
             y0: int
             y1: int
-            x0, x1, y0, y1 = ranges
+            x0, x1, y0, y1 = clipped
+            query: tuple[float, float, float, float] = stamp_world_aabb_for_clip(
+                context, min_x, max_x, min_z, max_z
+            )
+            active_segments = segments_intersecting_aabb(
+                polyline_segments(points, closed=True),
+                query[0],
+                query[1],
+                query[2],
+                query[3],
+                pad,
+            )
+            if len(active_segments) == 0:
+                return
             inv_w: float = 1.0 / float(context.width)
             inv_h: float = 1.0 / float(context.height)
             y: int
@@ -127,8 +169,8 @@ def polyline_rasterize(
                 for x in range(x0, x1):
                     u: float = (float(x) + 0.5) * inv_w
                     wx: float = (u - 0.5) * context.size_x
-                    dist: float = distance_to_segments(
-                        wx, wz, points, closed=True
+                    dist: float = distance_to_segment_list(
+                        wx, wz, active_segments
                     )
                     inside: bool = point_in_polygon(wx, wz, points)
                     signed: float = -dist if inside else dist

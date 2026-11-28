@@ -17,6 +17,7 @@ dependencies = [
 packages = [{include = "builder", from = "src"}]
 include = [
     "builder/assets/fonts/*.ttf",
+    "builder/assets/color_palette.json",
     "src/builder/heightfield/road_sections/road_kit_widths.json",
 ]
 

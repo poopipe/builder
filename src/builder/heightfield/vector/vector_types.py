@@ -71,6 +71,11 @@ class VectorRasterContext:
     ribbon_half_width_at_xz: RibbonScalarAtXz | None = None
     # road coverage 0..1 (same size as samples); None for non-road rasters
     coverage_samples: list[float] | None = None
+    # optional inclusive-exclusive texel clip for partial restamps
+    clip_x0: int | None = None
+    clip_x1: int | None = None
+    clip_y0: int | None = None
+    clip_y1: int | None = None
 
 
 type RasterizeShape = Callable[

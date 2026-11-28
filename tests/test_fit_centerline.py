@@ -78,7 +78,7 @@ class TestFittedCenterline(unittest.TestCase):
             0.0, 0.0, 0.0, [(corner, 180.0)]
         )
         self.assertEqual(len(placed), 1)
-        self.assertAlmostEqual(placed[0].roll_deg, 0.0, places=5)
+        self.assertAlmostEqual(placed[0].roll_deg, 180.0, places=5)
         self.assertAlmostEqual(
             placed[0].yaw_deg,
             corner_placement_yaw_deg(0.0, 90.0, clockwise=False),

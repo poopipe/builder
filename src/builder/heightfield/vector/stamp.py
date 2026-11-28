@@ -81,6 +81,79 @@ def world_aabb_to_texel_range(
     return (x0, x1, y0, y1)
 
 
+def texel_range_to_world_aabb(
+    x0: int,
+    x1: int,
+    y0: int,
+    y1: int,
+    size_x: float,
+    size_z: float,
+    width: int,
+    height: int,
+) -> tuple[float, float, float, float]:
+    """world xz aabb covering an inclusive-exclusive texel range"""
+    min_x: float = (float(x0) / float(width)) * size_x - 0.5 * size_x
+    max_x: float = (float(x1) / float(width)) * size_x - 0.5 * size_x
+    min_z: float = (float(y0) / float(height)) * size_z - 0.5 * size_z
+    max_z: float = (float(y1) / float(height)) * size_z - 0.5 * size_z
+    return (min_x, max_x, min_z, max_z)
+
+
+def clip_texel_range(
+    x0: int,
+    x1: int,
+    y0: int,
+    y1: int,
+    context: VectorRasterContext,
+) -> tuple[int, int, int, int] | None:
+    """intersect a texel range with context.clip_*; None if empty"""
+    cx0: int = x0
+    cx1: int = x1
+    cy0: int = y0
+    cy1: int = y1
+    if context.clip_x0 is not None:
+        assert context.clip_x1 is not None
+        assert context.clip_y0 is not None
+        assert context.clip_y1 is not None
+        cx0 = max(cx0, context.clip_x0)
+        cx1 = min(cx1, context.clip_x1)
+        cy0 = max(cy0, context.clip_y0)
+        cy1 = min(cy1, context.clip_y1)
+    if cx0 >= cx1 or cy0 >= cy1:
+        return None
+    return (cx0, cx1, cy0, cy1)
+
+
+def apply_road_absolute(
+    context: VectorRasterContext,
+    index: int,
+    target_height: float,
+    weight: float,
+) -> None:
+    """write premultiplied absolute height (h*cov) and coverage for one texel
+
+    premultiplied storage keeps bilinear upsample of abs+cov filters correct
+    when exterior samples are cleared to 0
+    """
+    if weight <= 0.0 or context.coverage_samples is None:
+        return
+    mix: float = weight * max(0.0, min(1.0, float(context.intensity)))
+    if mix <= 0.0:
+        return
+    cov: float = max(0.0, min(1.0, context.coverage_samples[index]))
+    height: float = float(target_height)
+    if cov <= 1e-8:
+        cov_new: float = mix
+        context.samples[index] = height * cov_new
+        context.coverage_samples[index] = cov_new
+        return
+    stored_height: float = context.samples[index] / cov
+    height_new: float = stored_height + (height - stored_height) * mix
+    cov_new = cov + (1.0 - cov) * mix
+    context.samples[index] = height_new * cov_new
+    context.coverage_samples[index] = cov_new
+
+
 def apply_road_weight(
     context: VectorRasterContext,
     index: int,
@@ -88,7 +161,11 @@ def apply_road_weight(
     v: float,
     weight: float,
 ) -> None:
-    """write absolute ribbon height and coverage for a road texel"""
+    """write absolute ribbon height and coverage for a road texel
+
+    ribbon_height_at_xz receives below=0; absolute grade is precomputed by the
+    caller (no underlay sample here)
+    """
     if weight <= 0.0:
         return
     if (
@@ -98,21 +175,8 @@ def apply_road_weight(
         return
     wx: float = (u - 0.5) * context.size_x
     wz: float = (v - 0.5) * context.size_z
-    below: float = 0.0
-    if context.below_at_uv is not None:
-        below = context.below_at_uv(u, v)
-    target: float = float(context.ribbon_height_at_xz(wx, wz, below))
-    mix: float = weight * max(0.0, min(1.0, float(context.intensity)))
-    if mix <= 0.0:
-        return
-    cov: float = max(0.0, min(1.0, context.coverage_samples[index]))
-    stored: float = context.samples[index]
-    # store absolute target; soft edge is coverage at composite time
-    if cov <= 1e-8:
-        context.samples[index] = target
-    else:
-        context.samples[index] = stored + (target - stored) * mix
-    context.coverage_samples[index] = cov + (1.0 - cov) * mix
+    target: float = float(context.ribbon_height_at_xz(wx, wz, 0.0))
+    apply_road_absolute(context, index, target, weight)
 
 
 def apply_weighted_sample(
@@ -291,6 +355,37 @@ def point_in_polygon(x: float, z: float, points: list[tuple[float, float]]) -> b
     return inside
 
 
+def distance_to_segment_list(
+    x: float,
+    z: float,
+    segments: list[tuple[tuple[float, float], tuple[float, float]]],
+) -> float:
+    """minimum distance from xz to an explicit segment list"""
+    if len(segments) == 0:
+        return 1e9
+    best: float = 1e9
+    segment: tuple[tuple[float, float], tuple[float, float]]
+    for segment in segments:
+        ax: float
+        az: float
+        bx: float
+        bz: float
+        (ax, az), (bx, bz) = segment
+        dx: float = bx - ax
+        dz: float = bz - az
+        length_sq: float = dx * dx + dz * dz
+        t: float = 0.0
+        if length_sq > 1e-12:
+            t = max(
+                0.0,
+                min(1.0, ((x - ax) * dx + (z - az) * dz) / length_sq),
+            )
+        px: float = ax + dx * t
+        pz: float = az + dz * t
+        best = min(best, hypot(x - px, z - pz))
+    return best
+
+
 def distance_to_segments(
     x: float, z: float, points: list[tuple[float, float]], closed: bool
 ) -> float:
@@ -299,19 +394,84 @@ def distance_to_segments(
         return 1e9
     if len(points) == 1:
         return hypot(x - points[0][0], z - points[0][1])
-    best: float = 1e9
+    return distance_to_segment_list(
+        x, z, polyline_segments(points, closed)
+    )
+
+
+def polyline_segments(
+    points: list[tuple[float, float]], closed: bool
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """ordered open or closed segments from densified points"""
+    if len(points) < 2:
+        return []
     segment_count: int = len(points) if closed else len(points) - 1
+    segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
     i: int
     for i in range(segment_count):
-        ax, az = points[i]
-        bx, bz = points[(i + 1) % len(points)]
-        dx: float = bx - ax
-        dz: float = bz - az
-        length_sq: float = dx * dx + dz * dz
-        t: float = 0.0
-        if length_sq > 1e-12:
-            t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / length_sq))
-        px: float = ax + dx * t
-        pz: float = az + dz * t
-        best = min(best, hypot(x - px, z - pz))
-    return best
+        segments.append((points[i], points[(i + 1) % len(points)]))
+    return segments
+
+
+def segments_intersecting_aabb(
+    segments: list[tuple[tuple[float, float], tuple[float, float]]],
+    min_x: float,
+    max_x: float,
+    min_z: float,
+    max_z: float,
+    pad: float,
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """keep segments whose padded aabb overlaps the query rect"""
+    kept: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    query_min_x: float = min_x - pad
+    query_max_x: float = max_x + pad
+    query_min_z: float = min_z - pad
+    query_max_z: float = max_z + pad
+    segment: tuple[tuple[float, float], tuple[float, float]]
+    for segment in segments:
+        (ax, az), (bx, bz) = segment
+        seg_min_x: float = min(ax, bx)
+        seg_max_x: float = max(ax, bx)
+        seg_min_z: float = min(az, bz)
+        seg_max_z: float = max(az, bz)
+        if (
+            seg_max_x < query_min_x
+            or seg_min_x > query_max_x
+            or seg_max_z < query_min_z
+            or seg_min_z > query_max_z
+        ):
+            continue
+        kept.append(segment)
+    return kept
+
+
+def stamp_world_aabb_for_clip(
+    context: VectorRasterContext,
+    fallback_min_x: float,
+    fallback_max_x: float,
+    fallback_min_z: float,
+    fallback_max_z: float,
+) -> tuple[float, float, float, float]:
+    """world xz aabb covering the active clip rect, or the fallback stamp aabb"""
+    if (
+        context.clip_x0 is None
+        or context.clip_x1 is None
+        or context.clip_y0 is None
+        or context.clip_y1 is None
+    ):
+        return (
+            fallback_min_x,
+            fallback_max_x,
+            fallback_min_z,
+            fallback_max_z,
+        )
+    return texel_range_to_world_aabb(
+        context.clip_x0,
+        context.clip_x1,
+        context.clip_y0,
+        context.clip_y1,
+        context.size_x,
+        context.size_z,
+        context.width,
+        context.height,
+    )

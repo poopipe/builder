@@ -387,6 +387,17 @@ def update_modifiers_panel(
             heightmap_catalog=heightmap_catalog,
         )
 
+    def on_add_scale_local() -> None:
+        ui.clear_focus()
+        apply_modifier_stack(
+            scene,
+            group.id,
+            generator.modifiers + (make_modifier("scale_local"),),
+            journal=journal,
+            op="add",
+            heightmap_catalog=heightmap_catalog,
+        )
+
     def on_add_project() -> None:
         ui.clear_focus()
         project_mod: Modifier = make_modifier("project_heightfield")
@@ -422,6 +433,14 @@ def update_modifiers_panel(
         Button(
             label="+ Translate (template)",
             on_click=on_add_translate,
+            rect=Rectangle(x, y, inner_w, row_h),
+        )
+    )
+    y += row_h + ui_button_gap
+    buttons.append(
+        Button(
+            label="+ Scale local",
+            on_click=on_add_scale_local,
             rect=Rectangle(x, y, inner_w, row_h),
         )
     )

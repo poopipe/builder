@@ -39,6 +39,7 @@ from builder.heightfield.sample import (
 )
 from builder.heightfield.vector.circle import CircleShapeParams, circle_rim_local_xz
 from builder.heightfield.vector.coords import (
+    find_vector_shape_ancestor,
     ordered_child_nodes,
     vector_layer_is_linked,
     vector_layer_is_road,
@@ -68,11 +69,8 @@ from builder.view.line_shader import (
     line_shadow_depth_bias,
 )
 from builder.heightfield.vector.polyline import PolylineShapeParams
-from builder.heightfield.vector.rasterize import (
-    find_vector_layer_ancestor,
-    find_vector_shape_ancestor,
-)
-from builder.heightfield.vector.rectangle import rectangle_corners
+from builder.heightfield.vector.rasterize import find_vector_layer_ancestor
+from builder.heightfield.vector.rectangle import oriented_rectangle_hf_corners
 from builder.path.points import densify_path_positions
 from builder.heightfield.vector.vector_types import (
     VectorShapeRecipe,
@@ -80,6 +78,8 @@ from builder.heightfield.vector.vector_types import (
 )
 from builder.scene.scene_types import Node
 from builder.scene.transforms import matrix_translation, world_matrix
+from builder.scene.visibility import node_effectively_visible
+from builder.ui.color_palette import palette_color
 
 
 overlay_color: Color = Color(80, 200, 255, 220)
@@ -275,7 +275,9 @@ def shape_polyline_points(
                 rim.append((cx + cos(angle) * radius, cz + sin(angle) * radius))
             return rim, True
         case "rectangle":
-            corners = rectangle_corners(points)
+            corners = oriented_rectangle_hf_corners(
+                nodes, shape.id, heightfield_group_id
+            )
             if corners is None:
                 return None
             return corners, True
@@ -488,6 +490,8 @@ def draw_shape_flat(
     selected_ids: set[str],
     thickness_px: float,
     cube_size: float,
+    *,
+    line_color: Color | None = None,
 ) -> None:
     """work-plane lines and point cubes for one vector shape"""
     recipe: VectorShapeRecipe | None = shape.vector_shape
@@ -497,7 +501,12 @@ def draw_shape_flat(
         closed: bool
         points, closed = polyline
         draw_polyline_flat(
-            batch, points, closed, plane_y, thickness_px, overlay_color
+            batch,
+            points,
+            closed,
+            plane_y,
+            thickness_px,
+            line_color if line_color is not None else overlay_color,
         )
     entry: tuple[str, float, float]
     for entry in vector_point_entries(
@@ -611,10 +620,14 @@ def draw_vector_overlays(
     heightfield: Heightfield | None = heightfield_group.heightfield
     if heightfield is None:
         return
+    if not node_effectively_visible(nodes, heightfield_group.id):
+        return
     selected_layer_id: str | None = selected_vector_layer_id(
         nodes, heightfield_group.id, selected_ids
     )
     if selected_layer_id is None:
+        return
+    if not node_effectively_visible(nodes, selected_layer_id):
         return
     layer: Node | None = nodes.get(selected_layer_id)
     if (
@@ -649,6 +662,7 @@ def draw_vector_overlays(
         shape
         for shape in ordered_child_nodes(nodes, layer.id)
         if shape.vector_shape is not None
+        and node_effectively_visible(nodes, shape.id)
     ]
     is_road: bool = vector_layer_is_road(heightfield, layer.id)
     road_index: int | None = (
@@ -723,6 +737,7 @@ def draw_vector_overlays(
             selected_set,
             overlay_line_pixels,
             cube_size,
+            line_color=palette_color(shape_flat.color_index),
         )
     flush_line_batch(line_batch, line_shader)
     rl_pop_matrix()

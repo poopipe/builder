@@ -19,6 +19,7 @@ from pyray import (
 )
 
 from builder.heightfield.brushes.registry import brush_specs
+from builder.heightfield.gpu.heightfield_gpu import HeightfieldGpuState
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.heightfield.vector.circle import CircleShapeParams
 from builder.heightfield.vector.coords import (
@@ -28,10 +29,11 @@ from builder.heightfield.vector.coords import (
 from builder.heightfield.vector.edit import append_polyline_point
 from builder.heightfield.vector.polyline import PolylineShapeParams
 from builder.heightfield.vector.rasterize import (
+    dirty_aabb_for_vector_nodes,
     find_heightfield_group_for_descendant,
     find_vector_layer_ancestor,
     find_vector_shape_ancestor,
-    regenerate_vector_layer_for_node,
+    regenerate_vectors_touching,
 )
 from builder.heightfield.vector.registry import get_vector_shape_spec
 from builder.heightfield.vector.stamp import is_flatten_brush
@@ -40,7 +42,11 @@ from builder.heightfield.vector.vector_types import (
     VectorShapeRecipe,
 )
 from builder.path.path_types import PathPointRecipe
-from builder.path.points import default_path_point_recipe, path_point_width_scale
+from builder.path.points import (
+    default_path_point_recipe,
+    ordered_path_points,
+    path_point_width_scale,
+)
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node, NodeRole
 from builder.ui.text_field import (
@@ -229,14 +235,21 @@ def commit_shape_recipe(
     shape_node: Node,
     recipe: VectorShapeRecipe,
     ui: UiState,
+    *,
+    heightfield_gpu: HeightfieldGpuState | None = None,
 ) -> None:
     """replace shape recipe and re-rasterize its vector layer"""
+    prior = dirty_aabb_for_vector_nodes(scene.nodes, [shape_node.id])
     updated: Node = replace(shape_node, vector_shape=recipe)
     scene.add_nodes([updated])
-    layer_id: str | None = find_vector_layer_ancestor(scene.nodes, updated.id)
-    hf_id: str | None = find_heightfield_group_for_descendant(scene.nodes, updated.id)
-    if layer_id is not None and hf_id is not None:
-        regenerate_vector_layer_for_node(catalog, scene.nodes, hf_id, layer_id)
+    regenerate_vectors_touching(
+        catalog,
+        scene.nodes,
+        [updated.id],
+        prior_dirty_aabb=prior,
+        defer_gpu=False,
+        heightfield_gpu=heightfield_gpu,
+    )
     ui.status = f"Updated {recipe.kind}"
 
 
@@ -271,6 +284,8 @@ def update_vector_shape_inspector(
     ui: UiState,
     area: Rectangle,
     shape_node: Node,
+    *,
+    heightfield_gpu: HeightfieldGpuState | None = None,
 ) -> tuple[list[Button], list[VectorShapeFloatRow]]:
     """layout/input for vector shape inspector"""
     recipe: VectorShapeRecipe | None = shape_node.vector_shape
@@ -310,6 +325,7 @@ def update_vector_shape_inspector(
                                 shape_node,
                                 updated_recipe,
                                 ui,
+                                heightfield_gpu=heightfield_gpu,
                             )
                         live: Node | None = scene.nodes.get(shape_node.id)
                         if live is not None and live.vector_shape is not None:
@@ -371,6 +387,7 @@ def update_vector_shape_inspector(
             shape_node,
             replace(recipe, apply_mode=next_apply_mode(recipe.apply_mode)),
             ui,
+            heightfield_gpu=heightfield_gpu,
         )
 
     def set_brush() -> None:
@@ -381,6 +398,7 @@ def update_vector_shape_inspector(
             shape_node,
             replace(recipe, brush_kind=next_brush_kind(recipe.brush_kind)),
             ui,
+            heightfield_gpu=heightfield_gpu,
         )
 
     def toggle_enabled() -> None:
@@ -391,6 +409,7 @@ def update_vector_shape_inspector(
             shape_node,
             replace(recipe, enabled=not recipe.enabled),
             ui,
+            heightfield_gpu=heightfield_gpu,
         )
 
     buttons.append(
@@ -453,6 +472,7 @@ def update_vector_shape_inspector(
             live_point: Node | None = scene.nodes.get(point_id)
             if live_point is None:
                 return
+            prior = dirty_aabb_for_vector_nodes(scene.nodes, [point_id])
             translation: Vector3 = live_point.transform.translation
             scene.set_node(
                 replace(
@@ -468,16 +488,14 @@ def update_vector_shape_inspector(
                     ),
                 )
             )
-            layer_id: str | None = find_vector_layer_ancestor(
-                scene.nodes, point_id
+            regenerate_vectors_touching(
+                catalog,
+                scene.nodes,
+                [point_id],
+                prior_dirty_aabb=prior,
+                defer_gpu=False,
+                heightfield_gpu=heightfield_gpu,
             )
-            hf_id: str | None = find_heightfield_group_for_descendant(
-                scene.nodes, point_id
-            )
-            if layer_id is not None and hf_id is not None:
-                regenerate_vector_layer_for_node(
-                    catalog, scene.nodes, hf_id, layer_id
-                )
             ui.status = "Updated height offset"
 
         def nudge_height_minus() -> None:
@@ -572,6 +590,7 @@ def update_vector_shape_inspector(
             live_point: Node | None = scene.nodes.get(point_id)
             if live_point is None:
                 return
+            prior = dirty_aabb_for_vector_nodes(scene.nodes, [point_id])
             recipe: PathPointRecipe = (
                 live_point.path_point
                 if live_point.path_point is not None
@@ -589,16 +608,14 @@ def update_vector_shape_inspector(
                     ),
                 )
             )
-            layer_id: str | None = find_vector_layer_ancestor(
-                scene.nodes, point_id
+            regenerate_vectors_touching(
+                catalog,
+                scene.nodes,
+                [point_id],
+                prior_dirty_aabb=prior,
+                defer_gpu=False,
+                heightfield_gpu=heightfield_gpu,
             )
-            hf_id: str | None = find_heightfield_group_for_descendant(
-                scene.nodes, point_id
-            )
-            if layer_id is not None and hf_id is not None:
-                regenerate_vector_layer_for_node(
-                    catalog, scene.nodes, hf_id, layer_id
-                )
             ui.status = "Updated width scale"
 
         def nudge_scale_minus() -> None:
@@ -698,7 +715,14 @@ def update_vector_shape_inspector(
             )
             if updated is None:
                 return
-            commit_shape_recipe(scene, catalog, current, updated, ui)
+            commit_shape_recipe(
+                scene,
+                catalog,
+                current,
+                updated,
+                ui,
+                heightfield_gpu=heightfield_gpu,
+            )
 
         def nudge_plus(
             k: str = field.key, s: float = field.step
@@ -715,7 +739,14 @@ def update_vector_shape_inspector(
             )
             if updated is None:
                 return
-            commit_shape_recipe(scene, catalog, current, updated, ui)
+            commit_shape_recipe(
+                scene,
+                catalog,
+                current,
+                updated,
+                ui,
+                heightfield_gpu=heightfield_gpu,
+            )
 
         buttons.append(Button(label="-", on_click=nudge_minus, rect=minus_rect))
         buttons.append(Button(label="+", on_click=nudge_plus, rect=plus_rect))
@@ -756,6 +787,7 @@ def update_vector_shape_inspector(
                             current,
                             replace(r, params=new_params),
                             ui,
+                            heightfield_gpu=heightfield_gpu,
                         )
                     case _:
                         pass
@@ -771,6 +803,15 @@ def update_vector_shape_inspector(
 
             def add_point() -> None:
                 ui.clear_focus()
+                existing_points = ordered_path_points(
+                    scene.nodes, shape_node.id
+                )
+                prior_ids: list[str] = (
+                    [existing_points[-1].id]
+                    if existing_points
+                    else [shape_node.id]
+                )
+                prior = dirty_aabb_for_vector_nodes(scene.nodes, prior_ids)
                 created: list[Node] = append_polyline_point(
                     scene.nodes, shape_node.id
                 )
@@ -781,16 +822,14 @@ def update_vector_shape_inspector(
                     if created_node.role is NodeRole.path_point:
                         point_id = created_node.id
                         break
-                layer_id: str | None = find_vector_layer_ancestor(
-                    scene.nodes, shape_node.id
+                regenerate_vectors_touching(
+                    catalog,
+                    scene.nodes,
+                    [point_id],
+                    prior_dirty_aabb=prior,
+                    defer_gpu=False,
+                    heightfield_gpu=heightfield_gpu,
                 )
-                hf_id: str | None = find_heightfield_group_for_descendant(
-                    scene.nodes, shape_node.id
-                )
-                if layer_id is not None and hf_id is not None:
-                    regenerate_vector_layer_for_node(
-                        catalog, scene.nodes, hf_id, layer_id
-                    )
                 scene.set_selection([point_id])
                 ui.status = "Added point"
 

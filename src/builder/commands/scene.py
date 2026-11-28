@@ -198,6 +198,55 @@ def place_spline(context: CommandContext, _: None) -> None:
     place_generator_group(context, "spline")
 
 
+def place_tb_import(context: CommandContext, _: None) -> None:
+    """place a tb import generator and open a file browser for the source txt"""
+    from builder.modifiers.project_heightfield import heightfield_node_ids
+    from builder.ui.file_browser import (
+        FileBrowserPurpose,
+        make_tb_objects_browser,
+        remembered_browser_directory,
+    )
+
+    place_generator_group(context, "tb_import")
+    if len(context.scene.nodes.selected_ids) != 1:
+        return
+    group_id: str = context.scene.nodes.selected_ids[0]
+    group: Node | None = context.scene.nodes.nodes.get(group_id)
+    if group is None or group.generator is None:
+        return
+    # seed heightfield ref when exactly one exists
+    hf_ids: tuple[str, ...] = heightfield_node_ids(context.scene.nodes.nodes)
+    if len(hf_ids) == 1:
+        from dataclasses import replace
+
+        from builder.generators.param_types import NameParam
+        from builder.generators.tb_import import TbImportParams
+
+        params: TbImportParams = group.generator.params
+        group = replace(
+            group,
+            generator=replace(
+                group.generator,
+                params=replace(
+                    params,
+                    heightfield_node_id=NameParam(
+                        hf_ids[0], label="Heightfield"
+                    ),
+                ),
+            ),
+        )
+        context.scene.add_nodes([group])
+    context.ui.tb_import_target = group_id
+    context.ui.file_browser = make_tb_objects_browser(
+        remembered_browser_directory(
+            context.ui.browser_directories,
+            FileBrowserPurpose.import_tb_objects,
+            context.application.scene_path,
+        )
+    )
+    context.ui.status = "Select TB object-import .txt…"
+
+
 def place_heightfield(context: CommandContext, _: None) -> None:
     """place a tiled heightfield group and build its tile meshes"""
     group_id: str = new_node_id()
@@ -316,6 +365,7 @@ def delete_selection(context: CommandContext, _: None) -> None:
             context.application.heightmap_catalog,
             context.scene.nodes.nodes,
             vector_touch,
+            heightfield_gpu=context.scene.heightfield_gpu,
         )
     context.scene.clear_selection()
     count: int = len(selected)
@@ -475,6 +525,7 @@ cmd_place_grid: Command[None] = Command("Grid", place_grid)
 cmd_place_radial: Command[None] = Command("Radial", place_radial)
 cmd_place_ngon: Command[None] = Command("N-gon", place_ngon)
 cmd_place_spline: Command[None] = Command("Spline", place_spline)
+cmd_place_tb_import: Command[None] = Command("TB Import", place_tb_import)
 cmd_place_heightfield: Command[None] = Command("Heightfield", place_heightfield)
 cmd_delete: Command[None] = Command("Delete", delete_selection)
 cmd_duplicate: Command[None] = Command("Duplicate", duplicate_selection)

@@ -1,7 +1,12 @@
-"""scan DayZ road parts/*.p3d AABBs and write a kit width catalogue JSON
+"""scan DayZ road parts/*.p3d AABBs + snap points; write kit catalogue JSON
 
 AABB reading is self-contained here (referenced from xml-data-viewer p3d
 tools; does not import them). Stem classification uses builder.part_catalog.
+
+Snap points are the road-tool mating corners named lb/le/pb/pe (left/right
+begin/end) in the Memory LOD. ODOL stores selection→vertex indices; positions
+come from that LOD's vertex table (parsed after the selection block), not a
+whole-file float scan.
 
 usage (from repo root, venv active)::
 
@@ -337,6 +342,291 @@ def read_p3d_aabb(path: str | Path) -> P3dAabb:
     raise ValueError("no plausible AABB for ODOL p3d")
 
 
+# --- road-tool snap points (lb/le/pb/pe) ---
+
+_SNAP_NAMES: tuple[str, ...] = ("lb", "le", "pb", "pe")
+_SNAP_WIDTH_TOL_M: float = 0.75
+_SNAP_MIN_SPAN_M: float = 1.0
+# reject begin/end edges nearly parallel to travel (false vertex tables)
+_SNAP_MAX_EDGE_TRAVEL_ABS_DOT: float = 0.85
+_SNAP_MIN_POINT_SEP_M: float = 0.25
+
+
+def _xz_dist(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> float:
+    return math.hypot(a[0] - b[0], a[2] - b[2])
+
+
+def snap_mapping_plausible(
+    mapped: dict[str, tuple[float, float, float]],
+) -> bool:
+    """reject false vertex-table hits that only match width by chance
+
+    real road snaps are four distinct corners; begin/end edges sit across the
+    road, not along travel. garbage recoveries often collapse lb/le to origin
+    or align the begin edge with the chord.
+    """
+    lb = mapped["lb"]
+    le = mapped["le"]
+    pb = mapped["pb"]
+    pe = mapped["pe"]
+    pts: tuple[tuple[float, float, float], ...] = (lb, le, pb, pe)
+    i: int
+    j: int
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            if _xz_dist(pts[i], pts[j]) < _SNAP_MIN_POINT_SEP_M:
+                return False
+    mid_bx: float = 0.5 * (lb[0] + pb[0])
+    mid_bz: float = 0.5 * (lb[2] + pb[2])
+    mid_ex: float = 0.5 * (le[0] + pe[0])
+    mid_ez: float = 0.5 * (le[2] + pe[2])
+    travel_x: float = mid_ex - mid_bx
+    travel_z: float = mid_ez - mid_bz
+    travel_len: float = math.hypot(travel_x, travel_z)
+    if travel_len < _SNAP_MIN_SPAN_M:
+        return False
+    travel_x /= travel_len
+    travel_z /= travel_len
+
+    def edge_ok(
+        left: tuple[float, float, float], right: tuple[float, float, float]
+    ) -> bool:
+        ex: float = right[0] - left[0]
+        ez: float = right[2] - left[2]
+        elen: float = math.hypot(ex, ez)
+        if elen < _SNAP_MIN_POINT_SEP_M:
+            return False
+        ex /= elen
+        ez /= elen
+        return abs(ex * travel_x + ez * travel_z) <= _SNAP_MAX_EDGE_TRAVEL_ABS_DOT
+
+    return edge_ok(lb, pb) and edge_ok(le, pe)
+
+
+_MEM_RES: float = 1.0e15
+_MEM_RES_TOL: float = 1.0e14
+
+
+def is_memory_resolution(resolution: float) -> bool:
+    return abs(float(resolution) - _MEM_RES) < _MEM_RES_TOL
+
+
+def parse_snap_selection_indices(data: bytes) -> dict[str, int] | None:
+    """read Memory-LOD named selections lb/le/pb/pe → vertex indices"""
+    parsed = parse_snap_selections(data)
+    if parsed is None:
+        return None
+    return parsed[0]
+
+
+def parse_snap_selections(
+    data: bytes,
+) -> tuple[dict[str, int], int] | None:
+    """lb/le/pb/pe indices and byte offset past the selection block"""
+    lb_at: int = data.find(b"lb\x00")
+    if lb_at < 0:
+        return None
+    # expect a count ulong of 4 immediately before the first name
+    if lb_at < 4 or struct.unpack_from("<I", data, lb_at - 4)[0] != 4:
+        return None
+    pos: int = lb_at
+    out: dict[str, int] = {}
+    name: str
+    for name in _SNAP_NAMES:
+        end: int = data.find(b"\x00", pos)
+        if end < 0 or data[pos:end].decode("ascii", errors="replace") != name:
+            return None
+        pos = end + 1
+        if pos + 23 > len(data):
+            return None
+        n_faces, always0 = struct.unpack_from("<II", data, pos)
+        pos += 8
+        is_sectional: int = int(data[pos])
+        pos += 1
+        n_sec, n_verts = struct.unpack_from("<II", data, pos)
+        pos += 8
+        if not (
+            n_faces == 0
+            and always0 == 0
+            and is_sectional == 0
+            and n_sec == 0
+            and n_verts == 1
+        ):
+            return None
+        (idx,) = struct.unpack_from("<H", data, pos)
+        pos += 2
+        (n_weights,) = struct.unpack_from("<I", data, pos)
+        pos += 4
+        if n_weights != 0:
+            return None
+        out[name] = int(idx)
+    return out, pos
+
+
+def _point_ok(p: tuple[float, float, float]) -> bool:
+    x, y, z = p
+    if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
+        return False
+    if abs(y) > 0.5:
+        return False
+    return abs(x) < 200.0 and abs(z) < 200.0
+
+
+def memory_lod_vertex_table_blob(data: bytes) -> bytes | None:
+    """ODOL Memory LOD vertex-table bytes after the lb/le/pb/pe selections
+
+    layout after selections: nTokens, nFrames, icon, selected, special,
+    vertexBoneRefIsSimple (byte), sizeOfVertexTable (ulong, includes itself).
+    """
+    parsed = parse_snap_selections(data)
+    if parsed is None:
+        return None
+    _indices, sel_end = parsed
+    # 5 ulongs + 1 flag byte
+    size_at: int = sel_end + 20 + 1
+    if size_at + 4 > len(data):
+        return None
+    size_u: int = int(struct.unpack_from("<I", data, size_at)[0])
+    if size_u < 8 or size_at + size_u > len(data):
+        return None
+    return data[size_at + 4 : size_at + size_u]
+
+
+def _map_points_at(
+    table: bytes,
+    pos: int,
+    indices: dict[str, int],
+    max_i: int,
+) -> dict[str, tuple[float, float, float]] | None:
+    need: int = (max_i + 1) * 12
+    if pos < 0 or pos + need > len(table):
+        return None
+    pts: list[tuple[float, float, float]] = [
+        struct.unpack_from("<fff", table, pos + i * 12) for i in range(max_i + 1)
+    ]
+    if not all(_point_ok(p) for p in pts):
+        return None
+    return {n: pts[i] for n, i in indices.items()}
+
+
+def recover_snap_points_from_table(
+    table: bytes,
+    indices: dict[str, int],
+    *,
+    width_m: float,
+    step: int = 1,
+) -> dict[str, tuple[float, float, float]] | None:
+    """find indexed xyz table in bytes; step=1 required for ODOL VT alignment"""
+    if width_m <= 0.5 or step < 1:
+        return None
+    if len(set(indices.values())) < 4:
+        return None
+    max_i: int = max(indices.values())
+    need: int = (max_i + 1) * 12
+    best: dict[str, tuple[float, float, float]] | None = None
+    best_err: float = float("inf")
+    pos: int
+    for pos in range(0, len(table) - need + 1, step):
+        mapped = _map_points_at(table, pos, indices, max_i)
+        if mapped is None:
+            continue
+        wb: float = _xz_dist(mapped["lb"], mapped["pb"])
+        we: float = _xz_dist(mapped["le"], mapped["pe"])
+        if (
+            abs(wb - width_m) > _SNAP_WIDTH_TOL_M
+            or abs(we - width_m) > _SNAP_WIDTH_TOL_M
+        ):
+            continue
+        if not snap_mapping_plausible(mapped):
+            continue
+        err: float = abs(wb - width_m) + abs(we - width_m)
+        if err < best_err:
+            best_err = err
+            best = mapped
+    return best
+
+
+def recover_snap_points_from_mlod(
+    data: bytes,
+    indices: dict[str, int],
+    *,
+    width_m: float,
+) -> dict[str, tuple[float, float, float]] | None:
+    """index Memory LOD points directly from an MLOD p3d"""
+    if data[:4] != b"MLOD":
+        return None
+    if width_m <= 0.5 or len(set(indices.values())) < 4:
+        return None
+    max_i: int = max(indices.values())
+    res: float
+    pts: list[tuple[float, float, float]]
+    for res, pts in iter_mlod_lods(data):
+        if not is_memory_resolution(res):
+            continue
+        if max_i >= len(pts):
+            continue
+        mapped: dict[str, tuple[float, float, float]] = {
+            n: pts[i] for n, i in indices.items()
+        }
+        if not all(_point_ok(p) for p in mapped.values()):
+            continue
+        wb: float = _xz_dist(mapped["lb"], mapped["pb"])
+        we: float = _xz_dist(mapped["le"], mapped["pe"])
+        if (
+            abs(wb - width_m) > _SNAP_WIDTH_TOL_M
+            or abs(we - width_m) > _SNAP_WIDTH_TOL_M
+        ):
+            continue
+        if not snap_mapping_plausible(mapped):
+            continue
+        return mapped
+    return None
+
+
+def recover_snap_points_from_indices(
+    data: bytes,
+    indices: dict[str, int],
+    *,
+    width_m: float,
+) -> dict[str, tuple[float, float, float]] | None:
+    """resolve Memory LOD vertex positions for snap selection indices"""
+    mlod_hit = recover_snap_points_from_mlod(
+        data, indices, width_m=width_m
+    )
+    if mlod_hit is not None:
+        return mlod_hit
+    blob: bytes | None = memory_lod_vertex_table_blob(data)
+    if blob is not None:
+        hit = recover_snap_points_from_table(
+            blob, indices, width_m=width_m, step=1
+        )
+        if hit is not None:
+            return hit
+    # last resort: whole file, 1-byte step (road parts are small)
+    return recover_snap_points_from_table(
+        data, indices, width_m=width_m, step=1
+    )
+
+
+def extract_road_snap_points(
+    data: bytes, *, width_m: float
+) -> dict[str, tuple[float, float, float]] | None:
+    """lb/le/pb/pe mating points in model space, or none if not recoverable"""
+    indices: dict[str, int] | None = parse_snap_selection_indices(data)
+    if indices is None:
+        return None
+    return recover_snap_points_from_indices(data, indices, width_m=width_m)
+
+
+def read_p3d_snap_points(
+    path: str | Path, *, width_m: float
+) -> dict[str, tuple[float, float, float]] | None:
+    """load p3d bytes and extract road snap points"""
+    return extract_road_snap_points(Path(path).read_bytes(), width_m=width_m)
+
+
 # --- kit width catalogue ---
 
 
@@ -353,6 +643,13 @@ class PieceWidthRow:
     width_m: float | None
     length_axis_m: float | None
     aabb_source: str
+    min_x: float | None = None
+    min_y: float | None = None
+    min_z: float | None = None
+    max_x: float | None = None
+    max_y: float | None = None
+    max_z: float | None = None
+    snap_points: dict[str, tuple[float, float, float]] | None = None
     error: str | None = None
 
 
@@ -446,10 +743,62 @@ def scan_parts_roots(roots: Sequence[Path]) -> list[PieceWidthRow]:
                     width_m=width_m,
                     length_axis_m=length_axis_m,
                     aabb_source=aabb.source,
+                    min_x=float(aabb.min_xyz[0]),
+                    min_y=float(aabb.min_xyz[1]),
+                    min_z=float(aabb.min_xyz[2]),
+                    max_x=float(aabb.max_xyz[0]),
+                    max_y=float(aabb.max_xyz[1]),
+                    max_z=float(aabb.max_xyz[2]),
+                    snap_points=None,
                     error=None,
                 )
             )
-    return rows
+
+    # second pass: snap points need a width hint (piece or kit median)
+    kit_widths: dict[str, float] = {
+        kit.kit: kit.width_m
+        for kit in aggregate_kits(rows)
+        if kit.width_m is not None
+    }
+    filled: list[PieceWidthRow] = []
+    row: PieceWidthRow
+    for row in rows:
+        if row.error is not None:
+            filled.append(row)
+            continue
+        hint: float | None = row.width_m
+        if hint is None:
+            hint = kit_widths.get(row.kit)
+        snaps: dict[str, tuple[float, float, float]] | None = None
+        if hint is not None:
+            try:
+                snaps = read_p3d_snap_points(row.path, width_m=hint)
+            except OSError:
+                snaps = None
+        filled.append(
+            PieceWidthRow(
+                kit=row.kit,
+                stem=row.stem,
+                piece_type=row.piece_type,
+                path=row.path,
+                length_m=row.length_m,
+                size_x=row.size_x,
+                size_y=row.size_y,
+                size_z=row.size_z,
+                width_m=row.width_m,
+                length_axis_m=row.length_axis_m,
+                aabb_source=row.aabb_source,
+                min_x=row.min_x,
+                min_y=row.min_y,
+                min_z=row.min_z,
+                max_x=row.max_x,
+                max_y=row.max_y,
+                max_z=row.max_z,
+                snap_points=snaps,
+                error=row.error,
+            )
+        )
+    return filled
 
 
 def aggregate_kits(rows: Sequence[PieceWidthRow]) -> list[KitWidthRow]:
@@ -536,7 +885,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     out.write_text(json.dumps(catalogue, indent=2) + "\n", encoding="utf-8")
 
     kits = catalogue["kits"]
-    print(f"wrote {out} ({len(kits)} kits, {len(catalogue['pieces'])} pieces)")
+    pieces = catalogue["pieces"]
+    with_snaps: int = sum(1 for p in pieces if p.get("snap_points"))
+    print(
+        f"wrote {out} ({len(kits)} kits, {len(pieces)} pieces, "
+        f"{with_snaps} with snap points)"
+    )
     kit: dict[str, Any]
     for kit in kits:
         width = kit["width_m"]
