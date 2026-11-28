@@ -403,6 +403,7 @@ def load_scene_from_path(context: CommandContext, scene_path: Path) -> list[str]
                     context.application.heightmap_catalog,
                     group.id,
                     road_parts=context.application.road_parts,
+                    restamp_vectors=False,
                 )
             except (KeyError, ValueError, RuntimeError) as exc:
                 log_exception(f"heightfield regenerate failed: {group.id}", exc)

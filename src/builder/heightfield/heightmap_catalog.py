@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from collections.abc import Sequence
+
 from builder.heightfield.height_image_decode import (
     DecodeHeightImage,
     default_decode_height_image,
+    f32_array_from_bytes,
     float_samples_from_decoded,
 )
 from builder.heightfield.height_image_types import (
@@ -18,6 +21,11 @@ from builder.heightfield.height_raw_cache import (
     default_height_raw_cache_path,
     read_height_raw_cache,
     write_height_raw_cache,
+)
+from builder.heightfield.sparse_height import (
+    SparseHeightRaster,
+    dense_from_sparse,
+    sparse_from_dense,
 )
 
 
@@ -41,18 +49,8 @@ class HeightmapAsset:
     height: int
 
 
-@dataclass(frozen=True)
-class HeightmapBuffer:
-    """cpu height samples in row-major order as signed float32 values
-
-    samples is a mutable list so paint/sculpt stamps can write in place
-    """
-
-    width: int
-    height: int
-    samples: list[float]
-    sample_min: float
-    sample_max: float
+# live height storage is sparse tiles (not a dense WxH list)
+HeightmapBuffer = SparseHeightRaster
 
 
 @dataclass
@@ -103,28 +101,33 @@ def heightmap_id_for_path(path: Path) -> HeightmapId:
 
 
 def heightmap_buffer_from_samples(
-    width: int, height: int, samples: list[float]
+    width: int, height: int, samples: Sequence[float]
 ) -> HeightmapBuffer:
-    """build a buffer with precomputed sample bounds; keeps the samples list"""
+    """page dense samples into a sparse raster (import / bootstrap)"""
+    return sparse_from_dense(width, height, samples)
+
+
+def heightmap_buffer_empty(width: int, height: int) -> HeightmapBuffer:
+    """empty sparse raster at logical resolution"""
     if width <= 0 or height <= 0:
         raise ValueError("heightmap has no pixels")
-    if len(samples) != width * height:
-        raise ValueError("heightmap sample count does not match width*height")
-    sample_min: float = min(samples) if samples else 0.0
-    sample_max: float = max(samples) if samples else 0.0
-    return HeightmapBuffer(
-        width=width,
-        height=height,
-        samples=samples,
-        sample_min=sample_min,
-        sample_max=sample_max,
-    )
+    return SparseHeightRaster(width=width, height=height)
 
 
 def heightmap_buffer_from_decoded(image: DecodedHeightImage) -> HeightmapBuffer:
-    """build a float buffer from packed decoded samples"""
-    samples: list[float] = float_samples_from_decoded(image)
-    return heightmap_buffer_from_samples(image.width, image.height, samples)
+    """build a sparse raster from packed decoded samples"""
+    if image.sample_type is HeightSampleType.f32:
+        return heightmap_buffer_from_samples(
+            image.width, image.height, f32_array_from_bytes(image.data)
+        )
+    return heightmap_buffer_from_samples(
+        image.width, image.height, float_samples_from_decoded(image)
+    )
+
+
+def materialize_heightmap_samples(buffer: HeightmapBuffer) -> list[float]:
+    """dense row-major samples for export only"""
+    return dense_from_sparse(buffer)
 
 
 def load_or_build_height_raw(
@@ -174,7 +177,7 @@ def import_heightmap_image(
 def ensure_heightmap_buffer(
     catalog: HeightmapCatalog, heightmap_id: HeightmapId
 ) -> HeightmapBuffer | None:
-    """return a cached float buffer, loading via .hraw (rebuilding if needed)"""
+    """return a cached sparse raster, loading via .hraw (rebuilding if needed)"""
     existing: HeightmapBuffer | None = catalog.buffers.get(heightmap_id)
     if existing is not None:
         return existing

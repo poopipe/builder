@@ -11,6 +11,7 @@ from builder.heightfield.brushes.brush_types import (
     clamp_paint_sample,
 )
 from builder.heightfield.brushes.registry import get_brush_spec
+from builder.heightfield.sparse_height import get_sample, set_sample
 from builder.heightfield.vector.vector_types import (
     VectorRasterContext,
     radius_metres_to_uv,
@@ -19,8 +20,32 @@ from builder.heightfield.vector.vector_types import (
 
 
 def is_flatten_brush(brush_kind: str) -> bool:
-    """true for flatten / flatten_up / flatten_down"""
-    return brush_kind in ("flatten", "flatten_up", "flatten_down")
+    """true for relative and absolute flatten brushes"""
+    return brush_kind in (
+        "flatten",
+        "flatten_up",
+        "flatten_down",
+        "flatten_absolute",
+    )
+
+
+def is_absolute_flatten_brush(brush_kind: str) -> bool:
+    """true when flatten target is an absolute world y"""
+    return brush_kind == "flatten_absolute"
+
+
+def vector_flatten_target(
+    brush_kind: str, offset: float, below_height: float
+) -> float:
+    """world-y flatten target for a vector sculpt shape"""
+    if is_absolute_flatten_brush(brush_kind):
+        return float(offset)
+    return float(below_height) + float(offset)
+
+
+def index_to_xy(index: int, width: int) -> tuple[int, int]:
+    """linear index → texel xy"""
+    return (index % width, index // width)
 
 
 def apply_sculpt_weight(
@@ -33,10 +58,13 @@ def apply_sculpt_weight(
     """apply one weighted sculpt-metre contribution at a buffer index"""
     if weight <= 0.0:
         return
-    current: float = context.samples[index]
+    x: int
+    y: int
+    x, y = index_to_xy(index, context.width)
+    current: float = get_sample(context.raster, x, y)
     kind: str = context.brush_kind
     if kind == "add":
-        context.samples[index] = current + context.offset * weight
+        set_sample(context.raster, x, y, current + context.offset * weight)
         return
     if is_flatten_brush(kind):
         if context.flatten_target is None or context.below_at_uv is None:
@@ -50,7 +78,9 @@ def apply_sculpt_weight(
             return
         desired: float = target - below
         mix: float = weight * max(0.0, min(1.0, float(context.intensity)))
-        context.samples[index] = current + (desired - current) * mix
+        set_sample(
+            context.raster, x, y, current + (desired - current) * mix
+        )
         return
     # smooth and unknown kinds: no-op on sculpt vector
 
@@ -135,23 +165,26 @@ def apply_road_absolute(
     premultiplied storage keeps bilinear upsample of abs+cov filters correct
     when exterior samples are cleared to 0
     """
-    if weight <= 0.0 or context.coverage_samples is None:
+    if weight <= 0.0 or context.coverage is None:
         return
     mix: float = weight * max(0.0, min(1.0, float(context.intensity)))
     if mix <= 0.0:
         return
-    cov: float = max(0.0, min(1.0, context.coverage_samples[index]))
+    x: int
+    y: int
+    x, y = index_to_xy(index, context.width)
+    cov: float = max(0.0, min(1.0, get_sample(context.coverage, x, y)))
     height: float = float(target_height)
     if cov <= 1e-8:
         cov_new: float = mix
-        context.samples[index] = height * cov_new
-        context.coverage_samples[index] = cov_new
+        set_sample(context.raster, x, y, height * cov_new)
+        set_sample(context.coverage, x, y, cov_new)
         return
-    stored_height: float = context.samples[index] / cov
+    stored_height: float = get_sample(context.raster, x, y) / cov
     height_new: float = stored_height + (height - stored_height) * mix
     cov_new = cov + (1.0 - cov) * mix
-    context.samples[index] = height_new * cov_new
-    context.coverage_samples[index] = cov_new
+    set_sample(context.raster, x, y, height_new * cov_new)
+    set_sample(context.coverage, x, y, cov_new)
 
 
 def apply_road_weight(
@@ -168,10 +201,7 @@ def apply_road_weight(
     """
     if weight <= 0.0:
         return
-    if (
-        context.ribbon_height_at_xz is None
-        or context.coverage_samples is None
-    ):
+    if context.ribbon_height_at_xz is None or context.coverage is None:
         return
     wx: float = (u - 0.5) * context.size_x
     wz: float = (v - 0.5) * context.size_z
@@ -195,8 +225,16 @@ def apply_weighted_sample(
     if context.sculpt_metres:
         apply_sculpt_weight(context, index, u, v, weight)
         return
-    context.samples[index] = clamp_paint_sample(
-        context.samples[index] + context.offset * weight
+    x: int
+    y: int
+    x, y = index_to_xy(index, context.width)
+    set_sample(
+        context.raster,
+        x,
+        y,
+        clamp_paint_sample(
+            get_sample(context.raster, x, y) + context.offset * weight
+        ),
     )
 
 
@@ -268,7 +306,7 @@ def stamp_brush_at_uv(context: VectorRasterContext, u: float, v: float) -> None:
     spec = get_brush_spec(context.brush_kind)
     params = spec.params_type()
     spec.stamp(
-        context.samples, context.width, context.height, stroke, params
+        context.raster, context.width, context.height, stroke, params
     )
 
 

@@ -56,13 +56,16 @@ def composite_height_buffer(
 
 def north_first_rows(buffer: HeightmapBuffer) -> list[float]:
     """flip south-first / east-first buffer to ASC north-first / west-first"""
+    from builder.heightfield.heightmap_catalog import materialize_heightmap_samples
+
     width: int = buffer.width
     height: int = buffer.height
+    samples: list[float] = materialize_heightmap_samples(buffer)
     flipped: list[float] = []
     row: int
     for row in range(height - 1, -1, -1):
         start: int = row * width
-        row_vals: list[float] = buffer.samples[start : start + width]
+        row_vals: list[float] = samples[start : start + width]
         flipped.extend(reversed(row_vals))
     return flipped
 

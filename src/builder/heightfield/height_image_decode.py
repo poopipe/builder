@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+from array import array
 from collections.abc import Callable
 from pathlib import Path
 
@@ -47,13 +48,18 @@ def samples_from_i32(raw: bytes) -> list[float]:
     return [float(value) for value in values]
 
 
-def samples_from_f32(raw: bytes) -> list[float]:
-    """signed little-endian float32 samples as-is"""
+def f32_array_from_bytes(raw: bytes) -> array[float]:
+    """packed little-endian float32 → contiguous array (no per-element python float)"""
     if len(raw) % 4 != 0:
         raise ValueError("float32 payload length must be a multiple of 4")
-    count: int = len(raw) // 4
-    values: tuple[float, ...] = struct.unpack(f"<{count}f", raw)
-    return [float(value) for value in values]
+    samples: array[float] = array("f")
+    samples.frombytes(raw)
+    return samples
+
+
+def samples_from_f32(raw: bytes) -> list[float]:
+    """signed little-endian float32 samples as a python list"""
+    return list(f32_array_from_bytes(raw))
 
 
 def float_samples_from_decoded(image: DecodedHeightImage) -> list[float]:

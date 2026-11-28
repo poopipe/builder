@@ -28,6 +28,7 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapCatalog,
     HeightmapId,
     heightmap_buffer_from_samples,
+    materialize_heightmap_samples,
     register_heightmap_asset,
 )
 from builder.heightfield.pillow_height_decode import pillow_decode_height_image
@@ -83,7 +84,9 @@ class TestCompositeExport(unittest.TestCase):
             ),
         )
         buffer = composite_height_buffer(catalog, heightfield)
-        self.assertEqual(buffer.samples, [10.0, 10.0, 10.0, 10.0])
+        self.assertEqual(
+            materialize_heightmap_samples(buffer), [10.0, 10.0, 10.0, 10.0]
+        )
 
     def test_enabled_add_layer(self) -> None:
         catalog: HeightmapCatalog = HeightmapCatalog()
@@ -108,7 +111,9 @@ class TestCompositeExport(unittest.TestCase):
             ),
         )
         buffer = composite_height_buffer(catalog, heightfield)
-        self.assertEqual(buffer.samples, [15.0, 15.0, 15.0, 15.0])
+        self.assertEqual(
+            materialize_heightmap_samples(buffer), [15.0, 15.0, 15.0, 15.0]
+        )
 
     def test_export_asc_north_first_and_meta(self) -> None:
         catalog: HeightmapCatalog = HeightmapCatalog()

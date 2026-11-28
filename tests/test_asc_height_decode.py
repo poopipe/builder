@@ -22,6 +22,7 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapCatalog,
     HeightmapId,
     import_heightmap_image,
+    materialize_heightmap_samples,
 )
 
 
@@ -75,7 +76,9 @@ class TestAscDecode(unittest.TestCase):
             )
             self.assertEqual(asset.sample_type, HeightSampleType.f32)
             buffer = catalog.buffers[HeightmapId("height")]
-            self.assertEqual(buffer.samples, [0.0, 3.0, 2.0, 1.0])
+            self.assertEqual(
+                materialize_heightmap_samples(buffer), [0.0, 3.0, 2.0, 1.0]
+            )
 
 
 class TestAscMetaAndHints(unittest.TestCase):

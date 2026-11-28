@@ -18,7 +18,8 @@ from pyray import (
     is_mouse_button_pressed,
 )
 
-from builder.heightfield.brushes.registry import brush_specs
+from builder.heightfield.brushes.brush_types import BrushSpec
+from builder.heightfield.brushes.registry import vector_brush_specs
 from builder.heightfield.gpu.heightfield_gpu import HeightfieldGpuState
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
 from builder.heightfield.vector.circle import CircleShapeParams
@@ -36,7 +37,10 @@ from builder.heightfield.vector.rasterize import (
     regenerate_vectors_touching,
 )
 from builder.heightfield.vector.registry import get_vector_shape_spec
-from builder.heightfield.vector.stamp import is_flatten_brush
+from builder.heightfield.vector.stamp import (
+    is_absolute_flatten_brush,
+    is_flatten_brush,
+)
 from builder.heightfield.vector.vector_types import (
     VectorApplyMode,
     VectorShapeRecipe,
@@ -49,6 +53,7 @@ from builder.path.points import (
 )
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node, NodeRole
+from builder.ui.list_picker import ListPickerPurpose, make_list_picker
 from builder.ui.text_field import (
     FieldId,
     TextAction,
@@ -170,7 +175,10 @@ def shape_float_fields(
         fields.append(ShapeFloatField("grade", "Grade", 0.05))
         fields.append(ShapeFloatField("radius", "Width", 0.5))
     else:
-        fields.append(ShapeFloatField("offset", "Offset", 0.25))
+        offset_label: str = (
+            "Y" if is_absolute_flatten_brush(recipe.brush_kind) else "Offset"
+        )
+        fields.append(ShapeFloatField("offset", offset_label, 0.25))
         if is_flatten_brush(recipe.brush_kind):
             fields.append(ShapeFloatField("intensity", "Intensity", 0.05))
         fields.append(ShapeFloatField("radius", "Brush radius", 0.5))
@@ -259,12 +267,55 @@ def next_apply_mode(current: VectorApplyMode) -> VectorApplyMode:
     return modes[(modes.index(current) + 1) % len(modes)]
 
 
-def next_brush_kind(current: str) -> str:
-    """cycle registered brush kinds"""
-    kinds: list[str] = [spec.kind for spec in brush_specs]
-    if current not in kinds:
-        return kinds[0] if kinds else "add"
-    return kinds[(kinds.index(current) + 1) % len(kinds)]
+def vector_brush_label(kind: str) -> str:
+    """display label for a vector sculpt brush kind"""
+    spec: BrushSpec
+    for spec in vector_brush_specs:
+        if spec.kind == kind:
+            return spec.label
+    return kind
+
+
+def vector_brush_kind_for_label(label: str) -> str | None:
+    """map a picker label back to brush kind"""
+    spec: BrushSpec
+    for spec in vector_brush_specs:
+        if spec.label == label:
+            return spec.kind
+    return None
+
+
+def apply_vector_brush_choice(
+    scene: Scene,
+    catalog: HeightmapCatalog,
+    ui: UiState,
+    shape_id: str,
+    chosen_label: str,
+    *,
+    heightfield_gpu: HeightfieldGpuState | None = None,
+) -> None:
+    """commit a list-picker brush choice onto a vector shape"""
+    kind: str | None = vector_brush_kind_for_label(chosen_label)
+    if kind is None:
+        ui.status = f"Unknown brush: {chosen_label}"
+        return
+    shape_node: Node | None = scene.nodes.get(shape_id)
+    if shape_node is None or shape_node.vector_shape is None:
+        ui.status = "Brush target missing"
+        return
+    recipe: VectorShapeRecipe = shape_node.vector_shape
+    if recipe.brush_kind == kind:
+        ui.status = f"Brush: {chosen_label}"
+        return
+    commit_shape_recipe(
+        scene,
+        catalog,
+        shape_node,
+        replace(recipe, brush_kind=kind),
+        ui,
+        heightfield_gpu=heightfield_gpu,
+    )
+    ui.status = f"Brush: {chosen_label}"
 
 
 def neighbor_float_key(
@@ -390,16 +441,27 @@ def update_vector_shape_inspector(
             heightfield_gpu=heightfield_gpu,
         )
 
-    def set_brush() -> None:
+    def open_brush_picker() -> None:
         ui.clear_focus()
-        commit_shape_recipe(
-            scene,
-            catalog,
-            shape_node,
-            replace(recipe, brush_kind=next_brush_kind(recipe.brush_kind)),
-            ui,
-            heightfield_gpu=heightfield_gpu,
+        if ui.file_browser is not None:
+            return
+        labels: list[str] = [spec.label for spec in vector_brush_specs]
+        if not labels:
+            return
+        current_label: str = vector_brush_label(recipe.brush_kind)
+        index: int
+        try:
+            index = labels.index(current_label)
+        except ValueError:
+            index = 0
+        ui.list_picker = make_list_picker(
+            purpose=ListPickerPurpose.vector_brush,
+            title="Select brush",
+            items=labels,
+            selected=index,
+            target_id=shape_node.id,
         )
+        ui.status = "Select brush…"
 
     def toggle_enabled() -> None:
         ui.clear_focus()
@@ -423,8 +485,8 @@ def update_vector_shape_inspector(
     if not road:
         buttons.append(
             Button(
-                label=f"Brush: {recipe.brush_kind}",
-                on_click=set_brush,
+                label=f"Brush: {vector_brush_label(recipe.brush_kind)}",
+                on_click=open_brush_picker,
                 rect=Rectangle(x, y, inner_w, row_h),
             )
         )

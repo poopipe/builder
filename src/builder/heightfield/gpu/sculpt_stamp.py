@@ -62,7 +62,12 @@ from builder.heightfield.gpu.sculpt_stamp_shader import (
     load_sculpt_stamp_shader,
     unload_sculpt_stamp_shader,
 )
-from builder.heightfield.heightmap_catalog import HeightmapBuffer, HeightmapId
+from builder.heightfield.heightmap_catalog import (
+    HeightmapBuffer,
+    HeightmapId,
+    materialize_heightmap_samples,
+)
+from builder.heightfield.sparse_height import set_sample
 from builder.heightfield.vector.stamp import polyline_segments
 from builder.heightfield.vector.vector_types import VectorApplyMode
 from builder.view.lighting import set_float
@@ -106,6 +111,20 @@ class GpuSculptShape:
     circle_radius: float
     segments: list[tuple[tuple[float, float], tuple[float, float]]]
     poly_points: list[tuple[float, float]]
+    # retained for cpu fallback when geometry exceeds the gpu segment budget
+    kind: str
+    apply_mode: VectorApplyMode
+    brush_kind: str
+    closed: bool
+    points: list[tuple[float, float]]
+
+
+def gpu_shape_fits(shape: GpuSculptShape) -> bool:
+    """true when segment and poly uploads stay within the shader loop budget"""
+    return (
+        len(shape.segments) <= max_gpu_segments
+        and len(shape.poly_points) <= max_gpu_segments
+    )
 
 
 def brush_mode_for_kind(brush_kind: str) -> int | None:
@@ -113,6 +132,8 @@ def brush_mode_for_kind(brush_kind: str) -> int | None:
     if brush_kind == "add":
         return BRUSH_ADD
     if brush_kind == "flatten":
+        return BRUSH_FLATTEN
+    if brush_kind == "flatten_absolute":
         return BRUSH_FLATTEN
     if brush_kind == "flatten_up":
         return BRUSH_FLATTEN_UP
@@ -164,7 +185,7 @@ def ensure_sculpt_layer(
         del cache.sculpt_layers[heightmap_id.name]
     target: R32RenderTarget = create_r32_target(width, height)
     scratch: R32RenderTarget = create_r32_target(width, height)
-    data: Any = ffi.new("float[]", buffer.samples)
+    data: Any = ffi.new("float[]", materialize_heightmap_samples(buffer))
     update_texture(target.texture, data)
     layer = SculptLayerGpu(
         target=target,
@@ -230,9 +251,13 @@ def segments_to_float4(
     segments: list[tuple[tuple[float, float], tuple[float, float]]],
 ) -> list[tuple[float, float, float, float]]:
     """pack segment endpoints for the segment strip"""
+    if len(segments) > max_gpu_segments:
+        raise ValueError(
+            f"gpu sculpt segments {len(segments)} exceed max_gpu_segments"
+        )
     out: list[tuple[float, float, float, float]] = []
     segment: tuple[tuple[float, float], tuple[float, float]]
-    for segment in segments[:max_gpu_segments]:
+    for segment in segments:
         (ax, az), (bx, bz) = segment
         out.append((ax, az, bx, bz))
     return out
@@ -242,9 +267,13 @@ def points_to_float4(
     points: list[tuple[float, float]],
 ) -> list[tuple[float, float, float, float]]:
     """pack polygon vertices for the poly strip"""
+    if len(points) > max_gpu_segments:
+        raise ValueError(
+            f"gpu sculpt poly points {len(points)} exceed max_gpu_segments"
+        )
     out: list[tuple[float, float, float, float]] = []
     point: tuple[float, float]
-    for point in points[:max_gpu_segments]:
+    for point in points:
         out.append((point[0], point[1], 0.0, 0.0))
     return out
 
@@ -355,9 +384,9 @@ def readback_r32_region(
     x1: int,
     y0: int,
     y1: int,
-    samples: list[float],
+    buffer: HeightmapBuffer,
 ) -> None:
-    """copy a dirty rect from an r32 texture into row-major samples"""
+    """copy a dirty rect from an r32 texture into a sparse height raster"""
     ptr: Any = rl_read_texture_pixels(
         texture_id,
         width,
@@ -376,7 +405,7 @@ def readback_r32_region(
         row: int = y * width
         x: int
         for x in range(rx0, rx1):
-            samples[row + x] = float(floats[row + x])
+            set_sample(buffer, x, y, float(floats[row + x]))
     mem_free(ptr)
 
 
@@ -494,7 +523,7 @@ def gpu_stamp_sculpt_shapes(
         clear_x1,
         clear_y0,
         clear_y1,
-        buffer.samples,
+        buffer,
     )
 
 
@@ -544,6 +573,11 @@ def build_gpu_sculpt_shape(
         circle_radius=circle_radius,
         segments=segments,
         poly_points=poly_points,
+        kind=kind,
+        apply_mode=apply_mode,
+        brush_kind=brush_kind,
+        closed=closed,
+        points=list(points),
     )
 
 

@@ -49,6 +49,7 @@ from builder.ui.widgets import Button, draw_button, is_point_in_rect, update_but
 class ListPickerPurpose(IntEnum):
     road_kit = 0
     road_move_usage = 1
+    vector_brush = 2
 
 
 # sentinel list item: create a custom-named usage group

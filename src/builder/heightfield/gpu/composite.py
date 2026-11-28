@@ -53,7 +53,7 @@ from builder.heightfield.gpu.height_texture import (
     HeightTexture,
     HeightTextureKey,
     release_height_texture,
-    update_height_texture_region,
+    update_height_texture_region_sparse,
     update_or_upload_height_texture,
     upload_height_texture,
 )
@@ -79,7 +79,9 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapCatalog,
     HeightmapId,
     ensure_heightmap_buffer,
+    materialize_heightmap_samples,
 )
+from builder.heightfield.sparse_height import SparseHeightRaster
 from builder.heightfield.sample import (
     base_height_scale_bias,
     base_sample_type,
@@ -323,7 +325,8 @@ def upload_source_texture(
                     reusable = stale
                 else:
                     release_height_texture(stale)
-    samples: list[float]
+    samples: list[float] | None = None
+    sparse_buffer: SparseHeightRaster | None = None
     width: int
     height: int
     source_heightmap_id: HeightmapId | None = None
@@ -348,7 +351,7 @@ def upload_source_texture(
                 return cache.solid_zero.texture
             width = buffer.width
             height = buffer.height
-            samples = buffer.samples
+            sparse_buffer = buffer
         case ProceduralHeightSource(
             procedural_type=procedural_type, constant_value=constant_value
         ):
@@ -372,14 +375,13 @@ def upload_source_texture(
         has_dirty
         and dirty_rect is not None
         and reusable is not None
+        and sparse_buffer is not None
         and int(reusable.texture.width) == width
         and int(reusable.texture.height) == height
     ):
-        uploaded = update_height_texture_region(
+        uploaded = update_height_texture_region_sparse(
             reusable,
-            width,
-            height,
-            samples,
+            sparse_buffer,
             dirty_rect[0],
             dirty_rect[1],
             dirty_rect[2],
@@ -389,6 +391,9 @@ def upload_source_texture(
             0.0,
         )
     else:
+        if samples is None:
+            assert sparse_buffer is not None
+            samples = materialize_heightmap_samples(sparse_buffer)
         uploaded = update_or_upload_height_texture(
             reusable,
             width,
@@ -643,7 +648,7 @@ def make_raw_base_texture(
     return upload_height_texture(
         buffer.width,
         buffer.height,
-        buffer.samples,
+        materialize_heightmap_samples(buffer),
         key,
         scale,
         bias,

@@ -8,7 +8,6 @@ from pathlib import Path
 from builder.heightfield.brushes.brush_types import (
     brush_falloff,
     brush_falloff_flatten,
-    neighborhood_average,
 )
 from builder.heightfield.height_image_types import HeightSampleType
 from builder.heightfield.heightfield_types import (
@@ -37,6 +36,27 @@ from builder.heightfield.sample import sample_height_below
 sculpt_delta_coverage_epsilon: float = 1e-6
 
 
+def roi_neighborhood_average(
+    samples: list[float], width: int, height: int, x: int, y: int
+) -> float:
+    """3x3 mean over a dense roi scratch; out-of-bounds neighbors skipped"""
+    total: float = 0.0
+    count: int = 0
+    dy: int
+    for dy in (-1, 0, 1):
+        dx: int
+        for dx in (-1, 0, 1):
+            nx: int = x + dx
+            ny: int = y + dy
+            if nx < 0 or ny < 0 or nx >= width or ny >= height:
+                continue
+            total += samples[ny * width + nx]
+            count += 1
+    if count == 0:
+        return 0.0
+    return total / float(count)
+
+
 def create_sculpt_heightmap(
     catalog: HeightmapCatalog,
     *,
@@ -51,8 +71,22 @@ def create_sculpt_heightmap(
     heightmap_id: HeightmapId = unique_paint_id(catalog, stem)
     cache_path: Path = (cache_dir / f"{heightmap_id.name}.hraw").resolve()
     source_path: Path = cache_path
-    samples: list[float] = [fill] * (width * height)
-    buffer: HeightmapBuffer = heightmap_buffer_from_samples(width, height, samples)
+    from builder.heightfield.heightmap_catalog import heightmap_buffer_empty
+    from builder.heightfield.sparse_height import set_sample
+
+    buffer: HeightmapBuffer
+    if abs(fill) <= 1e-12:
+        buffer = heightmap_buffer_empty(width, height)
+    else:
+        buffer = heightmap_buffer_from_samples(
+            width, height, [fill] * (width * height)
+        )
+        # keep bounds honest when every texel is a constant fill
+        y: int
+        for y in range(min(1, height)):
+            x: int
+            for x in range(min(1, width)):
+                set_sample(buffer, x, y, fill)
     asset: HeightmapAsset = HeightmapAsset(
         heightmap_id=heightmap_id,
         label=label,
@@ -130,13 +164,15 @@ def convert_sculpt_buffers(
     delta → absolute: height = below + delta; coverage 1 only where |delta| > eps
     absolute → delta: delta = coverage * (height - below)
     """
+    from builder.heightfield.heightmap_catalog import materialize_heightmap_samples
+
     height_buf: HeightmapBuffer | None = catalog.buffers.get(source.heightmap_id)
     width: int
     height: int
     if height_buf is not None:
         width = height_buf.width
         height = height_buf.height
-        old_samples: list[float] = list(height_buf.samples)
+        old_samples: list[float] = materialize_heightmap_samples(height_buf)
     else:
         width, height = paint_resolution_for_heightfield(catalog, heightfield)
         old_samples = [0.0] * (width * height)
@@ -189,7 +225,7 @@ def convert_sculpt_buffers(
             ):
                 cov_buf: HeightmapBuffer = catalog.buffers[coverage_id]
                 if cov_buf.width == width and cov_buf.height == height:
-                    old_coverage = list(cov_buf.samples)
+                    old_coverage = materialize_heightmap_samples(cov_buf)
                 else:
                     old_coverage = [0.0] * (width * height)
             else:
@@ -273,6 +309,7 @@ def stamp_sculpt_layer(
         "flatten",
         "flatten_up",
         "flatten_down",
+        "flatten_absolute",
     )
     # flatten replaces the live stack below; absolute+coverage avoids baking
     # an inverse of soft features underneath (eg. vector sculpt falloff)
@@ -293,23 +330,22 @@ def stamp_sculpt_layer(
                 pass
             case _:
                 return (False, heightfield)
+    from builder.heightfield.brushes.brush_types import BrushStrokeContext
+    from builder.heightfield.sparse_height import get_sample, set_sample
+
     height_buf: HeightmapBuffer | None = catalog.buffers.get(source.heightmap_id)
     if height_buf is None:
         return (False, heightfield)
     width: int = height_buf.width
     height: int = height_buf.height
-    samples: list[float] = height_buf.samples
-    coverage: list[float] | None = None
+    cov_buf: HeightmapBuffer | None = None
     if (
         source.mode is SculptHeightMode.absolute
         and source.coverage_id is not None
     ):
-        cov_buf: HeightmapBuffer | None = catalog.buffers.get(source.coverage_id)
+        cov_buf = catalog.buffers.get(source.coverage_id)
         if cov_buf is None or cov_buf.width != width or cov_buf.height != height:
             return (False, heightfield)
-        coverage = cov_buf.samples
-
-    from builder.heightfield.brushes.brush_types import BrushStrokeContext
 
     context: BrushStrokeContext = BrushStrokeContext(
         center_u=center_u,
@@ -366,15 +402,17 @@ def stamp_sculpt_layer(
                 roi_index: int = (sy - snap_y0) * roi_w + (sx - snap_x0)
                 below_roi[roi_index] = sbelow
                 if visible_roi is not None:
-                    sindex: int = sy * width + sx
+                    stored: float = get_sample(height_buf, sx, sy)
                     match source.mode:
                         case SculptHeightMode.delta:
-                            visible_roi[roi_index] = sbelow + samples[sindex]
+                            visible_roi[roi_index] = sbelow + stored
                         case SculptHeightMode.absolute:
-                            assert coverage is not None
-                            scov: float = max(0.0, min(1.0, coverage[sindex]))
+                            assert cov_buf is not None
+                            scov: float = max(
+                                0.0, min(1.0, get_sample(cov_buf, sx, sy))
+                            )
                             visible_roi[roi_index] = (
-                                sbelow * (1.0 - scov) + samples[sindex] * scov
+                                sbelow * (1.0 - scov) + stored * scov
                             )
 
     y: int
@@ -390,18 +428,21 @@ def stamp_sculpt_layer(
             )
             if w <= 0.0:
                 continue
-            index: int = y * width + x
             roi_index = (y - snap_y0) * roi_w + (x - snap_x0)
             below: float = 0.0
             if below_roi is not None:
                 below = below_roi[roi_index]
             match source.mode:
                 case SculptHeightMode.delta:
-                    current: float = samples[index]
+                    current: float = get_sample(height_buf, x, y)
                     if brush_kind == "add":
-                        samples[index] = current + intensity_metres * w
+                        set_sample(
+                            height_buf, x, y, current + intensity_metres * w
+                        )
                     elif brush_kind == "subtract":
-                        samples[index] = current - intensity_metres * w
+                        set_sample(
+                            height_buf, x, y, current - intensity_metres * w
+                        )
                     elif is_flatten_kind:
                         assert flatten_target is not None
                         visible: float = below + current
@@ -411,10 +452,15 @@ def stamp_sculpt_layer(
                             continue
                         desired: float = flatten_target - below
                         mix: float = w * strength
-                        samples[index] = current + (desired - current) * mix
+                        set_sample(
+                            height_buf,
+                            x,
+                            y,
+                            current + (desired - current) * mix,
+                        )
                     elif brush_kind == "smooth":
                         assert visible_roi is not None
-                        avg: float = neighborhood_average(
+                        avg: float = roi_neighborhood_average(
                             visible_roi,
                             roi_w,
                             roi_h,
@@ -423,18 +469,23 @@ def stamp_sculpt_layer(
                         )
                         mix = w * strength
                         target_delta: float = avg - below
-                        samples[index] = current + (target_delta - current) * mix
+                        set_sample(
+                            height_buf,
+                            x,
+                            y,
+                            current + (target_delta - current) * mix,
+                        )
                 case SculptHeightMode.absolute:
-                    assert coverage is not None
-                    cov: float = max(0.0, min(1.0, coverage[index]))
-                    stored: float = samples[index]
+                    assert cov_buf is not None
+                    cov: float = max(0.0, min(1.0, get_sample(cov_buf, x, y)))
+                    stored = get_sample(height_buf, x, y)
                     ref: float = below * (1.0 - cov) + stored * cov
                     if brush_kind == "add":
-                        samples[index] = ref + intensity_metres * w
-                        coverage[index] = cov + (1.0 - cov) * w
+                        set_sample(height_buf, x, y, ref + intensity_metres * w)
+                        set_sample(cov_buf, x, y, cov + (1.0 - cov) * w)
                     elif brush_kind == "subtract":
-                        samples[index] = ref - intensity_metres * w
-                        coverage[index] = cov + (1.0 - cov) * w
+                        set_sample(height_buf, x, y, ref - intensity_metres * w)
+                        set_sample(cov_buf, x, y, cov + (1.0 - cov) * w)
                     elif is_flatten_kind:
                         assert flatten_target is not None
                         if brush_kind == "flatten_up" and ref >= flatten_target:
@@ -442,11 +493,16 @@ def stamp_sculpt_layer(
                         if brush_kind == "flatten_down" and ref <= flatten_target:
                             continue
                         mix = w * strength
-                        samples[index] = ref + (flatten_target - ref) * mix
-                        coverage[index] = cov + (1.0 - cov) * mix
+                        set_sample(
+                            height_buf,
+                            x,
+                            y,
+                            ref + (flatten_target - ref) * mix,
+                        )
+                        set_sample(cov_buf, x, y, cov + (1.0 - cov) * mix)
                     elif brush_kind == "smooth":
                         assert visible_roi is not None
-                        avg = neighborhood_average(
+                        avg = roi_neighborhood_average(
                             visible_roi,
                             roi_w,
                             roi_h,
@@ -454,10 +510,10 @@ def stamp_sculpt_layer(
                             y - snap_y0,
                         )
                         mix = w * strength
-                        samples[index] = ref + (avg - ref) * mix
-                        coverage[index] = cov + (1.0 - cov) * mix
+                        set_sample(height_buf, x, y, ref + (avg - ref) * mix)
+                        set_sample(cov_buf, x, y, cov + (1.0 - cov) * mix)
 
     touch_heightmap_buffer(catalog, source.heightmap_id)
-    if coverage is not None and source.coverage_id is not None:
+    if cov_buf is not None and source.coverage_id is not None:
         touch_heightmap_buffer(catalog, source.coverage_id)
     return (True, heightfield)

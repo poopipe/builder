@@ -11,6 +11,11 @@ from builder.heightfield.brushes.brush_types import (
     brush_falloff,
     clamp_paint_sample,
 )
+from builder.heightfield.sparse_height import (
+    SparseHeightRaster,
+    get_sample,
+    set_sample,
+)
 
 
 class FlattenDirection(IntEnum):
@@ -27,7 +32,7 @@ class FlattenBrushParams:
 
 
 def flatten_stamp_directed(
-    samples: list[float],
+    raster: SparseHeightRaster,
     width: int,
     height: int,
     context: BrushStrokeContext,
@@ -36,7 +41,7 @@ def flatten_stamp_directed(
     """lerp samples toward flatten_target; optionally only raise or only lower"""
     if context.flatten_target is None:
         return
-    if width < 1 or height < 1 or len(samples) != width * height:
+    if width < 1 or height < 1:
         return
     target: float = float(context.flatten_target)
     strength: float = max(0.0, min(1.0, float(context.intensity)))
@@ -57,8 +62,7 @@ def flatten_stamp_directed(
             w: float = brush_falloff(u, v, context)
             if w <= 0.0:
                 continue
-            index: int = y * width + x
-            current: float = samples[index]
+            current: float = get_sample(raster, x, y)
             match direction:
                 case FlattenDirection.up:
                     if current >= target:
@@ -69,13 +73,16 @@ def flatten_stamp_directed(
                 case FlattenDirection.both:
                     pass
             mix: float = w * strength
-            samples[index] = clamp_paint_sample(
-                current + (target - current) * mix
+            set_sample(
+                raster,
+                x,
+                y,
+                clamp_paint_sample(current + (target - current) * mix),
             )
 
 
 def flatten_stamp(
-    samples: list[float],
+    raster: SparseHeightRaster,
     width: int,
     height: int,
     context: BrushStrokeContext,
@@ -83,12 +90,12 @@ def flatten_stamp(
 ) -> None:
     """lerp samples toward flatten_target by falloff * intensity"""
     flatten_stamp_directed(
-        samples, width, height, context, FlattenDirection.both
+        raster, width, height, context, FlattenDirection.both
     )
 
 
 def flatten_up_stamp(
-    samples: list[float],
+    raster: SparseHeightRaster,
     width: int,
     height: int,
     context: BrushStrokeContext,
@@ -96,12 +103,12 @@ def flatten_up_stamp(
 ) -> None:
     """raise samples toward flatten_target only"""
     flatten_stamp_directed(
-        samples, width, height, context, FlattenDirection.up
+        raster, width, height, context, FlattenDirection.up
     )
 
 
 def flatten_down_stamp(
-    samples: list[float],
+    raster: SparseHeightRaster,
     width: int,
     height: int,
     context: BrushStrokeContext,
@@ -109,7 +116,7 @@ def flatten_down_stamp(
 ) -> None:
     """lower samples toward flatten_target only"""
     flatten_stamp_directed(
-        samples, width, height, context, FlattenDirection.down
+        raster, width, height, context, FlattenDirection.down
     )
 
 
@@ -132,4 +139,11 @@ flatten_down_brush_spec: BrushSpec = BrushSpec(
     label="Flatten Down",
     params_type=FlattenBrushParams,
     stamp=flatten_down_stamp,
+)
+
+flatten_absolute_brush_spec: BrushSpec = BrushSpec(
+    kind="flatten_absolute",
+    label="Flatten Absolute",
+    params_type=FlattenBrushParams,
+    stamp=flatten_stamp,
 )

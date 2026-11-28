@@ -6,6 +6,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from builder.heightfield.sparse_height import (
+    SparseHeightRaster,
+    get_sample,
+)
+
 
 @dataclass(frozen=True)
 class BrushStrokeContext:
@@ -22,7 +27,7 @@ class BrushStrokeContext:
 
 
 type StampBrush = Callable[
-    [list[float], int, int, BrushStrokeContext, Any], None
+    [SparseHeightRaster, int, int, BrushStrokeContext, Any], None
 ]
 
 
@@ -46,7 +51,7 @@ def clamp_paint_sample(value: float) -> float:
 
 
 def neighborhood_average(
-    samples: list[float], width: int, height: int, x: int, y: int
+    raster: SparseHeightRaster, width: int, height: int, x: int, y: int
 ) -> float:
     """3x3 mean of samples around (x, y); out-of-bounds neighbors skipped"""
     total: float = 0.0
@@ -59,7 +64,7 @@ def neighborhood_average(
             ny: int = y + dy
             if nx < 0 or ny < 0 or nx >= width or ny >= height:
                 continue
-            total += samples[ny * width + nx]
+            total += get_sample(raster, nx, ny)
             count += 1
     if count == 0:
         return 0.0

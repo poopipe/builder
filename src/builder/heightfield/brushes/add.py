@@ -10,6 +10,11 @@ from builder.heightfield.brushes.brush_types import (
     brush_falloff,
     clamp_paint_sample,
 )
+from builder.heightfield.sparse_height import (
+    SparseHeightRaster,
+    get_sample,
+    set_sample,
+)
 
 
 @dataclass(frozen=True)
@@ -18,14 +23,14 @@ class AddBrushParams:
 
 
 def add_stamp(
-    samples: list[float],
+    raster: SparseHeightRaster,
     width: int,
     height: int,
     context: BrushStrokeContext,
     _: AddBrushParams,
 ) -> None:
     """add intensity * falloff to samples under the brush"""
-    if width < 1 or height < 1 or len(samples) != width * height:
+    if width < 1 or height < 1:
         return
     radius_px_u: float = context.radius_u * float(width)
     radius_px_v: float = context.radius_v * float(height)
@@ -44,9 +49,13 @@ def add_stamp(
             w: float = brush_falloff(u, v, context)
             if w <= 0.0:
                 continue
-            index: int = y * width + x
-            samples[index] = clamp_paint_sample(
-                samples[index] + context.intensity * w
+            set_sample(
+                raster,
+                x,
+                y,
+                clamp_paint_sample(
+                    get_sample(raster, x, y) + context.intensity * w
+                ),
             )
 
 

@@ -8,6 +8,7 @@ from enum import IntEnum
 from typing import Any
 
 from builder.generators.param_types import FloatParam
+from builder.heightfield.sparse_height import SparseHeightRaster
 
 # u,v -> world height below the vector sculpt layer
 BelowAtUv = Callable[[float, float], float]
@@ -49,7 +50,7 @@ class VectorShapeRecipe:
 class VectorRasterContext:
     """shared stamp target for one shape rasterize call"""
 
-    samples: list[float]
+    raster: SparseHeightRaster
     width: int
     height: int
     size_x: float
@@ -69,8 +70,8 @@ class VectorRasterContext:
     ribbon_height_at_xz: RibbonTargetAtXz | None = None
     # when set, road stroke uses per-sample half-width (metres)
     ribbon_half_width_at_xz: RibbonScalarAtXz | None = None
-    # road coverage 0..1 (same size as samples); None for non-road rasters
-    coverage_samples: list[float] | None = None
+    # road coverage 0..1; None for non-road rasters
+    coverage: SparseHeightRaster | None = None
     # optional inclusive-exclusive texel clip for partial restamps
     clip_x0: int | None = None
     clip_x1: int | None = None

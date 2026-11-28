@@ -7,18 +7,31 @@ from typing import Any
 from builder.heightfield.brushes.add import add_brush_spec
 from builder.heightfield.brushes.brush_types import BrushSpec
 from builder.heightfield.brushes.flatten import (
+    flatten_absolute_brush_spec,
     flatten_brush_spec,
     flatten_down_brush_spec,
     flatten_up_brush_spec,
 )
 from builder.heightfield.brushes.smooth import smooth_brush_spec
+from builder.heightfield.brushes.subtract import subtract_brush_spec
 
 brush_specs: tuple[BrushSpec, ...] = (
+    add_brush_spec,
+    subtract_brush_spec,
+    flatten_brush_spec,
+    flatten_up_brush_spec,
+    flatten_down_brush_spec,
+    flatten_absolute_brush_spec,
+    smooth_brush_spec,
+)
+
+# brushes offered on vector sculpt shapes (paint-only / no-op kinds omitted)
+vector_brush_specs: tuple[BrushSpec, ...] = (
     add_brush_spec,
     flatten_brush_spec,
     flatten_up_brush_spec,
     flatten_down_brush_spec,
-    smooth_brush_spec,
+    flatten_absolute_brush_spec,
 )
 
 

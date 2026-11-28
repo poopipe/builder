@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from builder.generators.param_types import BoolParam, FloatParam
 from builder.heightfield.heightfield_types import (
     HeightEditLayer,
     Heightfield,
@@ -31,6 +32,7 @@ from builder.heightfield.vector.coords import (
 )
 from builder.heightfield.vector.polyline import PolylineShapeParams
 from builder.heightfield.vector.rectangle import (
+    RectangleShapeParams,
     oriented_rectangle_hf_corners,
     oriented_rectangle_hf_xzy,
 )
@@ -49,9 +51,11 @@ from builder.heightfield.vector.road import (
 )
 from builder.heightfield.vector.stamp import (
     is_flatten_brush,
+    vector_flatten_target,
     world_aabb_to_texel_range,
 )
 from builder.heightfield.vector.vector_types import (
+    BelowAtUv,
     RibbonScalarAtXz,
     RibbonTargetAtXz,
     VectorApplyMode,
@@ -59,7 +63,6 @@ from builder.heightfield.vector.vector_types import (
     VectorShapeRecipe,
     world_xz_to_uv,
 )
-from builder.path.bezier import default_densify_step_metres
 from builder.path.points import (
     densify_path_positions,
     densify_path_xzyw,
@@ -78,12 +81,69 @@ if TYPE_CHECKING:
 WorldAabb = tuple[float, float, float, float]
 
 
+def stamp_densify_step_metres(spacing: float) -> float:
+    """polyline stamp sample spacing matched to heightfield mesh spacing"""
+    return max(float(spacing), 1e-3)
+
+
+def cpu_stamp_sculpt_shape(
+    buffer: HeightmapBuffer,
+    shape: "GpuSculptShape",
+    *,
+    size_x: float,
+    size_z: float,
+    clip_x0: int,
+    clip_x1: int,
+    clip_y0: int,
+    clip_y1: int,
+    below_at_uv: BelowAtUv | None,
+) -> None:
+    """cpu-rasterize one sculpt shape into an already-cleared dirty rect"""
+    spec = get_vector_shape_spec(shape.kind)
+    params: object
+    match shape.kind:
+        case "polyline":
+            params = PolylineShapeParams(
+                closed=BoolParam(shape.closed, label="Closed")
+            )
+        case "circle":
+            params = CircleShapeParams(
+                radius=FloatParam(shape.circle_radius, label="Radius")
+            )
+        case "rectangle":
+            params = RectangleShapeParams()
+        case _:
+            params = spec.params_type()
+    flatten_target: float | None = None
+    if is_flatten_brush(shape.brush_kind):
+        flatten_target = shape.flatten_target
+    context: VectorRasterContext = VectorRasterContext(
+        raster=buffer,
+        width=buffer.width,
+        height=buffer.height,
+        size_x=size_x,
+        size_z=size_z,
+        radius_metres=shape.radius_metres,
+        offset=shape.offset,
+        intensity=shape.intensity,
+        apply_mode=shape.apply_mode,
+        brush_kind=shape.brush_kind,
+        sculpt_metres=True,
+        flatten_target=flatten_target,
+        below_at_uv=below_at_uv,
+        clip_x0=clip_x0,
+        clip_x1=clip_x1,
+        clip_y0=clip_y0,
+        clip_y1=clip_y1,
+    )
+    spec.rasterize(context, shape.points, params)
+
+
 def clear_buffer_samples(buffer: HeightmapBuffer) -> None:
-    """zero every sample (slice assign; faster than a python loop at large res)"""
-    count: int = len(buffer.samples)
-    if count == 0:
-        return
-    buffer.samples[:] = [0.0] * count
+    """drop every allocated tile"""
+    from builder.heightfield.sparse_height import clear_raster
+
+    clear_raster(buffer)
 
 
 def clear_buffer_region(
@@ -94,14 +154,9 @@ def clear_buffer_region(
     y1: int,
 ) -> None:
     """zero samples in an inclusive-exclusive texel rectangle"""
-    width: int = buffer.width
-    y: int
-    for y in range(max(0, y0), min(buffer.height, y1)):
-        row: int = y * width
-        start: int = row + max(0, x0)
-        end: int = row + min(width, x1)
-        if start < end:
-            buffer.samples[start:end] = [0.0] * (end - start)
+    from builder.heightfield.sparse_height import clear_raster_region
+
+    clear_raster_region(buffer, x0, x1, y0, y1)
 
 
 def aabb_intersects(a: WorldAabb, b: WorldAabb) -> bool:
@@ -528,6 +583,7 @@ def collect_gpu_sculpt_shapes(
     size_z: float,
     layer_index: int,
     *,
+    spacing: float,
     restamp_ids: set[str] | None,
     local_shape_ids: set[str] | None,
     local_point_ids: set[str] | None,
@@ -538,6 +594,7 @@ def collect_gpu_sculpt_shapes(
         build_gpu_sculpt_shape,
     )
 
+    densify_step: float = stamp_densify_step_metres(spacing)
     shapes: list[GpuSculptShape] = []
     child: Node
     for child in ordered_child_nodes(nodes, layer_node_id):
@@ -559,10 +616,6 @@ def collect_gpu_sculpt_shapes(
             case _:
                 closed = recipe.kind == "rectangle"
         radius_metres: float = float(recipe.radius.value)
-        densify_step: float = max(
-            default_densify_step_metres * 0.5,
-            radius_metres * 0.25,
-        )
         points: list[tuple[float, float]]
         if recipe.kind == "polyline":
             only_segments: set[int] | None = None
@@ -604,9 +657,14 @@ def collect_gpu_sculpt_shapes(
             pu, pv = world_xz_to_uv(
                 points[0][0], points[0][1], size_x, size_z
             )
-            flatten_target = sample_height_below(
+            below_h: float = sample_height_below(
                 catalog, heightfield, layer_index, pu, pv
-            ) + float(recipe.offset.value)
+            )
+            flatten_target = vector_flatten_target(
+                recipe.brush_kind,
+                float(recipe.offset.value),
+                below_h,
+            )
         built: GpuSculptShape | None = build_gpu_sculpt_shape(
             kind=recipe.kind,
             apply_mode=recipe.apply_mode,
@@ -726,11 +784,12 @@ def rasterize_vector_layer(
         )
         from builder.heightfield.gpu.sculpt_stamp import (
             GpuSculptShape,
+            gpu_shape_fits,
             gpu_stamp_sculpt_shapes,
         )
 
         assert isinstance(heightfield_gpu, HeightfieldGpuState)
-        gpu_shapes: list[GpuSculptShape] = collect_gpu_sculpt_shapes(
+        collected_shapes: list[GpuSculptShape] = collect_gpu_sculpt_shapes(
             catalog,
             heightfield,
             nodes,
@@ -739,12 +798,21 @@ def rasterize_vector_layer(
             layout.size_x,
             layout.size_z,
             layer_index,
+            spacing=layout.spacing,
             restamp_ids=restamp_ids,
             local_shape_ids=local_shape_ids,
             local_point_ids=local_point_ids,
         )
+        gpu_shapes: list[GpuSculptShape] = []
+        oversized_shapes: list[GpuSculptShape] = []
+        collected: GpuSculptShape
+        for collected in collected_shapes:
+            if gpu_shape_fits(collected):
+                gpu_shapes.append(collected)
+            else:
+                oversized_shapes.append(collected)
         needs_flatten: bool = any(
-            shape.brush_mode != 0 for shape in gpu_shapes
+            shape.brush_mode != 0 for shape in collected_shapes
         )
         ensure_solid_textures(heightfield_gpu.composite)
         assert heightfield_gpu.composite.solid_zero is not None
@@ -771,6 +839,28 @@ def rasterize_vector_layer(
             shapes=gpu_shapes,
             below_texture=below_texture,
         )
+        if len(oversized_shapes) > 0:
+
+            def below_at_uv_gpu_fallback(u: float, v: float) -> float:
+                return sample_height_below(
+                    catalog, heightfield, layer_index, u, v
+                )
+
+            oversized: GpuSculptShape
+            for oversized in oversized_shapes:
+                cpu_stamp_sculpt_shape(
+                    buffer,
+                    oversized,
+                    size_x=layout.size_x,
+                    size_z=layout.size_z,
+                    clip_x0=clear_x0,
+                    clip_x1=clear_x1,
+                    clip_y0=clear_y0,
+                    clip_y1=clear_y1,
+                    below_at_uv=(
+                        below_at_uv_gpu_fallback if needs_flatten else None
+                    ),
+                )
         touch_heightmap_buffer(
             catalog,
             heightmap_id,
@@ -857,10 +947,7 @@ def rasterize_vector_layer(
             case _:
                 closed = recipe.kind == "rectangle"
         radius_metres: float = float(recipe.radius.value)
-        densify_step: float = max(
-            default_densify_step_metres * 0.5,
-            radius_metres * 0.25,
-        )
+        densify_step: float = stamp_densify_step_metres(layout.spacing)
         points: list[tuple[float, float]]
         if recipe.kind == "polyline":
             only_segments: set[int] | None = None
@@ -979,8 +1066,10 @@ def rasterize_vector_layer(
             pu, pv = world_xz_to_uv(
                 points[0][0], points[0][1], layout.size_x, layout.size_z
             )
-            flatten_target = below_at_uv(pu, pv) + float(
-                recipe.offset.value
+            flatten_target = vector_flatten_target(
+                recipe.brush_kind,
+                float(recipe.offset.value),
+                below_at_uv(pu, pv),
             )
         clip_x0: int | None = None
         clip_x1: int | None = None
@@ -992,7 +1081,7 @@ def rasterize_vector_layer(
             clip_y0 = clear_y0
             clip_y1 = clear_y1
         context: VectorRasterContext = VectorRasterContext(
-            samples=buffer.samples,
+            raster=buffer,
             width=buffer.width,
             height=buffer.height,
             size_x=layout.size_x,
@@ -1007,9 +1096,7 @@ def rasterize_vector_layer(
             below_at_uv=below_at_uv if (sculpt_metres or road_metres) else None,
             ribbon_height_at_xz=ribbon_height,
             ribbon_half_width_at_xz=ribbon_half_width,
-            coverage_samples=(
-                None if coverage_buffer is None else coverage_buffer.samples
-            ),
+            coverage=coverage_buffer,
             clip_x0=clip_x0,
             clip_x1=clip_x1,
             clip_y0=clip_y0,

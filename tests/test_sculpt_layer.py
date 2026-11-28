@@ -17,6 +17,7 @@ from builder.heightfield.heightfield_types import (
     SculptHeightSource,
 )
 from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.sparse_height import get_sample
 from builder.heightfield.sample import (
     sample_height,
     sample_height_below,
@@ -228,12 +229,14 @@ class TestSculptLayerComposite(unittest.TestCase):
                     assert cov_id is not None
                     cov_buf = catalog.buffers[cov_id]
                     # corner far from stamp should stay uncovered
-                    self.assertAlmostEqual(cov_buf.samples[0], 0.0)
+                    self.assertAlmostEqual(get_sample(cov_buf, 0, 0), 0.0)
                     # center of stamp should be covered
-                    mid: int = (cov_buf.height // 2) * cov_buf.width + (
-                        cov_buf.width // 2
+                    self.assertGreater(
+                        get_sample(
+                            cov_buf, cov_buf.width // 2, cov_buf.height // 2
+                        ),
+                        0.5,
                     )
-                    self.assertGreater(cov_buf.samples[mid], 0.5)
                 case _:
                     self.fail("expected absolute sculpt source")
             heightfield = set_sculpt_layer_mode(

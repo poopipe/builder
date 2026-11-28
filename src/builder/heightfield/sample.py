@@ -28,6 +28,7 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapId,
     ensure_heightmap_buffer,
 )
+from builder.heightfield.sparse_height import get_sample
 
 
 def base_height_scale_bias(
@@ -143,7 +144,6 @@ def sample_buffer(
     if wrap:
         uu: float = wrap01(u)
         vv: float = wrap01(v)
-        # texel space [0, width) / [0, height); neighbors wrap
         x: float = uu * float(width)
         y: float = vv * float(height)
         x0 = int(floor(x)) % width
@@ -155,7 +155,6 @@ def sample_buffer(
     else:
         uu = clamp01(u)
         vv = clamp01(v)
-        # map onto pixel centers spanning the image
         x = uu * float(width - 1)
         y = vv * float(height - 1)
         x0 = int(x)
@@ -164,14 +163,10 @@ def sample_buffer(
         y1 = y0 + 1 if y0 + 1 < height else y0
         tx = x - float(x0)
         ty = y - float(y0)
-    i00: int = y0 * width + x0
-    i10: int = y0 * width + x1
-    i01: int = y1 * width + x0
-    i11: int = y1 * width + x1
-    s00: float = buffer.samples[i00]
-    s10: float = buffer.samples[i10]
-    s01: float = buffer.samples[i01]
-    s11: float = buffer.samples[i11]
+    s00: float = get_sample(buffer, x0, y0)
+    s10: float = get_sample(buffer, x1, y0)
+    s01: float = get_sample(buffer, x0, y1)
+    s11: float = get_sample(buffer, x1, y1)
     s0: float = s00 * (1.0 - tx) + s10 * tx
     s1: float = s01 * (1.0 - tx) + s11 * tx
     return s0 * (1.0 - ty) + s1 * ty
@@ -325,6 +320,9 @@ def apply_edit_layer_height(
                     cov_buf, layer_u, layer_v, wrap=True
                 )
             road_mix: float = clamp01(road_coverage) * opacity
+            if road_mix <= 0.0:
+                return accum
+            # absolute_pre is h*cov; * opacity yields h*mix
             return accum * (1.0 - road_mix) + absolute_pre * opacity
         case _:
             raw: float = sample_source(

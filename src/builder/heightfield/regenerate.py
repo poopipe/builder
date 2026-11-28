@@ -140,10 +140,12 @@ def regenerate_heightfield(
     group_id: str,
     *,
     road_parts: RoadPartsCatalog | None = None,
+    restamp_vectors: bool = True,
 ) -> None:
     """normalize the heightfield recipe, preload buffers, and drop leftover tiles
 
-    gpu displace draws the surface; tile marker children are not created
+    gpu displace draws the surface; tile marker children are not created.
+    restamp_vectors: when false (scene load), trust paint/sculpt/road .hraw
     """
     scene: Scene = host.nodes
     group: Node = scene.nodes[group_id]
@@ -160,6 +162,8 @@ def regenerate_heightfield(
     clear_heightfield_tiles(host, group_id)
     # validate size/spacing tile math; markers are not instantiated
     heightfield_layout(heightfield)
+    if not restamp_vectors:
+        return
     from builder.heightfield.vector.rasterize import regenerate_vector_sources
 
     regenerate_vector_sources(

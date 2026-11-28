@@ -28,7 +28,12 @@ from builder.heightfield.heightfield_types import (
     VectorSculptHeightSource,
     default_heightfield,
 )
-from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.heightmap_catalog import (
+    HeightmapCatalog,
+    heightmap_buffer_from_samples,
+    materialize_heightmap_samples,
+)
+from builder.heightfield.sparse_height import get_sample
 from builder.heightfield.paint import create_paint_heightmap
 from builder.heightfield.sample import sample_height
 from builder.heightfield.vector.circle import CircleShapeParams, circle_rasterize
@@ -64,14 +69,25 @@ from builder.heightfield.vector.road import (
 )
 from builder.heightfield.vector.stamp import (
     apply_weighted_sample,
+    is_absolute_flatten_brush,
+    is_flatten_brush,
     stamp_brush_at_uv,
+    vector_flatten_target,
 )
 from builder.scene.selection import subtree_ids
 from builder.heightfield.vector.polyline import PolylineShapeParams, polyline_rasterize
+from builder.heightfield.gpu.sculpt_stamp import (
+    build_gpu_sculpt_shape,
+    gpu_shape_fits,
+    max_gpu_segments,
+    points_to_float4,
+)
 from builder.heightfield.vector.rasterize import (
+    cpu_stamp_sculpt_shape,
     dirty_aabb_for_vector_nodes,
     regenerate_vector_sources,
     regenerate_vectors_touching,
+    stamp_densify_step_metres,
     union_aabb,
 )
 from builder.heightfield.vector.rectangle import (
@@ -119,9 +135,11 @@ class TestVectorRasterize(unittest.TestCase):
     def test_polyline_stroke_raises_samples(self) -> None:
         width: int = 64
         height: int = 64
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -137,14 +155,16 @@ class TestVectorRasterize(unittest.TestCase):
             [(-16.0, 0.0), (16.0, 0.0)],
             PolylineShapeParams(),
         )
-        self.assertGreater(max(samples), 0.0)
+        self.assertGreater(max(materialize_heightmap_samples(raster)), 0.0)
 
     def test_circle_fill_raises_center(self) -> None:
         width: int = 64
         height: int = 64
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -160,15 +180,18 @@ class TestVectorRasterize(unittest.TestCase):
             [(0.0, 0.0)],
             CircleShapeParams(radius=FloatParam(8.0, label="Radius")),
         )
-        center: int = (height // 2) * width + (width // 2)
-        self.assertGreater(samples[center], 0.5)
+        self.assertGreater(
+            get_sample(raster, width // 2, height // 2), 0.5
+        )
 
     def test_rectangle_fill_raises_interior(self) -> None:
         width: int = 64
         height: int = 64
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -184,8 +207,124 @@ class TestVectorRasterize(unittest.TestCase):
             [(-10.0, -10.0), (10.0, 10.0)],
             RectangleShapeParams(),
         )
-        center = (height // 2) * width + (width // 2)
-        self.assertGreater(samples[center], 0.5)
+        self.assertGreater(
+            get_sample(raster, width // 2, height // 2), 0.5
+        )
+
+    def test_stamp_densify_matches_mesh_spacing(self) -> None:
+        self.assertEqual(stamp_densify_step_metres(4.0), 4.0)
+        self.assertEqual(stamp_densify_step_metres(1.0), 1.0)
+
+    def test_mesh_spacing_keeps_long_ring_under_gpu_budget(self) -> None:
+        """~6km closed ring at m4 spacing stays within max_gpu_segments"""
+        step: float = stamp_densify_step_metres(4.0)
+        perimeter: float = 6071.0
+        count: int = int(perimeter / step) + 4
+        self.assertLessEqual(count, max_gpu_segments)
+        points: list[tuple[float, float]] = [
+            (float(i) * step, 0.0) for i in range(count - 1)
+        ]
+        points.append((0.0, step))
+        built = build_gpu_sculpt_shape(
+            kind="polyline",
+            apply_mode=VectorApplyMode.fill,
+            brush_kind="add",
+            radius_metres=2.0,
+            offset=1.0,
+            intensity=1.0,
+            flatten_target=0.0,
+            points=points,
+            closed=True,
+            circle_radius=0.0,
+        )
+        assert built is not None
+        self.assertTrue(gpu_shape_fits(built))
+
+    def test_gpu_shape_fits_rejects_over_budget(self) -> None:
+        per_side: int = max_gpu_segments // 4 + 8
+        points: list[tuple[float, float]] = []
+        i: int
+        for i in range(per_side):
+            t: float = float(i) / float(per_side)
+            points.append((-20.0 + 40.0 * t, -20.0))
+        for i in range(per_side):
+            t = float(i) / float(per_side)
+            points.append((20.0, -20.0 + 40.0 * t))
+        for i in range(per_side):
+            t = float(i) / float(per_side)
+            points.append((20.0 - 40.0 * t, 20.0))
+        for i in range(per_side):
+            t = float(i) / float(per_side)
+            points.append((-20.0, 20.0 - 40.0 * t))
+        built = build_gpu_sculpt_shape(
+            kind="polyline",
+            apply_mode=VectorApplyMode.fill,
+            brush_kind="add",
+            radius_metres=1.0,
+            offset=1.0,
+            intensity=1.0,
+            flatten_target=0.0,
+            points=points,
+            closed=True,
+            circle_radius=0.0,
+        )
+        assert built is not None
+        self.assertFalse(gpu_shape_fits(built))
+        with self.assertRaises(ValueError):
+            points_to_float4(built.poly_points)
+
+    def test_oversized_closed_fill_cpu_stamps_interior(self) -> None:
+        """cpu fallback fills interior when densified ring exceeds gpu budget"""
+        per_side: int = max_gpu_segments // 4 + 8
+        points: list[tuple[float, float]] = []
+        i: int
+        for i in range(per_side):
+            t: float = float(i) / float(per_side)
+            points.append((-20.0 + 40.0 * t, -20.0))
+        for i in range(per_side):
+            t = float(i) / float(per_side)
+            points.append((20.0, -20.0 + 40.0 * t))
+        for i in range(per_side):
+            t = float(i) / float(per_side)
+            points.append((20.0 - 40.0 * t, 20.0))
+        for i in range(per_side):
+            t = float(i) / float(per_side)
+            points.append((-20.0, 20.0 - 40.0 * t))
+        built = build_gpu_sculpt_shape(
+            kind="polyline",
+            apply_mode=VectorApplyMode.fill,
+            brush_kind="add",
+            radius_metres=1.0,
+            offset=1.0,
+            intensity=1.0,
+            flatten_target=0.0,
+            points=points,
+            closed=True,
+            circle_radius=0.0,
+        )
+        assert built is not None
+        self.assertFalse(gpu_shape_fits(built))
+        width: int = 64
+        height: int = 64
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
+        cpu_stamp_sculpt_shape(
+            raster,
+            built,
+            size_x=64.0,
+            size_z=64.0,
+            clip_x0=0,
+            clip_x1=width,
+            clip_y0=0,
+            clip_y1=height,
+            below_at_uv=None,
+        )
+        self.assertGreater(
+            get_sample(raster, width // 2, height // 2), 0.5
+        )
+        # far outside the square
+        self.assertEqual(get_sample(raster, 0, 0), 0.0)
 
 
 class TestVectorHybridLink(unittest.TestCase):
@@ -248,7 +387,11 @@ class TestVectorHybridLink(unittest.TestCase):
             regenerate_vector_sources(catalog, updated, nodes)
             source = updated.edit_layers[0].height
             assert isinstance(source, VectorHeightSource)
-            before: float = max(catalog.buffers[source.heightmap_id].samples)
+            before: float = max(
+                materialize_heightmap_samples(
+                    catalog.buffers[source.heightmap_id]
+                )
+            )
             # move circle center far away
             center = next(
                 n for n in new_nodes if n.role is NodeRole.path_point
@@ -259,7 +402,11 @@ class TestVectorHybridLink(unittest.TestCase):
                 transform=transform_at(Vector3(200.0, 0.0, 200.0)),
             )
             regenerate_vector_sources(catalog, updated, nodes)
-            after: float = max(catalog.buffers[source.heightmap_id].samples)
+            after: float = max(
+                materialize_heightmap_samples(
+                    catalog.buffers[source.heightmap_id]
+                )
+            )
             # with center outside field, max contribution drops
             self.assertLess(after, before)
 
@@ -410,7 +557,7 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
             self.assertIsNotNone(shape_decoded.vector_shape)
             self.assertEqual(scene_format_version, 41)
 
-    def test_document_version_is_40(self) -> None:
+    def test_document_version_is_41(self) -> None:
         document: SceneDocument = SceneDocument(
             version=scene_format_version,
             active_mesh_id=builtin_cube,
@@ -436,7 +583,7 @@ class TestVectorSceneRoundTrip(unittest.TestCase):
         )
         text: str = dumps_document(document, {}, {}, {})
         loaded, _warnings = loads_document(text)
-        self.assertEqual(loaded.version, 40)
+        self.assertEqual(loaded.version, 41)
 
 
 class TestVectorSculpt(unittest.TestCase):
@@ -466,16 +613,63 @@ class TestVectorSculpt(unittest.TestCase):
                 case _:
                     self.fail("expected VectorSculptHeightSource")
 
+    def test_vector_flatten_target_absolute_uses_offset(self) -> None:
+        self.assertTrue(is_flatten_brush("flatten_absolute"))
+        self.assertTrue(is_absolute_flatten_brush("flatten_absolute"))
+        self.assertFalse(is_absolute_flatten_brush("flatten"))
+        self.assertEqual(
+            vector_flatten_target("flatten_absolute", 42.0, 10.0), 42.0
+        )
+        self.assertEqual(
+            vector_flatten_target("flatten", 2.0, 10.0), 12.0
+        )
+
+    def test_sculpt_flatten_absolute_targets_world_y(self) -> None:
+        width: int = 32
+        height: int = 32
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
+
+        def below_at_uv(_u: float, _v: float) -> float:
+            return 5.0
+
+        target_y: float = 12.0
+        context: VectorRasterContext = VectorRasterContext(
+            raster=raster,
+            width=width,
+            height=height,
+            size_x=64.0,
+            size_z=64.0,
+            radius_metres=8.0,
+            offset=target_y,
+            intensity=1.0,
+            apply_mode=VectorApplyMode.stroke,
+            brush_kind="flatten_absolute",
+            sculpt_metres=True,
+            flatten_target=vector_flatten_target(
+                "flatten_absolute", target_y, 5.0
+            ),
+            below_at_uv=below_at_uv,
+        )
+        stamp_brush_at_uv(context, 0.5, 0.5)
+        # sculpt sample = world y - below = 12 - 5
+        self.assertAlmostEqual(
+            get_sample(raster, width // 2, height // 2), 7.0, places=2
+        )
+
     def test_sculpt_flatten_raises_toward_target(self) -> None:
         width: int = 32
         height: int = 32
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
 
         def below_at_uv(_u: float, _v: float) -> float:
             return 0.0
 
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -490,19 +684,22 @@ class TestVectorSculpt(unittest.TestCase):
             below_at_uv=below_at_uv,
         )
         stamp_brush_at_uv(context, 0.5, 0.5)
-        center: int = (height // 2) * width + (width // 2)
-        self.assertGreater(samples[center], 5.0)
+        self.assertGreater(
+            get_sample(raster, width // 2, height // 2), 5.0
+        )
 
     def test_sculpt_flatten_offset_raises_target(self) -> None:
         width: int = 32
         height: int = 32
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
 
         def below_at_uv(_u: float, _v: float) -> float:
             return 0.0
 
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -517,8 +714,9 @@ class TestVectorSculpt(unittest.TestCase):
             below_at_uv=below_at_uv,
         )
         stamp_brush_at_uv(context, 0.5, 0.5)
-        center: int = (height // 2) * width + (width // 2)
-        self.assertGreater(samples[center], 2.0)
+        self.assertGreater(
+            get_sample(raster, width // 2, height // 2), 2.0
+        )
 
     def test_shape_offset_round_trip(self) -> None:
         catalog: HeightmapCatalog = HeightmapCatalog()
@@ -552,9 +750,11 @@ class TestVectorSculpt(unittest.TestCase):
     def test_negative_offset_lowers_samples(self) -> None:
         width: int = 32
         height: int = 32
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -567,8 +767,7 @@ class TestVectorSculpt(unittest.TestCase):
             sculpt_metres=True,
         )
         stamp_brush_at_uv(context, 0.5, 0.5)
-        center: int = (height // 2) * width + (width // 2)
-        self.assertLess(samples[center], -0.5)
+        self.assertLess(get_sample(raster, width // 2, height // 2), -0.5)
 
     def test_sculpt_source_round_trip(self) -> None:
         catalog: HeightmapCatalog = HeightmapCatalog()
@@ -843,8 +1042,12 @@ class TestVectorRoad(unittest.TestCase):
     def test_ribbon_flattens_to_interpolated_height(self) -> None:
         width: int = 32
         height: int = 32
-        samples: list[float] = [0.0] * (width * height)
-        coverage: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
+        coverage = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
 
         def below_at_uv(_u: float, _v: float) -> float:
             return 0.0
@@ -859,7 +1062,7 @@ class TestVectorRoad(unittest.TestCase):
             )
 
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -872,17 +1075,20 @@ class TestVectorRoad(unittest.TestCase):
             sculpt_metres=True,
             below_at_uv=below_at_uv,
             ribbon_height_at_xz=ribbon_height,
-            coverage_samples=coverage,
+            coverage=coverage,
         )
         # center texel on the path
         apply_weighted_sample(context, (height // 2) * width + (width // 2), 0.5, 0.5, 1.0)
-        center: int = (height // 2) * width + (width // 2)
-        self.assertAlmostEqual(samples[center], 5.0, places=2)
-        self.assertAlmostEqual(coverage[center], 1.0, places=2)
+        self.assertAlmostEqual(
+            get_sample(raster, width // 2, height // 2), 5.0, places=2
+        )
+        self.assertAlmostEqual(
+            get_sample(coverage, width // 2, height // 2), 1.0, places=2
+        )
         # far off the path remains zero when weight is 0
         apply_weighted_sample(context, 0, 0.0, 0.0, 0.0)
-        self.assertEqual(samples[0], 0.0)
-        self.assertEqual(coverage[0], 0.0)
+        self.assertEqual(get_sample(raster, 0, 0), 0.0)
+        self.assertEqual(get_sample(coverage, 0, 0), 0.0)
 
     def test_road_point_y_not_snapped(self) -> None:
         point: Node = Node(
@@ -944,9 +1150,11 @@ class TestVectorRoad(unittest.TestCase):
     def test_open_polyline_fill_stamps_ribbon(self) -> None:
         width: int = 64
         height: int = 64
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -962,14 +1170,18 @@ class TestVectorRoad(unittest.TestCase):
             [(-16.0, 0.0), (16.0, 0.0)],
             PolylineShapeParams(closed=BoolParam(False, label="Closed")),
         )
-        self.assertGreater(max(samples), 0.0)
+        self.assertGreater(max(materialize_heightmap_samples(raster)), 0.0)
 
     def test_road_ribbon_interior_is_flat(self) -> None:
         """center and mid-radius samples both reach full target height"""
         width: int = 64
         height: int = 64
-        samples: list[float] = [0.0] * (width * height)
-        coverage: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
+        coverage = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         target: float = 6.0
 
         def below_at_uv(_u: float, _v: float) -> float:
@@ -979,7 +1191,7 @@ class TestVectorRoad(unittest.TestCase):
             return target
 
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -992,7 +1204,7 @@ class TestVectorRoad(unittest.TestCase):
             sculpt_metres=True,
             below_at_uv=below_at_uv,
             ribbon_height_at_xz=ribbon_height,
-            coverage_samples=coverage,
+            coverage=coverage,
         )
         polyline_rasterize(
             context,
@@ -1000,11 +1212,12 @@ class TestVectorRoad(unittest.TestCase):
             PolylineShapeParams(closed=BoolParam(False, label="Closed")),
         )
         # texel at path center (0, 0)
-        center_i: int = (height // 2) * width + (width // 2)
         # texel ~4m off the path (half of 8m half-width) along +z
         # z = (v - 0.5) * 64; want z ≈ 4 → v ≈ 0.5 + 4/64
         mid_v: float = 0.5 + 4.0 / 64.0
         mid_y: int = int(mid_v * height)
+        samples = materialize_heightmap_samples(raster)
+        center_i: int = (height // 2) * width + (width // 2)
         mid_i: int = mid_y * width + (width // 2)
         self.assertAlmostEqual(samples[center_i], target, places=1)
         self.assertAlmostEqual(samples[mid_i], target, places=1)
@@ -1047,8 +1260,12 @@ class TestVectorRoad(unittest.TestCase):
         """samples near scale-1 end stay inside ~radius; far off scale-1 end stay 0"""
         width: int = 64
         height: int = 64
-        samples: list[float] = [0.0] * (width * height)
-        coverage: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
+        coverage = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         target: float = 5.0
         base_radius: float = 4.0
         points_xzw = road_half_width_points(
@@ -1066,7 +1283,7 @@ class TestVectorRoad(unittest.TestCase):
             return nearest_segment_lerp_y(x, z, points_xzw, closed=False)
 
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -1080,13 +1297,14 @@ class TestVectorRoad(unittest.TestCase):
             below_at_uv=below_at_uv,
             ribbon_height_at_xz=ribbon_height,
             ribbon_half_width_at_xz=half_width_at,
-            coverage_samples=coverage,
+            coverage=coverage,
         )
         polyline_rasterize(
             context,
             [(-24.0, 0.0), (24.0, 0.0)],
             PolylineShapeParams(closed=BoolParam(False, label="Closed")),
         )
+        samples = materialize_heightmap_samples(raster)
         # near left end (scale 1 → half-width 4): z≈2 should be stamped, z≈7 not
         left_u: float = 0.5 + (-20.0) / 64.0
         left_x: int = int(left_u * width)
@@ -1121,8 +1339,12 @@ class TestVectorRoad(unittest.TestCase):
                 height=4,
                 cache_dir=cache_dir,
             )
-            catalog.buffers[height_id].samples[:] = [4.0] * 16
-            catalog.buffers[coverage_id].samples[:] = [1.0] * 16
+            catalog.buffers[height_id] = heightmap_buffer_from_samples(
+                4, 4, [4.0] * 16
+            )
+            catalog.buffers[coverage_id] = heightmap_buffer_from_samples(
+                4, 4, [1.0] * 16
+            )
             bump: HeightEditLayer = HeightEditLayer(
                 name="bump",
                 height=ProceduralHeightSource(
@@ -1183,8 +1405,12 @@ class TestVectorRoad(unittest.TestCase):
                 height=4,
                 cache_dir=cache_dir,
             )
-            catalog.buffers[height_id].samples[:] = [4.0] * 16
-            catalog.buffers[coverage_id].samples[:] = [0.0] * 16
+            catalog.buffers[height_id] = heightmap_buffer_from_samples(
+                4, 4, [4.0] * 16
+            )
+            catalog.buffers[coverage_id] = heightmap_buffer_from_samples(
+                4, 4, [0.0] * 16
+            )
             bump = HeightEditLayer(
                 name="bump",
                 height=ProceduralHeightSource(
@@ -1317,9 +1543,11 @@ class TestOrientedRectangle(unittest.TestCase):
     def test_fill_accepts_four_oriented_corners(self) -> None:
         width: int = 64
         height: int = 64
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         context: VectorRasterContext = VectorRasterContext(
-            samples=samples,
+            raster=raster,
             width=width,
             height=height,
             size_x=64.0,
@@ -1336,11 +1564,13 @@ class TestOrientedRectangle(unittest.TestCase):
             [(0.0, -8.0), (8.0, 0.0), (0.0, 8.0), (-8.0, 0.0)],
             RectangleShapeParams(),
         )
-        center = (height // 2) * width + (width // 2)
-        self.assertGreater(samples[center], 0.5)
+        self.assertGreater(
+            get_sample(raster, width // 2, height // 2), 0.5
+        )
         # outside the diamond but inside its aabb should stay empty
-        outside = (height // 2) * width + (width // 2 + 10)
-        self.assertEqual(samples[outside], 0.0)
+        self.assertEqual(
+            get_sample(raster, width // 2 + 10, height // 2), 0.0
+        )
 
 
 class TestVectorRotateGizmo(unittest.TestCase):

@@ -17,8 +17,12 @@ from builder.heightfield.heightfield_types import (
     default_heightfield,
     heightfield_layout,
 )
-from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.heightmap_catalog import (
+    HeightmapCatalog,
+    materialize_heightmap_samples,
+)
 from builder.heightfield.paint import create_paint_heightmap
+from builder.heightfield.sparse_height import set_sample
 from builder.heightfield.road_sections.rasterize import (
     rasterize_road_sections_layer,
     sparse_centerline_xz,
@@ -154,7 +158,7 @@ class TestRibbonRasterize(unittest.TestCase):
             )
             self.assertTrue(ok)
             cov = catalog.buffers[coverage_id]
-            self.assertGreater(max(cov.samples), 0.5)
+            self.assertGreater(max(materialize_heightmap_samples(cov)), 0.5)
 
     def test_no_flatten_leaves_coverage_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -208,7 +212,7 @@ class TestRibbonRasterize(unittest.TestCase):
                     name="Road Sections",
                 ),
             }
-            catalog.buffers[coverage_id].samples[0] = 1.0
+            set_sample(catalog.buffers[coverage_id], 0, 0, 1.0)
             ok = rasterize_road_sections_layer(
                 catalog,
                 updated,
@@ -219,7 +223,10 @@ class TestRibbonRasterize(unittest.TestCase):
                 layer_index=0,
             )
             self.assertTrue(ok)
-            self.assertEqual(max(catalog.buffers[coverage_id].samples), 0.0)
+            self.assertEqual(
+                max(materialize_heightmap_samples(catalog.buffers[coverage_id])),
+                0.0,
+            )
 
     def test_flatten_absolute_matches_shadow_surface_y(self) -> None:
         """ribbon stores the same height shadow draping would sample"""
@@ -332,8 +339,10 @@ class TestRibbonRasterize(unittest.TestCase):
                 below_layer_index=1,
             )
             self.assertAlmostEqual(expected, underlay_y, places=4)
-            cov = catalog.buffers[coverage_id].samples
-            abs_h = catalog.buffers[heightmap_id].samples
+            cov = materialize_heightmap_samples(catalog.buffers[coverage_id])
+            abs_h = materialize_heightmap_samples(
+                catalog.buffers[heightmap_id]
+            )
             matched: int = 0
             index: int
             for index, coverage in enumerate(cov):

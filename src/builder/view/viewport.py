@@ -87,7 +87,10 @@ from builder.heightfield.road_sections.vertex_gizmo import (
     pick_road_vertex_axis_drag,
     selection_pivot_world,
 )
-from builder.heightfield.vector.overlay import draw_vector_overlays
+from builder.heightfield.vector.overlay import (
+    VectorOverlayCache,
+    draw_vector_overlays,
+)
 from builder.heightfield.vector.pick import (
     VectorPointPickHit,
     pick_nearest_vector_point,
@@ -200,6 +203,7 @@ class Viewport:
         self.lighting: Lighting = Lighting()
         self.line_shader: LineShader | None = None
         self.line_batch: LineBatch = LineBatch()
+        self.vector_overlay_cache: VectorOverlayCache = VectorOverlayCache()
         self.road_line_mesh_cache: LineMeshCache = LineMeshCache()
         self.mesh_table: MeshTable = MeshTable()
         self.nodes: Scene = Scene()
@@ -1053,6 +1057,8 @@ class Viewport:
                     self.line_batch,
                     self.nodes.selected_ids,
                     heightfield_gpu=self.heightfield_gpu,
+                    cache=self.vector_overlay_cache,
+                    revision=self.nodes.revision,
                 )
                 live_road_ids: list[str] = []
                 if self.road_vertex_axis_drag is not None:

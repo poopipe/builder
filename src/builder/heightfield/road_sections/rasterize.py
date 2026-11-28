@@ -48,11 +48,10 @@ from builder.scene.visibility import node_effectively_visible
 
 
 def clear_buffer_samples_fast(buffer: HeightmapBuffer) -> None:
-    """zero every sample (slice assign is faster than a python loop at 4k²)"""
-    count: int = len(buffer.samples)
-    if count == 0:
-        return
-    buffer.samples[:] = [0.0] * count
+    """drop every allocated tile"""
+    from builder.heightfield.sparse_height import clear_raster
+
+    clear_raster(buffer)
 
 
 def sparse_centerline_xz(
@@ -157,14 +156,9 @@ def clear_buffer_region(
     y1: int,
 ) -> None:
     """zero samples in an inclusive-exclusive texel rectangle"""
-    width: int = buffer.width
-    y: int
-    for y in range(max(0, y0), min(buffer.height, y1)):
-        row: int = y * width
-        start: int = row + max(0, x0)
-        end: int = row + min(width, x1)
-        if start < end:
-            buffer.samples[start:end] = [0.0] * (end - start)
+    from builder.heightfield.sparse_height import clear_raster_region
+
+    clear_raster_region(buffer, x0, x1, y0, y1)
 
 
 def polyline_world_aabb(
@@ -409,7 +403,7 @@ def rasterize_road_sections_layer(
     if touch_dirty is not None:
         clip_x0, clip_x1, clip_y0, clip_y1 = touch_dirty
     base_context: VectorRasterContext = VectorRasterContext(
-        samples=buffer.samples,
+        raster=buffer,
         width=buffer.width,
         height=buffer.height,
         size_x=size_x,
@@ -424,7 +418,7 @@ def rasterize_road_sections_layer(
         below_at_uv=None,
         ribbon_height_at_xz=None,
         ribbon_half_width_at_xz=None,
-        coverage_samples=coverage_buffer.samples,
+        coverage=coverage_buffer,
         clip_x0=clip_x0,
         clip_x1=clip_x1,
         clip_y0=clip_y0,

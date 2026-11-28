@@ -13,7 +13,9 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapBuffer,
     HeightmapCatalog,
     HeightmapId,
+    heightmap_buffer_empty,
     heightmap_buffer_from_samples,
+    materialize_heightmap_samples,
     register_heightmap_asset,
 )
 from builder.heightfield.heightfield_types import (
@@ -147,8 +149,9 @@ def touch_heightmap_buffer(
 
 
 def decoded_f32_from_buffer(buffer: HeightmapBuffer) -> DecodedHeightImage:
-    """pack float samples for .hraw write"""
-    data: bytes = struct.pack(f"<{len(buffer.samples)}f", *buffer.samples)
+    """pack float samples for .hraw write (materializes dense for file IO)"""
+    samples: list[float] = materialize_heightmap_samples(buffer)
+    data: bytes = struct.pack(f"<{len(samples)}f", *samples)
     return DecodedHeightImage(
         width=buffer.width,
         height=buffer.height,
@@ -197,8 +200,7 @@ def create_paint_heightmap(
     cache_path: Path = (cache_dir / f"{heightmap_id.name}.hraw").resolve()
     # source_path mirrors cache for paint-only assets (no imported image)
     source_path: Path = cache_path
-    samples: list[float] = [0.0] * (width * height)
-    buffer: HeightmapBuffer = heightmap_buffer_from_samples(width, height, samples)
+    buffer: HeightmapBuffer = heightmap_buffer_empty(width, height)
     asset: HeightmapAsset = HeightmapAsset(
         heightmap_id=heightmap_id,
         label=label,
@@ -252,8 +254,6 @@ def stamp_paint_layer(
     if buffer is None:
         return False
     spec = get_brush_spec(brush_kind)
-    spec.stamp(
-        buffer.samples, buffer.width, buffer.height, context, brush_params
-    )
+    spec.stamp(buffer, buffer.width, buffer.height, context, brush_params)
     touch_heightmap_buffer(catalog, heightmap_id)
     return True

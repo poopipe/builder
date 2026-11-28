@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from math import cos, hypot, pi, sin
 
 from pyray import (
@@ -89,6 +90,42 @@ plane_color: Color = Color(80, 180, 255, 36)
 # subdivide long segments so the shadow drapes over hills
 overlay_step_metres: float = 2.0
 _min_segment_length: float = 1e-6
+
+
+@dataclass
+class VectorOverlayCache:
+    """densified overlay polylines keyed by shape; cleared on scene revision"""
+
+    revision: int = -1
+    # (shape_id, closed, densify_step) -> densified xz
+    polylines: dict[tuple[str, bool, float], list[tuple[float, float]]] = field(
+        default_factory=dict
+    )
+
+
+def clear_overlay_cache_if_stale(
+    cache: VectorOverlayCache, revision: int
+) -> None:
+    """drop cached curves when the scene revision changes"""
+    if cache.revision == revision:
+        return
+    cache.polylines.clear()
+    cache.revision = revision
+
+
+def shape_touched_by_selection(
+    nodes: dict[str, Node],
+    shape_id: str,
+    selected_ids: set[str],
+) -> bool:
+    """true when the shape or one of its descendants is selected"""
+    if shape_id in selected_ids:
+        return True
+    selected_id: str
+    for selected_id in selected_ids:
+        if find_vector_shape_ancestor(nodes, selected_id) == shape_id:
+            return True
+    return False
 
 
 def surface_y(
@@ -224,8 +261,15 @@ def shape_polyline_points(
     nodes: dict[str, Node],
     shape: Node,
     heightfield_group_id: str,
+    *,
+    densify: bool = True,
+    cache: VectorOverlayCache | None = None,
+    revision: int = 0,
 ) -> tuple[list[tuple[float, float]], bool] | None:
-    """xz polyline and closed flag for a shape, or none if nothing to draw"""
+    """xz polyline and closed flag for a shape, or none if nothing to draw
+
+    densify false: polyline knots only (cheap sibling overlay)
+    """
     recipe: VectorShapeRecipe | None = shape.vector_shape
     if recipe is None or not recipe.enabled:
         return None
@@ -240,10 +284,24 @@ def shape_polyline_points(
                     closed = bool(closed_param.value)
                 case _:
                     pass
+            if not densify:
+                return points, closed
             densify_step: float = max(
                 overlay_step_metres,
                 float(recipe.radius.value) * 0.25,
             )
+            cache_key: tuple[str, bool, float] = (
+                shape.id,
+                closed,
+                densify_step,
+            )
+            if cache is not None:
+                clear_overlay_cache_if_stale(cache, revision)
+                cached: list[tuple[float, float]] | None = cache.polylines.get(
+                    cache_key
+                )
+                if cached is not None:
+                    return cached, closed
             densified = densify_path_positions(
                 nodes,
                 shape.id,
@@ -254,6 +312,8 @@ def shape_polyline_points(
             curve: list[tuple[float, float]] = [
                 (float(p.x), float(p.z)) for p in densified
             ]
+            if cache is not None:
+                cache.polylines[cache_key] = curve
             return curve, closed
         case "circle":
             if len(points) == 0:
@@ -268,6 +328,8 @@ def shape_polyline_points(
             cz: float = points[0][1]
             circumference: float = 2.0 * pi * max(radius, 0.1)
             count: int = max(32, int(circumference / overlay_step_metres))
+            if not densify:
+                count = min(count, 24)
             rim: list[tuple[float, float]] = []
             i: int
             for i in range(count):
@@ -379,9 +441,18 @@ def draw_shape_shadow(
     *,
     below_layer_index: int | None = None,
     gpu_drape: bool = False,
+    cache: VectorOverlayCache | None = None,
+    revision: int = 0,
 ) -> None:
     """terrain shadow for one vector shape"""
-    polyline = shape_polyline_points(nodes, shape, heightfield_group_id)
+    polyline = shape_polyline_points(
+        nodes,
+        shape,
+        heightfield_group_id,
+        densify=True,
+        cache=cache,
+        revision=revision,
+    )
     if polyline is None:
         return
     points: list[tuple[float, float]]
@@ -491,11 +562,25 @@ def draw_shape_flat(
     thickness_px: float,
     cube_size: float,
     *,
+    detail: bool,
     line_color: Color | None = None,
+    cache: VectorOverlayCache | None = None,
+    revision: int = 0,
 ) -> None:
-    """work-plane lines and point cubes for one vector shape"""
+    """work-plane lines for one vector shape
+
+    detail true: densified curve + path-point cubes
+    detail false: knot polyline only (siblings of the selection)
+    """
     recipe: VectorShapeRecipe | None = shape.vector_shape
-    polyline = shape_polyline_points(nodes, shape, heightfield_group_id)
+    polyline = shape_polyline_points(
+        nodes,
+        shape,
+        heightfield_group_id,
+        densify=detail,
+        cache=cache if detail else None,
+        revision=revision,
+    )
     if polyline is not None:
         points: list[tuple[float, float]]
         closed: bool
@@ -508,6 +593,8 @@ def draw_shape_flat(
             thickness_px,
             line_color if line_color is not None else overlay_color,
         )
+    if not detail:
+        return
     entry: tuple[str, float, float]
     for entry in vector_point_entries(
         nodes, shape.id, heightfield_group_id
@@ -615,6 +702,8 @@ def draw_vector_overlays(
     selected_ids: Sequence[str] = (),
     *,
     heightfield_gpu: HeightfieldGpuState | None = None,
+    cache: VectorOverlayCache | None = None,
+    revision: int = 0,
 ) -> None:
     """draw work-plane shapes, terrain shadows, and point cubes for one heightfield"""
     heightfield: Heightfield | None = heightfield_group.heightfield
@@ -643,6 +732,8 @@ def draw_vector_overlays(
     size_x: float = layout.size_x
     size_z: float = layout.size_z
     selected_set: set[str] = set(selected_ids)
+    if cache is not None:
+        clear_overlay_cache_if_stale(cache, revision)
     hf_world: Matrix = world_matrix(nodes, heightfield_group.id)
     distance: float = vector3_distance(
         camera.position, matrix_translation(hf_world)
@@ -697,6 +788,8 @@ def draw_vector_overlays(
                 0.0,
                 below_layer_index=road_index,
                 gpu_drape=use_gpu_drape,
+                cache=cache,
+                revision=revision,
             )
             flush_line_batch(
                 line_batch,
@@ -728,6 +821,9 @@ def draw_vector_overlays(
     draw_work_plane(size_x, size_z, plane_y)
     shape_flat: Node
     for shape_flat in shapes:
+        detail: bool = shape_touched_by_selection(
+            nodes, shape_flat.id, selected_set
+        )
         draw_shape_flat(
             line_batch,
             nodes,
@@ -737,7 +833,10 @@ def draw_vector_overlays(
             selected_set,
             overlay_line_pixels,
             cube_size,
+            detail=detail,
             line_color=palette_color(shape_flat.color_index),
+            cache=cache,
+            revision=revision,
         )
     flush_line_batch(line_batch, line_shader)
     rl_pop_matrix()

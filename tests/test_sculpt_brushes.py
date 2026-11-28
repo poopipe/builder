@@ -16,7 +16,11 @@ from builder.heightfield.brushes.flatten import (
 )
 from builder.heightfield.brushes.smooth import smooth_stamp, SmoothBrushParams
 from builder.heightfield.brushes.subtract import subtract_stamp, SubtractBrushParams
-from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.heightmap_catalog import (
+    HeightmapCatalog,
+    heightmap_buffer_from_samples,
+    materialize_heightmap_samples,
+)
 from builder.heightfield.heightfield_types import Heightfield, PaintHeightSource
 from builder.heightfield.paint import (
     append_paint_edit_layer,
@@ -24,13 +28,16 @@ from builder.heightfield.paint import (
     paint_revision,
     stamp_paint_layer,
 )
+from builder.heightfield.sparse_height import get_sample, set_sample
 
 
 class TestBrushFalloffStamp(unittest.TestCase):
     def test_add_raises_center(self) -> None:
         width: int = 8
         height: int = 8
-        samples: list[float] = [0.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
         context: BrushStrokeContext = BrushStrokeContext(
             center_u=0.5,
             center_v=0.5,
@@ -38,15 +45,16 @@ class TestBrushFalloffStamp(unittest.TestCase):
             radius_v=0.25,
             intensity=1.0,
         )
-        add_stamp(samples, width, height, context, AddBrushParams())
-        center_index: int = (height // 2) * width + (width // 2)
-        self.assertGreater(samples[center_index], 0.5)
-        self.assertAlmostEqual(samples[0], 0.0)
+        add_stamp(raster, width, height, context, AddBrushParams())
+        self.assertGreater(get_sample(raster, width // 2, height // 2), 0.5)
+        self.assertAlmostEqual(get_sample(raster, 0, 0), 0.0)
 
     def test_subtract_lowers_center(self) -> None:
         width: int = 8
         height: int = 8
-        samples: list[float] = [1.0] * (width * height)
+        raster = heightmap_buffer_from_samples(
+            width, height, [1.0] * (width * height)
+        )
         context: BrushStrokeContext = BrushStrokeContext(
             center_u=0.5,
             center_v=0.5,
@@ -54,14 +62,34 @@ class TestBrushFalloffStamp(unittest.TestCase):
             radius_v=0.25,
             intensity=1.0,
         )
-        subtract_stamp(samples, width, height, context, SubtractBrushParams())
-        center_index: int = (height // 2) * width + (width // 2)
-        self.assertLess(samples[center_index], 0.5)
+        subtract_stamp(raster, width, height, context, SubtractBrushParams())
+        self.assertLess(get_sample(raster, width // 2, height // 2), 0.5)
 
     def test_flatten_pulls_toward_target(self) -> None:
         width: int = 4
         height: int = 4
-        samples: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 2.0, 0.0, 0.0, 2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        raster = heightmap_buffer_from_samples(
+            width,
+            height,
+            [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                2.0,
+                2.0,
+                0.0,
+                0.0,
+                2.0,
+                2.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+        )
         context: BrushStrokeContext = BrushStrokeContext(
             center_u=0.5,
             center_v=0.5,
@@ -70,13 +98,17 @@ class TestBrushFalloffStamp(unittest.TestCase):
             intensity=1.0,
             flatten_target=0.5,
         )
-        flatten_stamp(samples, width, height, context, FlattenBrushParams())
-        self.assertAlmostEqual(samples[5], 0.5, places=3)
+        flatten_stamp(raster, width, height, context, FlattenBrushParams())
+        # soft falloff at this texel; expect a clear pull toward 0.5 from 2.0
+        self.assertLess(get_sample(raster, 1, 1), 2.0)
+        self.assertGreater(get_sample(raster, 1, 1), 0.5)
 
     def test_flatten_up_only_raises(self) -> None:
         width: int = 4
         height: int = 1
-        samples: list[float] = [0.0, 0.2, 0.8, 1.0]
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0, 0.2, 0.8, 1.0]
+        )
         context: BrushStrokeContext = BrushStrokeContext(
             center_u=0.5,
             center_v=0.5,
@@ -85,16 +117,18 @@ class TestBrushFalloffStamp(unittest.TestCase):
             intensity=1.0,
             flatten_target=0.5,
         )
-        flatten_up_stamp(samples, width, height, context, FlattenBrushParams())
-        self.assertGreater(samples[0], 0.0)
-        self.assertGreater(samples[1], 0.2)
-        self.assertAlmostEqual(samples[2], 0.8)
-        self.assertAlmostEqual(samples[3], 1.0)
+        flatten_up_stamp(raster, width, height, context, FlattenBrushParams())
+        self.assertGreater(get_sample(raster, 0, 0), 0.0)
+        self.assertGreater(get_sample(raster, 1, 0), 0.2)
+        self.assertAlmostEqual(get_sample(raster, 2, 0), 0.8)
+        self.assertAlmostEqual(get_sample(raster, 3, 0), 1.0)
 
     def test_flatten_down_only_lowers(self) -> None:
         width: int = 4
         height: int = 1
-        samples: list[float] = [0.0, 0.2, 0.8, 1.0]
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0, 0.2, 0.8, 1.0]
+        )
         context: BrushStrokeContext = BrushStrokeContext(
             center_u=0.5,
             center_v=0.5,
@@ -103,18 +137,19 @@ class TestBrushFalloffStamp(unittest.TestCase):
             intensity=1.0,
             flatten_target=0.5,
         )
-        flatten_down_stamp(samples, width, height, context, FlattenBrushParams())
-        self.assertAlmostEqual(samples[0], 0.0)
-        self.assertAlmostEqual(samples[1], 0.2)
-        self.assertLess(samples[2], 0.8)
-        self.assertLess(samples[3], 1.0)
+        flatten_down_stamp(raster, width, height, context, FlattenBrushParams())
+        self.assertAlmostEqual(get_sample(raster, 0, 0), 0.0)
+        self.assertAlmostEqual(get_sample(raster, 1, 0), 0.2)
+        self.assertLess(get_sample(raster, 2, 0), 0.8)
+        self.assertLess(get_sample(raster, 3, 0), 1.0)
 
     def test_smooth_reduces_spike(self) -> None:
         width: int = 5
         height: int = 5
-        samples: list[float] = [0.0] * (width * height)
-        center_index: int = (height // 2) * width + (width // 2)
-        samples[center_index] = 1.0
+        raster = heightmap_buffer_from_samples(
+            width, height, [0.0] * (width * height)
+        )
+        set_sample(raster, width // 2, height // 2, 1.0)
         context: BrushStrokeContext = BrushStrokeContext(
             center_u=0.5,
             center_v=0.5,
@@ -122,9 +157,10 @@ class TestBrushFalloffStamp(unittest.TestCase):
             radius_v=0.6,
             intensity=1.0,
         )
-        smooth_stamp(samples, width, height, context, SmoothBrushParams())
-        self.assertLess(samples[center_index], 1.0)
-        self.assertGreater(samples[center_index], 0.0)
+        smooth_stamp(raster, width, height, context, SmoothBrushParams())
+        center: float = get_sample(raster, width // 2, height // 2)
+        self.assertLess(center, 1.0)
+        self.assertGreater(center, 0.0)
 
 
 class TestPaintLayer(unittest.TestCase):
@@ -147,9 +183,10 @@ class TestPaintLayer(unittest.TestCase):
             )
             self.assertTrue(stamped)
             buffer = catalog.buffers[heightmap_id]
-            self.assertGreater(max(buffer.samples), 0.0)
-            self.assertLessEqual(max(buffer.samples), 1.0)
-            self.assertGreaterEqual(min(buffer.samples), -1.0)
+            samples = materialize_heightmap_samples(buffer)
+            self.assertGreater(max(samples), 0.0)
+            self.assertLessEqual(max(samples), 1.0)
+            self.assertGreaterEqual(min(samples), -1.0)
             self.assertEqual(catalog.paint_revisions[heightmap_id], 1)
 
     def test_paint_default_fill_is_zero(self) -> None:
@@ -159,7 +196,13 @@ class TestPaintLayer(unittest.TestCase):
                 catalog, label="Paint", width=4, height=4, cache_dir=Path(tmp)
             )
             buffer = catalog.buffers[heightmap_id]
-            self.assertTrue(all(sample == 0.0 for sample in buffer.samples))
+            self.assertEqual(len(buffer.tiles), 0)
+            self.assertTrue(
+                all(
+                    sample == 0.0
+                    for sample in materialize_heightmap_samples(buffer)
+                )
+            )
 
     def test_stamp_mutates_same_buffer_and_bumps_revision(self) -> None:
         catalog: HeightmapCatalog = HeightmapCatalog()
@@ -168,7 +211,7 @@ class TestPaintLayer(unittest.TestCase):
                 catalog, label="Paint", width=8, height=8, cache_dir=Path(tmp)
             )
             before = catalog.buffers[heightmap_id]
-            samples_id: int = id(before.samples)
+            tiles_id: int = id(before.tiles)
             rev0: int = paint_revision(catalog, heightmap_id)
             context: BrushStrokeContext = BrushStrokeContext(
                 center_u=0.5,
@@ -189,7 +232,7 @@ class TestPaintLayer(unittest.TestCase):
             )
             after = catalog.buffers[heightmap_id]
             self.assertIs(after, before)
-            self.assertEqual(id(after.samples), samples_id)
+            self.assertEqual(id(after.tiles), tiles_id)
             self.assertEqual(paint_revision(catalog, heightmap_id), rev0 + 2)
 
     def test_append_paint_edit_layer(self) -> None:

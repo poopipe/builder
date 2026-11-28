@@ -120,6 +120,7 @@ from builder.ui.vector_layer_inspector import (
 )
 from builder.ui.vector_shape_inspector import (
     VectorShapeFloatRow,
+    apply_vector_brush_choice,
     draw_vector_shape_inspector,
     selected_vector_shape_group,
     update_vector_shape_inspector,
@@ -819,6 +820,18 @@ class Application:
                                     road_parts=self.application.road_parts,
                                     scene_context=self.scene,
                                     heightmap_catalog=self.application.heightmap_catalog,
+                                )
+                        case ListPickerPurpose.vector_brush:
+                            if target_id is None:
+                                self.ui.status = "Brush target missing"
+                            else:
+                                apply_vector_brush_choice(
+                                    self.scene.nodes,
+                                    self.application.heightmap_catalog,
+                                    self.ui,
+                                    target_id,
+                                    chosen,
+                                    heightfield_gpu=self.scene.heightfield_gpu,
                                 )
                 case None:
                     pass

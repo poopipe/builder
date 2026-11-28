@@ -21,6 +21,7 @@ from builder.heightfield.heightmap_catalog import (
     HeightmapCatalog,
     HeightmapId,
     import_heightmap_image,
+    materialize_heightmap_samples,
 )
 from builder.heightfield.pillow_height_decode import pillow_decode_height_image
 
@@ -90,10 +91,11 @@ class TestPillowU16AndRawCache(unittest.TestCase):
             self.assertEqual(again.data, decoded.data)
 
             buffer = catalog.buffers[HeightmapId("height_u16")]
-            self.assertEqual(buffer.samples[0], 0.0)
-            self.assertEqual(buffer.samples[1], 1.0)
-            self.assertAlmostEqual(buffer.samples[2], 32768.0 / 65535.0)
-            self.assertAlmostEqual(buffer.samples[3], 1.0 / 65535.0)
+            samples = materialize_heightmap_samples(buffer)
+            self.assertEqual(samples[0], 0.0)
+            self.assertEqual(samples[1], 1.0)
+            self.assertAlmostEqual(samples[2], 32768.0 / 65535.0)
+            self.assertAlmostEqual(samples[3], 1.0 / 65535.0)
 
 
 if __name__ == "__main__":

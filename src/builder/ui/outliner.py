@@ -24,6 +24,7 @@ from pyray import (
 )
 
 from builder.generators.registry import get_spec
+from builder.heightfield.vector.registry import get_vector_shape_spec
 from builder.meshes.mesh_catalog import MeshAsset, MeshCatalog
 from builder.scene.scene import Scene
 from builder.scene.scene_types import Node, NodeRole
@@ -94,8 +95,6 @@ def group_display_name(node: Node) -> str:
     if node.vector_layer is not None:
         return "Vector"
     if node.vector_shape is not None:
-        from builder.heightfield.vector.registry import get_vector_shape_spec
-
         try:
             return get_vector_shape_spec(node.vector_shape.kind).label
         except KeyError:
@@ -115,20 +114,28 @@ def group_display_name(node: Node) -> str:
     return "Group"
 
 
-def mesh_summary(nodes: dict[str, Node], group_id: str, catalog: MeshCatalog) -> str:
-    """short description of a group's direct meshed children"""
-    labels: list[str] = []
+def mesh_summaries(
+    nodes: dict[str, Node], catalog: MeshCatalog
+) -> dict[str, str]:
+    """parent id → short label for direct meshed children (one pass)"""
+    labels_by_parent: dict[str, list[str]] = {}
     node: Node
     for node in nodes.values():
-        if node.parent_id != group_id or node.mesh_id is None:
+        if node.mesh_id is None or node.parent_id is None:
             continue
         asset: MeshAsset | None = catalog.entries.get(node.mesh_id)
-        labels.append(asset.label if asset is not None else node.mesh_id.name)
-    if not labels:
-        return ""
-    if len(set(labels)) == 1:
-        return f"{len(labels)}x {labels[0]}"
-    return f"{len(labels)} meshes"
+        labels_by_parent.setdefault(node.parent_id, []).append(
+            asset.label if asset is not None else node.mesh_id.name
+        )
+    summaries: dict[str, str] = {}
+    parent_id: str
+    labels: list[str]
+    for parent_id, labels in labels_by_parent.items():
+        if len(set(labels)) == 1:
+            summaries[parent_id] = f"{len(labels)}x {labels[0]}"
+        else:
+            summaries[parent_id] = f"{len(labels)} meshes"
+    return summaries
 
 
 def group_children_map(nodes: dict[str, Node]) -> dict[str | None, list[Node]]:
@@ -137,6 +144,9 @@ def group_children_map(nodes: dict[str, Node]) -> dict[str | None, list[Node]]:
     node: Node
     for node in nodes.values():
         if node.mesh_id is not None:
+            continue
+        # bezier handles are viewport-only; listing them floods the tree
+        if node.role is NodeRole.path_handle_in or node.role is NodeRole.path_handle_out:
             continue
         # usage groups show under shp; hide anything nested deeper under a usage
         if node.parent_id is not None:
@@ -325,6 +335,7 @@ def update_outliner(
     flat: list[tuple[Node, int, bool]] = flatten_groups(
         group_children_map(scene.nodes), ui.outliner_collapsed
     )
+    summaries: dict[str, str] = mesh_summaries(scene.nodes, catalog)
     content_h: float = len(flat) * outliner_row_height
     max_scroll: float = max(0.0, content_h - list_h)
 
@@ -344,13 +355,18 @@ def update_outliner(
         + outliner_visibility_width
         + outliner_chrome_gap
     )
+    selected: set[str] = set(scene.selected_ids)
+
+    # only materialize rows in the scrolled viewport (+1 row overscan)
+    first_index: int = max(0, int(ui.outliner_scroll / outliner_row_height))
+    visible_count: int = int(list_h / outliner_row_height) + 2
+    last_index: int = min(len(flat), first_index + visible_count)
 
     rows: list[OutlinerRow] = []
-    y: float = list_top - ui.outliner_scroll
-    node: Node
-    depth: int
-    has_children: bool
-    for node, depth, has_children in flat:
+    index: int
+    for index in range(first_index, last_index):
+        node, depth, has_children = flat[index]
+        y: float = list_top - ui.outliner_scroll + float(index) * outliner_row_height
         rect: Rectangle = Rectangle(area.x, y, area.width, outliner_row_height)
         indent_x: float = area.x + ui_pad + depth * outliner_indent
         swatch_y: float = y + (outliner_row_height - outliner_swatch_size) * 0.5
@@ -383,7 +399,7 @@ def update_outliner(
             node_id=node.id,
             depth=depth,
             name=group_display_name(node),
-            summary=mesh_summary(scene.nodes, node.id, catalog),
+            summary=summaries.get(node.id, ""),
             has_children=has_children,
             collapsed=node.id in ui.outliner_collapsed,
             rect=rect,
@@ -391,17 +407,13 @@ def update_outliner(
             visibility_rect=visibility_rect,
             caret_rect=caret_rect,
             name_rect=name_rect,
-            is_selected=node.id in scene.selected_ids,
+            is_selected=node.id in selected,
             is_parent_target=node.id == parent_target,
             visible=node.visible,
             color_index=node.color_index,
             is_hovered=is_point_in_rect(mouse.x, mouse.y, rect),
         )
-        row_visible: bool = (
-            rect.y + rect.height > list_rect.y
-            and rect.y < list_rect.y + list_rect.height
-        )
-        if clicked and pointer_in_list and row_visible and row.is_hovered:
+        if clicked and pointer_in_list and row.is_hovered:
             if is_point_in_rect(mouse.x, mouse.y, color_rect):
                 open_node_color_palette(ui, node, color_rect)
             elif is_point_in_rect(mouse.x, mouse.y, visibility_rect):
@@ -411,7 +423,6 @@ def update_outliner(
             else:
                 click_row(scene, ui, node)
         rows.append(row)
-        y += outliner_row_height
 
     return rows, buttons
 

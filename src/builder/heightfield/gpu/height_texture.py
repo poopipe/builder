@@ -22,8 +22,13 @@ from pyray import (
 )
 
 from builder.heightfield.heightfield_types import Heightfield
-from builder.heightfield.heightmap_catalog import HeightmapCatalog
+from builder.heightfield.heightmap_catalog import (
+    HeightmapBuffer,
+    HeightmapCatalog,
+    materialize_heightmap_samples,
+)
 from builder.heightfield.sample import base_height_scale_bias, base_sample_type
+from builder.heightfield.sparse_height import dense_region_from_sparse
 
 
 @dataclass(frozen=True)
@@ -146,6 +151,60 @@ def update_height_texture_region(
     for row_y in range(ry0, ry1):
         row: int = row_y * width
         region.extend(samples[row + rx0 : row + rx1])
+    data: Any = ffi.new("float[]", region)
+    update_texture_rec(
+        existing.texture,
+        Rectangle(float(rx0), float(ry0), float(region_w), float(region_h)),
+        data,
+    )
+    existing.keep_alive = (data,)
+    existing.key = key
+    existing.height_scale = height_scale
+    existing.height_bias = height_bias
+    return existing
+
+
+def update_height_texture_region_sparse(
+    existing: HeightTexture,
+    buffer: HeightmapBuffer,
+    x0: int,
+    x1: int,
+    y0: int,
+    y1: int,
+    key: HeightTextureKey,
+    height_scale: float,
+    height_bias: float,
+) -> HeightTexture:
+    """patch a subrect from a sparse raster without full materialize"""
+    width: int = buffer.width
+    height: int = buffer.height
+    if (
+        int(existing.texture.width) != width
+        or int(existing.texture.height) != height
+    ):
+        return update_or_upload_height_texture(
+            existing,
+            width,
+            height,
+            materialize_heightmap_samples(buffer),
+            key,
+            height_scale,
+            height_bias,
+        )
+    rx0: int = max(0, min(width, x0))
+    rx1: int = max(rx0, min(width, x1))
+    ry0: int = max(0, min(height, y0))
+    ry1: int = max(ry0, min(height, y1))
+    region_w: int = rx1 - rx0
+    region_h: int = ry1 - ry0
+    if region_w < 1 or region_h < 1:
+        existing.key = key
+        existing.height_scale = height_scale
+        existing.height_bias = height_bias
+        return existing
+    region: list[float] = dense_region_from_sparse(
+        buffer, rx0, rx1, ry0, ry1
+    )
     data: Any = ffi.new("float[]", region)
     update_texture_rec(
         existing.texture,
